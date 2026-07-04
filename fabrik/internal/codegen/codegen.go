@@ -42,6 +42,7 @@ func Generate(project *scan.Project) ([]byte, diag.Diagnostics, error) {
 
 type generator struct {
 	project   *scan.Project
+	appPkgs   []*scan.Package // non-main packages
 	diags     diag.Diagnostics
 	providers map[string]string // canonical type -> generated var name
 }
@@ -56,6 +57,8 @@ type renderContext struct {
 type providerDecl struct {
 	Kind    string // "single" or "struct"
 	VarName string
+	Deps    []string // var names this decl references
+	UsesCtx bool     // single provider whose signature takes context.Context
 
 	// single
 	PkgName string
@@ -78,34 +81,72 @@ type routeRender struct {
 	HandlerExpr string
 }
 
+type provItem struct {
+	pkg string
+	p   *scan.Provider
+}
+
+type recvKey struct{ pkg, typ string }
+
 func (g *generator) build() *renderContext {
 	rc := &renderContext{}
 
-	// Reject duplicate package names: vars and imports are keyed on the short
-	// package name, so two same-named packages would collide.
-	byName := map[string][]*scan.Package{}
 	for _, pkg := range g.project.Packages {
-		if pkg.Name == "main" {
-			continue
+		if pkg.Name != "main" {
+			g.appPkgs = append(g.appPkgs, pkg)
 		}
-		byName[pkg.Name] = append(byName[pkg.Name], pkg)
-	}
-	for name, pkgs := range byName {
-		if len(pkgs) > 1 {
-			for _, pkg := range pkgs {
-				g.diags = append(g.diags, diag.Diagnostic{
-					Severity: diag.SevError, Pos: pkg.Pos,
-					Message: fmt.Sprintf("duplicate package name %q", name),
-					Help:    "give each package a unique name",
-				})
-			}
-		}
-	}
-	if g.diags.HasFatal() {
-		return rc // a name collision poisons every downstream lookup
 	}
 
-	// Warn about directives in package main: they are not wired.
+	if g.duplicatePackages() {
+		return rc // a name collision poisons every downstream lookup
+	}
+	g.warnMainDirectives()
+
+	groups := g.collectProviders()
+	receivers := g.collectReceivers()
+	rc.ProviderDecls = orderReachable(g.buildDecls(groups, receivers))
+
+	routes, usedPkgs := g.buildRoutes()
+	rc.Routes = routes
+
+	for _, d := range rc.ProviderDecls {
+		if d.UsesCtx {
+			rc.UseContext = true
+			break
+		}
+	}
+
+	rc.ModuleImports = g.collectImports(rc.ProviderDecls, usedPkgs)
+	return rc
+}
+
+// duplicatePackages reports app packages that share a name and returns whether
+// any were found. Vars and imports key on the short package name, so a collision
+// poisons every downstream lookup.
+func (g *generator) duplicatePackages() bool {
+	byName := map[string][]*scan.Package{}
+	for _, pkg := range g.appPkgs {
+		byName[pkg.Name] = append(byName[pkg.Name], pkg)
+	}
+	found := false
+	for name, pkgs := range byName {
+		if len(pkgs) <= 1 {
+			continue
+		}
+		found = true
+		for _, pkg := range pkgs {
+			g.diags = append(g.diags, diag.Diagnostic{
+				Severity: diag.SevError, Pos: pkg.Pos,
+				Message: fmt.Sprintf("duplicate package name %q", name),
+				Help:    "give each package a unique name",
+			})
+		}
+	}
+	return found
+}
+
+// warnMainDirectives warns that directives in package main are not wired.
+func (g *generator) warnMainDirectives() {
 	for _, pkg := range g.project.Packages {
 		if pkg.Name != "main" {
 			continue
@@ -125,17 +166,13 @@ func (g *generator) build() *renderContext {
 			})
 		}
 	}
+}
 
-	// Group providers by canonical return type to detect duplicates.
-	type provItem struct {
-		pkg string
-		p   *scan.Provider
-	}
+// collectProviders groups providers by canonical return type, reports types with
+// more than one provider, and registers the generated var name for the rest.
+func (g *generator) collectProviders() map[string][]provItem {
 	groups := map[string][]provItem{}
-	for _, pkg := range g.project.Packages {
-		if pkg.Name == "main" {
-			continue
-		}
+	for _, pkg := range g.appPkgs {
 		for _, p := range pkg.Providers {
 			canon := canonicalType(pkg.Name, p.Returns)
 			groups[canon] = append(groups[canon], provItem{pkg.Name, p})
@@ -155,15 +192,14 @@ func (g *generator) build() *renderContext {
 		it := grp[0]
 		g.providers[canon] = providerVarName(it.pkg, it.p.Returns)
 	}
+	return groups
+}
 
-	// Register receiver struct var names before resolving fields, so a struct
-	// field may depend on another wired struct.
-	type recvKey struct{ pkg, typ string }
+// collectReceivers records the handler-struct receiver of each route and
+// registers its generated var name, so a struct field may depend on it.
+func (g *generator) collectReceivers() map[recvKey]*scan.Route {
 	receivers := map[recvKey]*scan.Route{}
-	for _, pkg := range g.project.Packages {
-		if pkg.Name == "main" {
-			continue
-		}
+	for _, pkg := range g.appPkgs {
 		for _, r := range pkg.Routes {
 			if r.Receiver == "" {
 				continue
@@ -178,9 +214,13 @@ func (g *generator) build() *renderContext {
 		g.providers["*"+rk.pkg+"."+rk.typ] = providerVarName(rk.pkg, rk.typ)
 		g.providers[rk.pkg+"."+rk.typ] = providerVarName(rk.pkg, rk.typ)
 	}
+	return receivers
+}
 
-	// Provider decls (constructors) in stable canonical-type order.
+// buildDecls builds the provider (constructor) and receiver-struct declarations.
+func (g *generator) buildDecls(groups map[string][]provItem, receivers map[recvKey]*scan.Route) []providerDecl {
 	var decls []providerDecl
+
 	canons := make([]string, 0, len(groups))
 	for c := range groups {
 		canons = append(canons, c)
@@ -192,13 +232,14 @@ func (g *generator) build() *renderContext {
 			continue
 		}
 		it := grp[0]
+		args, deps, usesCtx := g.resolveArgs(it.pkg, it.p.Params)
 		decls = append(decls, providerDecl{
 			Kind: "single", VarName: g.providers[canon],
-			PkgName: it.pkg, Func: it.p.Func, Args: g.resolveArgs(it.pkg, it.p.Params),
+			PkgName: it.pkg, Func: it.p.Func, Args: args,
+			Deps: deps, UsesCtx: usesCtx,
 		})
 	}
 
-	// Receiver struct decls, sorted by var name for determinism.
 	recvList := make([]recvKey, 0, len(receivers))
 	for rk := range receivers {
 		recvList = append(recvList, rk)
@@ -218,6 +259,7 @@ func (g *generator) build() *renderContext {
 			continue
 		}
 		var fdecls []structField
+		var deps []string
 		for _, f := range fields {
 			if f.Name == "" {
 				continue // embedded field: not wired by field name
@@ -229,28 +271,31 @@ func (g *generator) build() *renderContext {
 					Message: fmt.Sprintf("no provider for %s (field %s of %s.%s)", f.Type, f.Name, rk.pkg, rk.typ),
 					Help:    fmt.Sprintf("add a //fabrik:provider returning %s", f.Type),
 				})
-				expr = "nil"
+				fdecls = append(fdecls, structField{Name: f.Name, Expr: "nil"})
+				continue
 			}
 			fdecls = append(fdecls, structField{Name: f.Name, Expr: expr})
+			deps = append(deps, expr)
 		}
 		decls = append(decls, providerDecl{
 			Kind: "struct", VarName: providerVarName(rk.pkg, rk.typ),
-			StructType: rk.pkg + "." + rk.typ, Fields: fdecls,
+			StructType: rk.pkg + "." + rk.typ, Fields: fdecls, Deps: deps,
 		})
 	}
 
-	rc.ProviderDecls = topoSort(pruneUnused(decls))
+	return decls
+}
 
-	// Routes, rejecting duplicate method+path pairs.
-	seenRoutes := map[string]*scan.Route{}
+// buildRoutes renders each route, rejecting duplicate method+path pairs, and
+// returns the set of packages the routes reference.
+func (g *generator) buildRoutes() ([]routeRender, map[string]bool) {
+	var routes []routeRender
+	seen := map[string]*scan.Route{}
 	usedPkgs := map[string]bool{}
-	for _, pkg := range g.project.Packages {
-		if pkg.Name == "main" {
-			continue
-		}
+	for _, pkg := range g.appPkgs {
 		for _, r := range pkg.Routes {
 			key := r.Method + " " + r.Path
-			if prev, ok := seenRoutes[key]; ok {
+			if prev, ok := seen[key]; ok {
 				g.diags = append(g.diags, diag.Diagnostic{
 					Severity: diag.SevError, Pos: r.Pos,
 					Message: fmt.Sprintf("duplicate route %s %s", r.Method, r.Path),
@@ -258,25 +303,21 @@ func (g *generator) build() *renderContext {
 				})
 				continue
 			}
-			seenRoutes[key] = r
+			seen[key] = r
 			usedPkgs[pkg.Name] = true
-			rc.Routes = append(rc.Routes, routeRender{
+			routes = append(routes, routeRender{
 				Method: r.Method, Path: r.Path,
 				HandlerExpr: buildRouteHandler(pkg.Name, r.Func, r.Receiver),
 			})
 		}
 	}
+	return routes, usedPkgs
+}
 
-	// The ctx var is emitted only when a surviving provider consumes it.
-	for _, d := range rc.ProviderDecls {
-		if d.Kind == "single" && containsIdent(d.Args, "ctx") {
-			rc.UseContext = true
-			break
-		}
-	}
-
-	// Imports: packages referenced by the emitted decls and routes.
-	for _, d := range rc.ProviderDecls {
+// collectImports returns the import paths of the packages referenced by the
+// emitted decls and routes.
+func (g *generator) collectImports(decls []providerDecl, usedPkgs map[string]bool) []string {
+	for _, d := range decls {
 		switch d.Kind {
 		case "single":
 			usedPkgs[d.PkgName] = true
@@ -288,24 +329,26 @@ func (g *generator) build() *renderContext {
 	for _, pkg := range g.project.Packages {
 		importPath[pkg.Name] = pkg.ImportPath
 	}
+	var imports []string
 	for name := range usedPkgs {
 		if p := importPath[name]; p != "" {
-			rc.ModuleImports = append(rc.ModuleImports, p)
+			imports = append(imports, p)
 		}
 	}
-	sort.Strings(rc.ModuleImports)
-
-	return rc
+	sort.Strings(imports)
+	return imports
 }
 
-// resolveArgs builds the call-argument string for a provider's parameters.
-// context.Context params become "ctx"; other params resolve to wired vars.
-// Unresolved params produce a diagnostic anchored at the provider directive.
-func (g *generator) resolveArgs(pkg string, params []scan.Param) string {
-	var args []string
+// resolveArgs builds the call-argument string for a provider's parameters and
+// reports the vars it depends on and whether it takes a context. context.Context
+// params become "ctx"; other params resolve to wired vars. Unresolved params
+// produce a diagnostic anchored at the provider directive.
+func (g *generator) resolveArgs(pkg string, params []scan.Param) (args string, deps []string, usesCtx bool) {
+	var parts []string
 	for _, p := range params {
 		if p.Type == "context.Context" {
-			args = append(args, "ctx")
+			parts = append(parts, "ctx")
+			usesCtx = true
 			continue
 		}
 		v, ok := g.providers[canonicalType(pkg, p.Type)]
@@ -315,11 +358,13 @@ func (g *generator) resolveArgs(pkg string, params []scan.Param) string {
 				Message: fmt.Sprintf("no provider for %s", p.Type),
 				Help:    fmt.Sprintf("add a //fabrik:provider returning %s", p.Type),
 			})
-			v = "nil"
+			parts = append(parts, "nil")
+			continue
 		}
-		args = append(args, v)
+		parts = append(parts, v)
+		deps = append(deps, v)
 	}
-	return strings.Join(args, ", ")
+	return strings.Join(parts, ", "), deps, usesCtx
 }
 
 // canonicalType returns the global key under which a type is registered. Types
@@ -363,97 +408,39 @@ func findPackage(project *scan.Project, name string) *scan.Package {
 	return nil
 }
 
-// declRefs returns the var names a decl references through its call args or
-// struct-field expressions.
-func declRefs(d providerDecl, byVar map[string]providerDecl) []string {
-	var refs []string
-	seen := map[string]bool{}
-	add := func(text string) {
-		for v := range byVar {
-			if v == d.VarName || seen[v] {
-				continue
-			}
-			if containsIdent(text, v) {
-				refs = append(refs, v)
-				seen[v] = true
-			}
-		}
-	}
-	add(d.Args)
-	for _, f := range d.Fields {
-		add(f.Expr)
-	}
-	return refs
-}
-
-// pruneUnused drops provider decls not reachable from any struct decl. Struct
-// decls are the handlers, which the routes always reference.
-func pruneUnused(decls []providerDecl) []providerDecl {
+// orderReachable returns the decls reachable from the struct (handler) decls,
+// each placed after the decls it depends on. Providers nothing reaches are
+// dropped. Cycles are broken arbitrarily and surface as Go compile errors.
+func orderReachable(decls []providerDecl) []providerDecl {
 	byVar := map[string]providerDecl{}
+	var roots []string
 	for _, d := range decls {
 		byVar[d.VarName] = d
+		if d.Kind == "struct" {
+			roots = append(roots, d.VarName)
+		}
 	}
-	reachable := map[string]bool{}
-	var mark func(string)
-	mark = func(name string) {
-		if reachable[name] {
+	sort.Strings(roots)
+
+	var out []providerDecl
+	seen := map[string]bool{}
+	var visit func(string)
+	visit = func(name string) {
+		if seen[name] {
 			return
 		}
+		seen[name] = true
 		d, ok := byVar[name]
 		if !ok {
 			return
 		}
-		reachable[name] = true
-		for _, dep := range declRefs(d, byVar) {
-			mark(dep)
+		for _, dep := range d.Deps {
+			visit(dep)
 		}
+		out = append(out, d)
 	}
-	for _, d := range decls {
-		if d.Kind == "struct" {
-			mark(d.VarName)
-		}
-	}
-	var out []providerDecl
-	for _, d := range decls {
-		if reachable[d.VarName] {
-			out = append(out, d)
-		}
-	}
-	return out
-}
-
-// topoSort orders decls so each var is declared after the vars it references.
-// Cycles are broken arbitrarily; they surface as Go compile errors.
-func topoSort(decls []providerDecl) []providerDecl {
-	byVar := map[string]providerDecl{}
-	for _, d := range decls {
-		byVar[d.VarName] = d
-	}
-
-	var out []providerDecl
-	color := map[string]int{} // 0 white, 1 grey, 2 black
-	var visit func(string)
-	visit = func(name string) {
-		if color[name] != 0 {
-			return
-		}
-		color[name] = 1
-		if d, ok := byVar[name]; ok {
-			for _, dep := range declRefs(d, byVar) {
-				visit(dep)
-			}
-			out = append(out, d)
-		}
-		color[name] = 2
-	}
-
-	names := make([]string, 0, len(byVar))
-	for n := range byVar {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		visit(n)
+	for _, r := range roots {
+		visit(r)
 	}
 	return out
 }
@@ -464,38 +451,6 @@ func pkgName(qualified string) string {
 		return qualified[:i]
 	}
 	return qualified
-}
-
-// containsIdent reports whether text contains ident as a whole Go identifier.
-func containsIdent(text, ident string) bool {
-	if ident == "" {
-		return false
-	}
-	i := 0
-	for {
-		j := strings.Index(text[i:], ident)
-		if j < 0 {
-			return false
-		}
-		start := i + j
-		end := start + len(ident)
-		var before, after byte = ' ', ' '
-		if start > 0 {
-			before = text[start-1]
-		}
-		if end < len(text) {
-			after = text[end]
-		}
-		if !isIdentByte(before) && !isIdentByte(after) {
-			return true
-		}
-		i = end
-	}
-}
-
-func isIdentByte(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
-		(b >= '0' && b <= '9') || b == '_'
 }
 
 //go:embed templates/main.gen.go.tmpl
