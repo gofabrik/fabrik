@@ -42,9 +42,14 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 		f := st.Field(i)
 		owner := g.TypeExpr(named)
 		if !f.Exported() {
-			ds.Error(fset.Position(f.Pos()),
-				fmt.Sprintf("field %s of %s is unexported", f.Name(), owner),
-				"fabrik wires from package main; export the field")
+			// Private state (mutexes, counters) stays at its zero value; the
+			// error fires only when a binding exists for the field's type,
+			// i.e. wiring was plausibly intended.
+			if g.HasBinding(f.Type(), "") {
+				ds.Error(fset.Position(f.Pos()),
+					fmt.Sprintf("field %s of %s is unexported but its type has a provider", f.Name(), owner),
+					"fabrik wires from package main; export the field")
+			}
 			continue
 		}
 		expr, eds, ok := g.Instance(f.Type(), "")

@@ -206,6 +206,7 @@ type lspServer struct {
 	roots     map[string]string          // uri -> module root dir (cached)
 	published map[string]map[string]bool // root -> file URIs with visible diagnostics
 	debounce  map[string]*time.Timer     // root -> pending typed-tier publish
+	pubGen    map[string]int             // root -> typed-publish generation
 	mwCache   map[string]mwCacheEntry    // file path -> parsed middleware index
 
 	out     io.Writer
@@ -218,6 +219,7 @@ func newLSPServer() *lspServer {
 		roots:     map[string]string{},
 		published: map[string]map[string]bool{},
 		debounce:  map[string]*time.Timer{},
+		pubGen:    map[string]int{},
 		mwCache:   map[string]mwCacheEntry{},
 	}
 }
@@ -336,7 +338,9 @@ func (s *lspServer) onChange(uri string) {
 	if t := s.debounce[root]; t != nil {
 		t.Stop()
 	}
-	s.debounce[root] = time.AfterFunc(debounceDelay, func() { s.publishTyped(uri) })
+	s.pubGen[root]++
+	gen := s.pubGen[root]
+	s.debounce[root] = time.AfterFunc(debounceDelay, func() { s.publishTyped(uri, gen) })
 	s.mu.Unlock()
 }
 

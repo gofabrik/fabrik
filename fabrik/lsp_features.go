@@ -43,7 +43,7 @@ func (s *lspServer) publishSyntactic(uri string) {
 }
 
 // publishTyped reports workspace diagnostics and clears stale ones.
-func (s *lspServer) publishTyped(uri string) {
+func (s *lspServer) publishTyped(uri string, gen int) {
 	root := s.rootForURI(uri)
 	if root == "" {
 		return
@@ -62,6 +62,14 @@ func (s *lspServer) publishTyped(uri string) {
 
 	res, err := engine.Wire(root, overlay)
 	if err != nil {
+		return
+	}
+	// A newer edit may have scheduled a fresh publish while this Wire ran;
+	// publishing now would overwrite current diagnostics with stale ones.
+	s.mu.Lock()
+	stale := s.pubGen[root] != gen
+	s.mu.Unlock()
+	if stale {
 		return
 	}
 
