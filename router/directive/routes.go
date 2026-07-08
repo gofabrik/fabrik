@@ -67,8 +67,7 @@ func (rt *routeTable) conflictDiag(key string, pos token.Position, panicMsg stri
 	return d
 }
 
-// effectiveRoute applies the receiver's group to a route: prefixed pattern,
-// group chain before the route's own.
+// effectiveRoute applies the receiver group's prefix and middleware.
 func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []*types.Func) (string, []*types.Func) {
 	var mws []*types.Func
 	if recvObj != nil {
@@ -90,8 +89,7 @@ func handlerExpr(g *gen.Gen, recv types.Type, pkg *types.Package, fn string, fse
 	return inst + "." + fn, ds
 }
 
-// receiverPtr normalizes a receiver type to its pointer form, so both
-// pointer and value receiver methods are selectable on the wired variable.
+// receiverPtr normalizes a receiver type to its pointer form.
 func receiverPtr(recv types.Type) types.Type {
 	t := types.Unalias(recv)
 	if _, ok := t.(*types.Pointer); !ok {
@@ -100,10 +98,7 @@ func receiverPtr(recv types.Type) types.Type {
 	return t
 }
 
-// prepareReceiver registers a route receiver's struct and, when the struct
-// asks for it, the router itself, before any dependency resolution runs.
-// This keeps struct injection independent of emission order and routes
-// every materialization diagnostic through Instance.
+// prepareReceiver registers receiver bindings before dependency resolution.
 func prepareReceiver(g *gen.Gen, recv types.Type, fset *token.FileSet) {
 	if recv == nil {
 		return
@@ -113,9 +108,7 @@ func prepareReceiver(g *gen.Gen, recv types.Type, fset *token.FileSet) {
 	registerRouterFieldBinding(g, t)
 }
 
-// registerRouterFieldBinding makes *router.Router injectable: any field of
-// that type resolves to the run's router instance. A user provider for the
-// type wins.
+// registerRouterFieldBinding makes *router.Router injectable.
 func registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 	n := namedOf(t)
 	if n == nil {

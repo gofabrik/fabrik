@@ -9,10 +9,8 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 )
 
-// RegisterStruct lazily registers the wiring for a handler struct, given a
-// pointer-to-named-struct type. Registration up front (before anything
-// resolves dependencies) makes struct injection independent of emission
-// order. An existing binding for the type - e.g. a user provider - wins.
+// RegisterStruct lazily registers construction for a pointer-to-named struct.
+// Existing bindings win.
 func RegisterStruct(g *Gen, fset *token.FileSet, t types.Type) {
 	ptr := types.Unalias(t)
 	if g.HasBinding(ptr, "") {
@@ -24,22 +22,17 @@ func RegisterStruct(g *Gen, fset *token.FileSet, t types.Type) {
 	})
 }
 
-// EnsureStruct returns the wired expression for a handler struct, given a
-// pointer-to-named-struct type, registering it first if needed.
+// EnsureStruct returns the wired expression for a handler struct.
 func EnsureStruct(g *Gen, fset *token.FileSet, t types.Type) (string, diag.Diagnostics) {
 	RegisterStruct(g, fset, t)
 	expr, ds, ok := g.Instance(types.Unalias(t), "")
 	if !ok {
-		// Only a dependency cycle through the struct itself lands here; the
-		// diagnostics explain it.
 		return "nil", ds
 	}
 	return expr, ds
 }
 
-// buildStruct emits `v := &pkg.T{...}` with one injected expression per
-// exported field. Embedded fields wire like named ones (their field name is
-// the type name); unexported and unresolved fields produce diagnostics.
+// buildStruct emits one injected expression per exported field.
 func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.Diagnostics) {
 	st := named.Underlying().(*types.Struct)
 
@@ -78,16 +71,14 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 	} else {
 		g.Stmt(PhaseWire, "%s := &%s{\n%s\n}", v, g.TypeExpr(named), strings.Join(fields, "\n"))
 	}
-	// The pointer form is bound by Instance when this build returns. The
-	// value form may already be bound by a value-returning provider.
+	// Bind the value form if no provider owns it.
 	if !g.HasBinding(named, "") {
 		g.Bind(named, "", "*"+v)
 	}
 	return v, ds
 }
 
-// namedStructOf unwraps a pointer-to-named-struct type; callers guarantee
-// the shape at Check time.
+// namedStructOf unwraps a pointer-to-named-struct type.
 func namedStructOf(ptr types.Type) *types.Named {
 	p := ptr.(*types.Pointer)
 	return types.Unalias(p.Elem()).(*types.Named)

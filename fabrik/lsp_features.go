@@ -171,7 +171,7 @@ func spanRange(src string, pos token.Position) lspRange {
 		endCol = end
 	}
 
-	// LSP positions default to UTF-16 code units; ours are byte offsets.
+	// LSP columns are UTF-16 units; token positions are byte offsets.
 	return lspRange{
 		Start: lspPosition{Line: line, Character: utf16Col(lineText, startCol)},
 		End:   lspPosition{Line: line, Character: utf16Col(lineText, endCol)},
@@ -343,17 +343,14 @@ type mwFunc struct {
 	exported  bool
 }
 
-// mwCacheEntry caches a file's parsed middleware functions by size and
-// modification time.
+// mwCacheEntry caches middleware functions by file size and modification time.
 type mwCacheEntry struct {
 	size    int64
 	modTime int64
 	funcs   []mwFunc
 }
 
-// middlewareFuncs returns the middleware-shaped functions of one file,
-// parsing overlay content fresh and caching on-disk files by stat, so
-// completion does not re-parse an unchanged workspace on every request.
+// middlewareFuncs returns middleware-shaped functions for one file.
 func (s *lspServer) middlewareFuncs(path, overlayText string, d iofs.DirEntry) []mwFunc {
 	var info iofs.FileInfo
 	if overlayText == "" {

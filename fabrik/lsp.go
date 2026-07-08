@@ -324,9 +324,7 @@ func (s *lspServer) handle(msg *rpcMessage) (exit bool) {
 	return false
 }
 
-// onChange publishes syntax diagnostics immediately and type diagnostics
-// later, debounced per workspace root so edits in one project cannot cancel
-// another's pending publish.
+// onChange publishes syntax diagnostics immediately and debounces type checks per root.
 func (s *lspServer) onChange(uri string) {
 	s.publishSyntactic(uri)
 
@@ -401,8 +399,7 @@ func uriFromFile(path string) string {
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
-	// url.URL escapes reserved characters, so paths with spaces round-trip
-	// with the percent-encoded URIs clients send.
+	// url.URL preserves percent-encoded client paths.
 	u := url.URL{Scheme: "file", Path: p}
 	return u.String()
 }

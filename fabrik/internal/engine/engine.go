@@ -29,8 +29,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	if res.MainDir == "" {
 		return nil, fmt.Errorf("no package main found under %s", res.Root)
 	}
-	// Directive checks against invalid types produce misleading follow-on
-	// diagnostics, so a broken load stops here.
+	// Stop before directive checks when package loading is invalid.
 	if res.Diags.HasFatal() {
 		res.Diags.Sort()
 		return &Result{MainDir: res.MainDir, Diags: res.Diags}, nil
@@ -90,9 +89,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	if err := emitTierNodes(tierProvider); err != nil {
 		return nil, err
 	}
-	// Node preparation runs after providers registered (a user binding for a
-	// prepared type wins) and before anything resolves dependencies, so
-	// resolution cannot depend on emission order.
+	// Prepare bindings before dependency resolution.
 	for _, p := range parsed {
 		np, ok := p.Directive.(gen.NodePreparer)
 		if !ok {
@@ -132,8 +129,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	return &Result{Src: src, MainDir: res.MainDir, Diags: diags}, nil
 }
 
-// registryIndex maps a registry by directive name, with the sorted name
-// list used in diagnostics.
+// registryIndex maps directives by name and returns sorted names for diagnostics.
 func registryIndex(directives []gen.Directive) (map[string]gen.Directive, []string) {
 	byName := map[string]gen.Directive{}
 	names := make([]string, 0, len(directives))
@@ -157,9 +153,7 @@ func unknownDirectiveDiag(ann gen.Annotation, names []string) diag.Diagnostic {
 		Help:    "known: " + strings.Join(names, ", ")}
 }
 
-// SyntaxDiags resolves and Parses annotations without type information: the
-// grammar-only tier, shared with the LSP so its messages cannot drift from
-// the engine's.
+// SyntaxDiags parses annotations without type information.
 func SyntaxDiags(anns []gen.Annotation) diag.Diagnostics {
 	byName, names := registryIndex(New())
 	var ds diag.Diagnostics

@@ -48,16 +48,16 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `fabrik - write handlers and providers, generate the wiring
+	fmt.Fprint(os.Stderr, `fabrik - build full-stack Go apps from //fabrik directives
 
 Usage:
   fabrik <command> [args...]
 
 Commands:
   new    <project>       Scaffold a new project
-  wire   [-check] [dir]  Scan directives and generate main.gen.go
-  run    [dir] [args]    Generate wiring, then go run
-  build  [dir] [-o out]  Generate wiring, then go build
+  wire   [-check] [dir]  Generate main.gen.go from directives
+  run    [dir] [args]    Generate main.gen.go, then go run
+  build  [dir] [-o out]  Generate main.gen.go, then go build
   directives             Print the directive reference (DIRECTIVES.md)
   lsp                    Run the language server (JSON-RPC over stdio)
   help                   Show this help

@@ -1,4 +1,4 @@
-// Package core implements framework-owned directives.
+// Package core implements CLI-owned directives.
 package core
 
 import (
@@ -26,9 +26,9 @@ func (*Provider) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Constructor wired by return type",
 		Doc: "**`//fabrik:provider`**\n\n" +
-			"Marks a constructor whose return value is injected into handler " +
-			"structs and other providers by matching types. Parameters resolve " +
-			"to other providers; `context.Context` parameters receive a shared " +
+			"Marks a constructor whose return value is available to generated " +
+			"app code by matching types. Parameters resolve to other " +
+			"providers; `context.Context` parameters receive a shared " +
 			"background context.\n\n" +
 			"```go\n//fabrik:provider\nfunc NewGreeter() *Greeter { ... }\n```",
 		Example: "//fabrik:provider",
@@ -48,7 +48,7 @@ type node struct {
 	returns []types.Type
 	params  []param
 	fset    *token.FileSet
-	built   bool // the lazy build ran, so params were already validated
+	built   bool // lazy build ran
 }
 
 func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
@@ -125,9 +125,7 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
-// Finish validates the parameters of providers nothing materialized: their
-// build closures never ran, so unresolvable dependencies would otherwise go
-// undiagnosed until the provider is first consumed.
+// Finish validates unused provider parameters.
 func (p *Provider) Finish(g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, nd := range p.nodes {

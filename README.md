@@ -2,6 +2,11 @@
 
 Fabrik is a full-stack Go framework.
 
+## Project status
+
+Fabrik is under active development. Expect breaking changes before a stable
+release.
+
 ## Install
 
 ```sh
@@ -47,19 +52,19 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-`fabrik wire` scans these directives and generates `main.gen.go`, the composition
-root that builds providers, injects them into your handler structs, and registers
-routes on the [fabrik router](router/). The generated code depends only on the
-standard library and the router, and the router itself is standard library only.
+`fabrik wire` scans these directives and generates `main.gen.go`, the app entry
+point that connects directive-owned code into executable Go. The generated code
+depends only on the standard library and the router, and the router itself is
+standard library only.
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
 | `fabrik new <project>` | Scaffold a new project. |
-| `fabrik run` | Generate wiring, then `go run`. |
-| `fabrik build` | Generate wiring, then `go build`. |
-| `fabrik wire` | Scan directives and generate `main.gen.go`. |
+| `fabrik run` | Generate `main.gen.go`, then `go run`. |
+| `fabrik build` | Generate `main.gen.go`, then `go build`. |
+| `fabrik wire` | Generate `main.gen.go` from directives. |
 | `fabrik wire -check` | Verify `main.gen.go` is up to date (for CI). |
 | `fabrik directives` | Print the directive reference. |
 
@@ -70,8 +75,8 @@ Use `fabrik wire -check` in CI to verify it is current.
 
 See [DIRECTIVES.md](DIRECTIVES.md), generated from the same registry the tool runs.
 
-- `//fabrik:provider` - mark a constructor whose return value is injected into handler
-  structs and other providers by matching types.
+- `//fabrik:provider` - mark a constructor whose return value is available to
+  generated app code by matching types.
 - `//fabrik:http METHOD /path` - register a handler on the given route. The handler
   is a standard `func(http.ResponseWriter, *http.Request)`, on a plain function or a
   method of a wired struct.

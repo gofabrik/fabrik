@@ -55,9 +55,7 @@ type Finisher interface {
 	Finish(g *Gen) diag.Diagnostics
 }
 
-// NodePreparer registers bindings for a checked node after providers have
-// registered but before anything resolves dependencies, so resolution cannot
-// depend on emission order.
+// NodePreparer registers bindings before dependency resolution.
 type NodePreparer interface {
 	PrepareNode(node any, g *Gen)
 }

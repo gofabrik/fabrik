@@ -136,7 +136,7 @@ Options:
 
 **`//fabrik:init`**
 
-Marks a setup function that the generated `run()` calls before providers and routes, in source order. Use it for process-level setup like installing the default `slog` logger. It may take a `context.Context`; a returned `error` aborts startup.
+Marks a setup function that the generated `run()` calls early, in source order. Use it for process-level setup like installing the default `slog` logger. It may take a `context.Context`; a returned `error` aborts startup.
 
 ```go
 //fabrik:init
@@ -149,7 +149,7 @@ func InitLogger() {
 
 **`//fabrik:provider`**
 
-Marks a constructor whose return value is injected into handler structs and other providers by matching types. Parameters resolve to other providers; `context.Context` parameters receive a shared background context.
+Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive a shared background context.
 
 ```go
 //fabrik:provider

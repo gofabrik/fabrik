@@ -85,9 +85,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 				}
 				res.MainDir = mainDir
 			}
-			// package main cannot compile until main.gen.go is current, so
-			// type and list errors ("undefined: run") are expected here; only
-			// parse errors in hand-written files are real and must surface.
+			// package main may not type-check until main.gen.go is current.
 			var parseErrs []packages.Error
 			for _, e := range pkg.Errors {
 				if e.Kind == packages.ParseError {
@@ -223,9 +221,7 @@ func warnMainDirectives(pkg *packages.Package, ds *diag.Diagnostics) {
 	}
 }
 
-// reportPkgErrors converts package errors to diagnostics, dropping exact
-// duplicates and the position-less go-list blobs that restate positioned
-// errors.
+// reportPkgErrors drops duplicates and unpositioned summaries.
 func reportPkgErrors(errs []packages.Error, ds *diag.Diagnostics) {
 	positioned := false
 	for _, e := range errs {
@@ -247,8 +243,7 @@ func reportPkgErrors(errs []packages.Error, ds *diag.Diagnostics) {
 	}
 }
 
-// errorPosition parses a packages.Error position ("file:line:col" or
-// "file:line") from the right, so Windows drive-letter paths survive.
+// errorPosition parses packages.Error positions from the right.
 func errorPosition(e packages.Error) token.Position {
 	pos := token.Position{Filename: e.Pos}
 	rest := e.Pos

@@ -54,8 +54,7 @@ func generate(dir string) (src []byte, out string, err error) {
 	return res.Src, filepath.Join(res.MainDir, "main.gen.go"), nil
 }
 
-// wire generates and writes main.gen.go, returning the main package's
-// directory so run/build can target layouts like cmd/app.
+// wire writes main.gen.go and returns the main package directory.
 func wire(dir string) (string, error) {
 	src, out, err := generate(dir)
 	if err != nil {
@@ -72,8 +71,7 @@ func wire(dir string) (string, error) {
 	return filepath.Dir(out), nil
 }
 
-// mainPackageArg renders the go run/build target for the main package:
-// "." at the module root, "./cmd/app" for nested layouts.
+// mainPackageArg renders the go command target for the main package.
 func mainPackageArg(dir, mainDir string) string {
 	rel, err := filepath.Rel(dir, mainDir)
 	if err != nil || rel == "." {

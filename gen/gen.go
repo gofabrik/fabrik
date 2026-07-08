@@ -18,9 +18,9 @@ type Phase int
 
 const (
 	PhaseInit       Phase = iota // setup calls that run before everything
-	PhaseWire                    // construct providers and framework instances
+	PhaseWire                    // construct app and runtime values
 	PhaseMiddleware              // global middleware registration
-	PhaseRegister                // register routes and handlers
+	PhaseRegister                // register generated behavior
 	PhaseServe                   // start serving; must end with a return
 )
 

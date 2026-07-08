@@ -22,8 +22,8 @@ func (*Init) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Setup function called at startup",
 		Doc: "**`//fabrik:init`**\n\n" +
-			"Marks a setup function that the generated `run()` calls before " +
-			"providers and routes, in source order. Use it for process-level " +
+			"Marks a setup function that the generated `run()` calls early, " +
+			"in source order. Use it for process-level " +
 			"setup like installing the default `slog` logger. It may take a " +
 			"`context.Context`; a returned `error` aborts startup.\n\n" +
 			"```go\n//fabrik:init\nfunc InitLogger() {\n\tslog.SetDefault(...)\n}\n```",
