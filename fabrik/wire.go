@@ -39,6 +39,13 @@ func wireCmd(args []string) error {
 func generate(dir string) (src []byte, out string, err error) {
 	res, err := engine.Wire(dir, nil)
 	if err != nil {
+		if res != nil && len(res.Diags) > 0 {
+			f := diagfmt.NewFormatter(os.Stderr)
+			for _, d := range res.Diags {
+				f.Emit(d)
+			}
+			f.Summary(res.Diags.Counts())
+		}
 		return nil, "", err
 	}
 	if len(res.Diags) > 0 {

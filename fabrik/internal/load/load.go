@@ -72,23 +72,21 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 	}
 
+	var mains []*packages.Package
 	for _, pkg := range pkgs {
 		if res.ModulePath == "" && pkg.Module != nil {
 			res.ModulePath = pkg.Module.Path
 			res.Root = pkg.Module.Dir
 		}
 		if pkg.Name == "main" {
-			if len(pkg.GoFiles) > 0 {
-				mainDir := filepath.Dir(pkg.GoFiles[0])
-				if res.MainDir != "" && res.MainDir != mainDir {
-					return nil, fmt.Errorf("multiple package main found: %s and %s", res.MainDir, mainDir)
-				}
-				res.MainDir = mainDir
-			}
-			// package main may not type-check until main.gen.go is current.
+			mains = append(mains, pkg)
+			// package main may not type-check until main.gen.go is current,
+			// and errors inside main.gen.go itself never block wire: the file
+			// is about to be regenerated anyway. Parse errors in hand-written
+			// files are real and must surface.
 			var parseErrs []packages.Error
 			for _, e := range pkg.Errors {
-				if e.Kind == packages.ParseError {
+				if e.Kind == packages.ParseError && filepath.Base(errorPosition(e).Filename) != "main.gen.go" {
 					parseErrs = append(parseErrs, e)
 				}
 			}
@@ -99,6 +97,12 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		reportPkgErrors(pkg.Errors, &res.Diags)
 		scanPackage(pkg, res, lookup)
 	}
+
+	mainDir, err := selectMain(mains)
+	if err != nil {
+		return nil, err
+	}
+	res.MainDir = mainDir
 
 	res.Diags.Sort()
 	sort.SliceStable(res.Items, func(i, j int) bool {
@@ -143,7 +147,9 @@ func scanPackage(pkg *packages.Package, res *Result, lookup func(string, string)
 func ScanFile(fset *token.FileSet, file *ast.File) ([]gen.Annotation, diag.Diagnostics) {
 	var anns []gen.Annotation
 	var ds diag.Diagnostics
+	consumed := map[*ast.CommentGroup]bool{}
 	scan := func(doc *ast.CommentGroup, target ast.Node) {
+		consumed[doc] = true
 		for _, c := range doc.List {
 			text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
 			if !strings.HasPrefix(text, "fabrik:") {
@@ -189,6 +195,24 @@ func ScanFile(fset *token.FileSet, file *ast.File) ([]gen.Annotation, diag.Diagn
 			}
 		}
 	}
+	// Directives in comment groups that are not doc comments of a scanned
+	// declaration (blank line in between, or on an unsupported declaration)
+	// would otherwise vanish silently.
+	for _, cg := range file.Comments {
+		if consumed[cg] {
+			continue
+		}
+		for _, c := range cg.List {
+			text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
+			if !strings.HasPrefix(text, "fabrik:") {
+				continue
+			}
+			name, _ := splitFirst(strings.TrimPrefix(text, "fabrik:"))
+			ds.Warn(fset.Position(c.Slash),
+				fmt.Sprintf("//fabrik:%s is not attached to a declaration and is ignored", name),
+				"make it the doc comment of a function, type, or variable, with no blank line in between")
+		}
+	}
 	return anns, ds
 }
 
@@ -222,6 +246,52 @@ func warnMainDirectives(pkg *packages.Package, ds *diag.Diagnostics) {
 }
 
 // reportPkgErrors drops duplicates and unpositioned summaries.
+func selectMain(mains []*packages.Package) (string, error) {
+	dirOf := func(pkg *packages.Package) string {
+		if len(pkg.GoFiles) == 0 {
+			return ""
+		}
+		return filepath.Dir(pkg.GoFiles[0])
+	}
+	switch len(mains) {
+	case 0:
+		return "", nil
+	case 1:
+		return dirOf(mains[0]), nil
+	}
+	var candidates []string
+	for _, pkg := range mains {
+		if callsRun(pkg) {
+			candidates = append(candidates, dirOf(pkg))
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	var all []string
+	for _, pkg := range mains {
+		all = append(all, dirOf(pkg))
+	}
+	return "", fmt.Errorf("multiple package main found (%s); exactly one must call run()", strings.Join(all, ", "))
+}
+
+// callsRun reports whether the package's source calls run() anywhere.
+func callsRun(pkg *packages.Package) bool {
+	found := false
+	for _, file := range pkg.Syntax {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "run" {
+					found = true
+					return false
+				}
+			}
+			return !found
+		})
+	}
+	return found
+}
+
 func reportPkgErrors(errs []packages.Error, ds *diag.Diagnostics) {
 	positioned := false
 	for _, e := range errs {

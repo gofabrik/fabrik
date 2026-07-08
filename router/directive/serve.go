@@ -123,9 +123,9 @@ func (s *Serve) Finish(g *gen.Gen) diag.Diagnostics {
 	if s.node == nil && !g.HasSingleton(routerPath) {
 		return nil
 	}
-	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 
 	if s.node == nil {
+		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 		osPkg := g.Import("os")
 		httpPkg := g.Import("net/http")
 		g.Stmt(gen.PhaseServe, `addr := ":8080"`)
@@ -142,7 +142,9 @@ addr = ":" + p
 	for _, p := range nd.params {
 		switch p {
 		case paramRouter:
-			args = append(args, r)
+			// Created on demand: a serve function without a router/handler
+			// parameter must not leave an unused r behind.
+			args = append(args, g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"))
 		case paramCtx:
 			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
 		}

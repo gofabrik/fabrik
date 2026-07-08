@@ -30,5 +30,5 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {
 	_ = h.greeter
 }
 -- want/diags --
-error: web/web.go:11:2: field greeter of web.Handlers is unexported
+error: web/web.go:11:2: field greeter of web.Handlers is unexported but its type has a provider
   help: fabrik wires from package main; export the field

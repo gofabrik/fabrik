@@ -27,7 +27,15 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		return nil, err
 	}
 	if res.MainDir == "" {
-		return nil, fmt.Errorf("no package main found under %s", res.Root)
+		// Run the grammar tier so directive mistakes surface alongside the
+		// error instead of being silently discarded.
+		anns := make([]gen.Annotation, len(res.Items))
+		for i, item := range res.Items {
+			anns[i] = item.Ann
+		}
+		res.Diags = append(res.Diags, SyntaxDiags(anns)...)
+		res.Diags.Sort()
+		return &Result{Diags: res.Diags}, fmt.Errorf("no package main found under %s", res.Root)
 	}
 	// Stop before directive checks when package loading is invalid.
 	if res.Diags.HasFatal() {
