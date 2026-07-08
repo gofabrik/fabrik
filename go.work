@@ -1,6 +1,7 @@
 go 1.26
 
 use (
-	./fabrik
 	./examples/hello
+	./fabrik
+	./router
 )

@@ -57,9 +57,9 @@ library.
 | Command | Description |
 | --- | --- |
 | `fabrik new <project>` | Scaffold a new project. |
-| `fabrik wire` | Scan directives and generate `main.gen.go`. |
 | `fabrik run` | Generate wiring, then `go run`. |
 | `fabrik build` | Generate wiring, then `go build`. |
+| `fabrik wire` | Scan directives and generate `main.gen.go`. |
 
 ## Directives
 
