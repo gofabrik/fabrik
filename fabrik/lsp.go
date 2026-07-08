@@ -205,7 +205,8 @@ type lspServer struct {
 	docs      map[string]string          // uri -> in-memory text
 	roots     map[string]string          // uri -> module root dir (cached)
 	published map[string]map[string]bool // root -> file URIs with visible diagnostics
-	debounce  *time.Timer
+	debounce  map[string]*time.Timer     // root -> pending typed-tier publish
+	mwCache   map[string]mwCacheEntry    // file path -> parsed middleware index
 
 	out     io.Writer
 	writeMu sync.Mutex
@@ -216,6 +217,8 @@ func newLSPServer() *lspServer {
 		docs:      map[string]string{},
 		roots:     map[string]string{},
 		published: map[string]map[string]bool{},
+		debounce:  map[string]*time.Timer{},
+		mwCache:   map[string]mwCacheEntry{},
 	}
 }
 
@@ -321,15 +324,21 @@ func (s *lspServer) handle(msg *rpcMessage) (exit bool) {
 	return false
 }
 
-// onChange publishes syntax diagnostics immediately and type diagnostics later.
+// onChange publishes syntax diagnostics immediately and type diagnostics
+// later, debounced per workspace root so edits in one project cannot cancel
+// another's pending publish.
 func (s *lspServer) onChange(uri string) {
 	s.publishSyntactic(uri)
 
-	s.mu.Lock()
-	if s.debounce != nil {
-		s.debounce.Stop()
+	root := s.rootForURI(uri)
+	if root == "" {
+		return
 	}
-	s.debounce = time.AfterFunc(debounceDelay, func() { s.publishTyped(uri) })
+	s.mu.Lock()
+	if t := s.debounce[root]; t != nil {
+		t.Stop()
+	}
+	s.debounce[root] = time.AfterFunc(debounceDelay, func() { s.publishTyped(uri) })
 	s.mu.Unlock()
 }
 
@@ -392,5 +401,8 @@ func uriFromFile(path string) string {
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p
 	}
-	return "file://" + p
+	// url.URL escapes reserved characters, so paths with spaces round-trip
+	// with the percent-encoded URIs clients send.
+	u := url.URL{Scheme: "file", Path: p}
+	return u.String()
 }

@@ -292,8 +292,7 @@ func (r *Router) core() http.Handler {
 
 func (r *Router) serveWithErrorHooks(w http.ResponseWriter, req *http.Request) {
 	st := r.scope.state
-	// ServeMux.Handler cleans "*" to "/*"; only ServeMux.ServeHTTP gives OPTIONS *
-	// its 400.
+	// OPTIONS * must go through ServeHTTP to preserve its 400.
 	if req.RequestURI == "*" {
 		st.mux.ServeHTTP(w, req)
 		return

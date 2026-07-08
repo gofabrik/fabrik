@@ -31,6 +31,9 @@ func UnknownOption(w http.ResponseWriter, r *http.Request) {}
 //fabrik:http GET /x /y
 func Extra(w http.ResponseWriter, r *http.Request) {}
 
+//fabrik:http get /lower
+func Lower(w http.ResponseWriter, r *http.Request) {}
+
 //fabrik:provider xyz
 func ProviderArg() *struct{} { return nil }
 
@@ -50,9 +53,11 @@ error: web/web.go:14:22: unknown option "foo" for //fabrik:http
   help: known options: middleware=
 error: web/web.go:17:22: unexpected argument "/y"
   help: //fabrik:http takes only METHOD and PATH
-error: web/web.go:20:19: //fabrik:provider takes no arguments (got "xyz")
+error: web/web.go:20:15: HTTP method "get" must be uppercase (methods are case-sensitive)
+  help: use GET
+error: web/web.go:23:19: //fabrik:provider takes no arguments (got "xyz")
   help: example: //fabrik:provider
-error: web/web.go:23:1: empty directive after "fabrik:"
+error: web/web.go:26:1: empty directive after "fabrik:"
   help: expected one of: http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:server, http:static, init, provider
-error: web/web.go:26:1: unknown directive "fabrik:job"
+error: web/web.go:29:1: unknown directive "fabrik:job"
   help: known: http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:server, http:static, init, provider

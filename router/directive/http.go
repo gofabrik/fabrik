@@ -87,6 +87,11 @@ func (h *HTTP) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	if !validMethod(method.Text) {
 		ds.Error(a.ArgPos(method.Col), fmt.Sprintf("invalid HTTP method %q", method.Text),
 			"any HTTP method token works: GET, POST, ..., and extensions like PURGE")
+	} else if upper := strings.ToUpper(method.Text); method.Text != upper {
+		// Routing is case-sensitive: a lowercase method registers a route no
+		// real request would ever match.
+		ds.Error(a.ArgPos(method.Col), fmt.Sprintf("HTTP method %q must be uppercase (methods are case-sensitive)", method.Text),
+			"use "+upper)
 	}
 	if !strings.HasPrefix(path.Text, "/") {
 		ds.Error(a.ArgPos(path.Col), fmt.Sprintf("route path must start with %q (got %q)", "/", path.Text),
@@ -114,7 +119,9 @@ func parseMWRefs(a gen.Annotation, mw gen.Arg) ([]mwRef, diag.Diagnostics) {
 	offset := 0
 	for _, part := range strings.SplitAfter(mw.Text, ",") {
 		ref := strings.TrimSuffix(part, ",")
-		pos := a.ArgPos(mw.Col + offset)
+		lead := len(ref) - len(strings.TrimLeft(ref, " \t"))
+		ref = strings.TrimSpace(ref)
+		pos := a.ArgPos(mw.Col + offset + lead)
 		offset += len(part)
 
 		pkg, name, qualified := strings.Cut(ref, ".")
@@ -187,7 +194,13 @@ func resolveMWRefs(t gen.Typed, own *types.Package, refs []mwRef) ([]*types.Func
 		case ref.pkg == "":
 			obj = own.Scope().Lookup(ref.name)
 		case t.Lookup != nil:
-			obj = t.Lookup(ref.pkg, ref.name)
+			var ambiguous []string
+			obj, ambiguous = t.Lookup(ref.pkg, ref.name)
+			if len(ambiguous) > 0 {
+				ds.Error(ref.pos, fmt.Sprintf("package name %q in middleware %s is ambiguous", ref.pkg, ref),
+					"matches "+strings.Join(ambiguous, " and ")+"; rename one of the packages")
+				continue
+			}
 		}
 		mf, isFunc := obj.(*types.Func)
 		if !isFunc {
@@ -209,16 +222,8 @@ func (h *HTTP) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*node)
 	var ds diag.Diagnostics
 
-	// Groups affect the effective pattern, so duplicate checks run here.
-	pattern := nd.path
-	var mws []*types.Func
-	if nd.recvObj != nil {
-		if info := h.groups.lookup(nd.recvObj); info != nil {
-			pattern = joinPattern(info.prefix, nd.path)
-			mws = append(mws, info.mws...)
-		}
-	}
-	mws = append(mws, nd.mws...)
+	// Apply groups before checking duplicate effective patterns.
+	pattern, mws := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.mws)
 
 	key := nd.method + " " + pattern
 	if d, ok := h.routes.add(key, nd.pos); !ok {
@@ -322,4 +327,10 @@ func patternError(path string) string {
 		}
 	}
 	return ""
+}
+
+// PrepareNode registers the route's receiver struct before resolution.
+func (h *HTTP) PrepareNode(n any, g *gen.Gen) {
+	nd := n.(*node)
+	prepareReceiver(g, nd.recv, nd.fset)
 }

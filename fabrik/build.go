@@ -29,7 +29,8 @@ func buildCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := wire(abs); err != nil {
+	mainDir, err := wire(abs)
+	if err != nil {
 		return err
 	}
 
@@ -37,7 +38,7 @@ func buildCmd(args []string) error {
 	if *out != "" {
 		goArgs = append(goArgs, "-o", *out)
 	}
-	goArgs = append(goArgs, ".")
+	goArgs = append(goArgs, mainPackageArg(abs, mainDir))
 
 	cmd := exec.Command("go", goArgs...)
 	cmd.Dir = abs

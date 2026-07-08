@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/format"
 	"go/types"
+	"slices"
 	"sort"
 	"strings"
 
@@ -53,9 +54,10 @@ type Gen struct {
 	binds      typeutil.Map      // types.Type -> map[string]string (name -> expr)
 	lazy       typeutil.Map      // types.Type -> map[string]*lazyBind
 	singletons map[string]string // singleton key -> var name
-	onces      map[string]bool
 	stmts      []stmtRecord
 	current    string // directive name, for provenance
+
+	materializing []string // active lazy-bind stack
 }
 
 // New returns an empty Gen.
@@ -64,7 +66,6 @@ func New() *Gen {
 		imports:    map[string]string{},
 		idents:     map[string]bool{},
 		singletons: map[string]string{},
-		onces:      map[string]bool{},
 	}
 }
 
@@ -140,6 +141,7 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 }
 
 // Instance resolves the wired expression for (t, name).
+// Failed resolutions with diagnostics are complete diagnostics.
 func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, bool) {
 	t = types.Unalias(t)
 	if m, _ := g.binds.At(t).(map[string]string); m != nil {
@@ -148,14 +150,36 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 		}
 	}
 	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
-		if lb, ok := m[name]; ok && !lb.running {
+		if lb, ok := m[name]; ok {
+			key := g.TypeExpr(t)
+			if lb.running {
+				return "", diag.Diagnostics{g.cycleDiag(key)}, false
+			}
 			lb.running = true
+			g.materializing = append(g.materializing, key)
 			expr, ds := lb.build()
+			g.materializing = g.materializing[:len(g.materializing)-1]
 			g.Bind(t, name, expr)
 			return expr, ds, true
 		}
 	}
 	return "", nil, false
+}
+
+// cycleDiag reports the active provider cycle ending at key.
+func (g *Gen) cycleDiag(key string) diag.Diagnostic {
+	chain := g.materializing
+	for i, k := range g.materializing {
+		if k == key {
+			chain = g.materializing[i:]
+			break
+		}
+	}
+	return diag.Diagnostic{
+		Severity: diag.SevError,
+		Message:  "provider cycle: " + strings.Join(append(slices.Clone(chain), key), " -> "),
+		Help:     "break the cycle by removing one of the dependencies",
+	}
 }
 
 // Singleton returns the shared variable for key, emitting it on first use.
@@ -174,19 +198,27 @@ func (g *Gen) SingletonIn(phase Phase, key, varName, ctor string) string {
 	return v
 }
 
+// HasBinding reports whether (t, name) has an eager or lazy binding,
+// without materializing anything.
+func (g *Gen) HasBinding(t types.Type, name string) bool {
+	t = types.Unalias(t)
+	if m, _ := g.binds.At(t).(map[string]string); m != nil {
+		if _, ok := m[name]; ok {
+			return true
+		}
+	}
+	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
+		if _, ok := m[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // HasSingleton reports whether key has been created.
 func (g *Gen) HasSingleton(key string) bool {
 	_, ok := g.singletons[key]
 	return ok
-}
-
-// Once reports whether key is being seen for the first time.
-func (g *Gen) Once(key string) bool {
-	if g.onces[key] {
-		return false
-	}
-	g.onces[key] = true
-	return true
 }
 
 // Stmt appends one statement to a phase.

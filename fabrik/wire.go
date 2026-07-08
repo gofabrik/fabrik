@@ -31,7 +31,8 @@ func wireCmd(args []string) error {
 	if *check {
 		return wireCheck(abs)
 	}
-	return wire(abs)
+	_, err = wire(abs)
+	return err
 }
 
 // generate reports diagnostics and returns errSilent on fatal ones.
@@ -53,20 +54,32 @@ func generate(dir string) (src []byte, out string, err error) {
 	return res.Src, filepath.Join(res.MainDir, "main.gen.go"), nil
 }
 
-func wire(dir string) error {
+// wire generates and writes main.gen.go, returning the main package's
+// directory so run/build can target layouts like cmd/app.
+func wire(dir string) (string, error) {
 	src, out, err := generate(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := os.WriteFile(out, src, 0o644); err != nil {
-		return err
+		return "", err
 	}
 	if rel, rerr := filepath.Rel(dir, out); rerr == nil {
 		fmt.Printf("fabrik: wrote %s\n", rel)
 	} else {
 		fmt.Printf("fabrik: wrote %s\n", out)
 	}
-	return nil
+	return filepath.Dir(out), nil
+}
+
+// mainPackageArg renders the go run/build target for the main package:
+// "." at the module root, "./cmd/app" for nested layouts.
+func mainPackageArg(dir, mainDir string) string {
+	rel, err := filepath.Rel(dir, mainDir)
+	if err != nil || rel == "." {
+		return "."
+	}
+	return "./" + filepath.ToSlash(rel)
 }
 
 // wireCheck fails when main.gen.go is missing or stale.

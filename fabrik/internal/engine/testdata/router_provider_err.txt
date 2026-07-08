@@ -1,0 +1,40 @@
+A user provider for the router type reports its own unresolved dependencies.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/router v0.0.0
+
+replace github.com/gofabrik/fabrik/router => ROUTERDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"github.com/gofabrik/fabrik/router"
+)
+
+type Missing struct{}
+
+//fabrik:provider
+func NewRouter(m *Missing) *router.Router { return router.New() }
+
+type Docs struct {
+	Router *router.Router
+}
+
+//fabrik:http GET /routes
+func (d *Docs) List(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:12:16: no provider for *web.Missing
+  help: add a //fabrik:provider returning *web.Missing

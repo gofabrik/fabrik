@@ -34,25 +34,7 @@ func (s *lspServer) publishSyntactic(uri string) {
 	}
 
 	anns, ds := load.ScanFile(fset, file)
-	byName := map[string]gen.Directive{}
-	var names []string
-	for _, d := range engine.New() {
-		byName[d.Name()] = d
-		names = append(names, d.Name())
-	}
-	for _, ann := range anns {
-		d, ok := byName[ann.Name]
-		if !ok {
-			if ann.Name == "" {
-				ds.Error(ann.Pos, `empty directive after "fabrik:"`, "expected one of: "+strings.Join(names, ", "))
-			} else {
-				ds.Error(ann.Pos, "unknown directive \"fabrik:"+ann.Name+"\"", "known: "+strings.Join(names, ", "))
-			}
-			continue
-		}
-		_, pds := d.Parse(ann)
-		ds = append(ds, pds...)
-	}
+	ds = append(ds, engine.SyntaxDiags(anns)...)
 
 	s.notify("textDocument/publishDiagnostics", publishDiagnosticsParams{
 		URI:         uri,
@@ -93,9 +75,18 @@ func (s *lspServer) publishTyped(uri string) {
 	}
 	s.mu.Unlock()
 
+	srcCache := map[string]string{}
+	srcFor := func(path string) string {
+		if t, ok := srcCache[path]; ok {
+			return t
+		}
+		t := sourceFor(path, texts)
+		srcCache[path] = t
+		return t
+	}
 	for _, d := range res.Diags {
 		byFile[d.Pos.Filename] = append(byFile[d.Pos.Filename], lspDiagnostic{
-			Range:    spanRange(sourceFor(d.Pos.Filename, texts), d.Pos),
+			Range:    spanRange(srcFor(d.Pos.Filename), d.Pos),
 			Severity: lspSeverity(d.Severity),
 			Source:   "fabrik",
 			Message:  diagText(d),
@@ -167,7 +158,8 @@ func spanRange(src string, pos token.Position) lspRange {
 	}
 	endCol := startCol + 1
 
-	if lineText := nthLine(src, line); startCol < len(lineText) {
+	lineText := nthLine(src, line)
+	if startCol < len(lineText) {
 		end := startCol
 		for end < len(lineText) {
 			b := lineText[end]
@@ -179,10 +171,43 @@ func spanRange(src string, pos token.Position) lspRange {
 		endCol = end
 	}
 
+	// LSP positions default to UTF-16 code units; ours are byte offsets.
 	return lspRange{
-		Start: lspPosition{Line: line, Character: startCol},
-		End:   lspPosition{Line: line, Character: endCol},
+		Start: lspPosition{Line: line, Character: utf16Col(lineText, startCol)},
+		End:   lspPosition{Line: line, Character: utf16Col(lineText, endCol)},
 	}
+}
+
+// utf16Col converts a byte offset in line to a UTF-16 code-unit offset.
+func utf16Col(line string, byteOff int) int {
+	if byteOff > len(line) {
+		byteOff = len(line)
+	}
+	n := 0
+	for _, r := range line[:byteOff] {
+		if r > 0xFFFF {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+// byteCol converts a UTF-16 code-unit offset in line to a byte offset.
+func byteCol(line string, utf16Off int) int {
+	n := 0
+	for i, r := range line {
+		if n >= utf16Off {
+			return i
+		}
+		if r > 0xFFFF {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return len(line)
 }
 
 func nthLine(src string, n int) string {
@@ -200,12 +225,10 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 		return nil
 	}
 	line := nthLine(text, pos.Line)
-	if pos.Character > len(line) {
-		pos.Character = len(line)
-	}
+	cursor := byteCol(line, pos.Character)
 
 	// Preserve trailing space to distinguish current and next token.
-	left := strings.TrimLeft(line[:pos.Character], " \t")
+	left := strings.TrimLeft(line[:cursor], " \t")
 	if !strings.HasPrefix(left, "//") {
 		return nil
 	}
@@ -294,26 +317,13 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || filepath.Base(path) == "main.gen.go" {
 			return nil
 		}
-		var src any
-		if t, ok := overlay[path]; ok {
-			src = t
-		}
-		fset := token.NewFileSet()
-		f, perr := parser.ParseFile(fset, path, src, 0)
-		if perr != nil || f.Name.Name == "main" {
-			return nil
-		}
-		for _, decl := range f.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Recv != nil || !isMiddlewareShape(fd.Type) {
+		for _, fn := range s.middlewareFuncs(path, overlay[path], d) {
+			if !fn.exported && fn.pkg != curPkg {
 				continue
 			}
-			if !fd.Name.IsExported() && f.Name.Name != curPkg {
-				continue
-			}
-			label := f.Name.Name + "." + fd.Name.Name
-			if f.Name.Name == curPkg {
-				label = fd.Name.Name
+			label := fn.pkg + "." + fn.name
+			if fn.pkg == curPkg {
+				label = fn.name
 			}
 			if seen[label] || (partial != "" && !strings.HasPrefix(label, partial)) {
 				continue
@@ -325,6 +335,61 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
 	return out
+}
+
+// mwFunc is one middleware-shaped function in the completion index.
+type mwFunc struct {
+	pkg, name string
+	exported  bool
+}
+
+// mwCacheEntry caches a file's parsed middleware functions by size and
+// modification time.
+type mwCacheEntry struct {
+	size    int64
+	modTime int64
+	funcs   []mwFunc
+}
+
+// middlewareFuncs returns the middleware-shaped functions of one file,
+// parsing overlay content fresh and caching on-disk files by stat, so
+// completion does not re-parse an unchanged workspace on every request.
+func (s *lspServer) middlewareFuncs(path, overlayText string, d iofs.DirEntry) []mwFunc {
+	var info iofs.FileInfo
+	if overlayText == "" {
+		if fi, err := d.Info(); err == nil {
+			info = fi
+			s.mu.Lock()
+			entry, hit := s.mwCache[path]
+			s.mu.Unlock()
+			if hit && entry.size == fi.Size() && entry.modTime == fi.ModTime().UnixNano() {
+				return entry.funcs
+			}
+		}
+	}
+
+	var src any
+	if overlayText != "" {
+		src = overlayText
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, src, 0)
+	var funcs []mwFunc
+	if err == nil && f.Name.Name != "main" {
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv != nil || !isMiddlewareShape(fd.Type) {
+				continue
+			}
+			funcs = append(funcs, mwFunc{pkg: f.Name.Name, name: fd.Name.Name, exported: fd.Name.IsExported()})
+		}
+	}
+	if info != nil {
+		s.mu.Lock()
+		s.mwCache[path] = mwCacheEntry{size: info.Size(), modTime: info.ModTime().UnixNano(), funcs: funcs}
+		s.mu.Unlock()
+	}
+	return funcs
 }
 
 // isMiddlewareShape recognizes func(http.Handler) http.Handler in source.
@@ -430,7 +495,7 @@ func (s *lspServer) hover(uri string, pos lspPosition) any {
 	if !isDir {
 		return nil
 	}
-	col := pos.Character - nameStart
+	col := byteCol(line, pos.Character) - nameStart
 	nameEnd := strings.IndexAny(body, " \t")
 	if nameEnd < 0 {
 		nameEnd = len(body)
@@ -446,8 +511,8 @@ func (s *lspServer) hover(uri string, pos lspPosition) any {
 		return hoverResult{
 			Contents: markupContent{Kind: "markdown", Value: d.Meta().Doc},
 			Range: &lspRange{
-				Start: lspPosition{Line: pos.Line, Character: nameStart},
-				End:   lspPosition{Line: pos.Line, Character: nameStart + nameEnd},
+				Start: lspPosition{Line: pos.Line, Character: utf16Col(line, nameStart)},
+				End:   lspPosition{Line: pos.Line, Character: utf16Col(line, nameStart+nameEnd)},
 			},
 		}
 	}

@@ -49,7 +49,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := wire(dir); err != nil {
+	if _, err := wire(dir); err != nil {
 		t.Fatalf("fabrik wire: %v", err)
 	}
 	if err := wireCheck(dir); err != nil {

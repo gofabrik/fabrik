@@ -30,8 +30,9 @@ type Typed struct {
 	Target types.Object   // the annotated func/method/type, fully typed
 	Fset   *token.FileSet // resolves positions of typed objects
 
-	// Lookup resolves pkg.Name references across app packages.
-	Lookup func(pkgName, name string) types.Object
+	// Lookup resolves pkg.Name references by package name.
+	// Ambiguous names return candidate import paths.
+	Lookup func(pkgName, name string) (obj types.Object, ambiguous []string)
 }
 
 // Directive implements one //fabrik:NAME annotation.
@@ -52,6 +53,13 @@ type Parsed struct {
 // Finisher runs after every directive has emitted.
 type Finisher interface {
 	Finish(g *Gen) diag.Diagnostics
+}
+
+// NodePreparer registers bindings for a checked node after providers have
+// registered but before anything resolves dependencies, so resolution cannot
+// depend on emission order.
+type NodePreparer interface {
+	PrepareNode(node any, g *Gen)
 }
 
 // Meta describes directive syntax, docs, and completions.

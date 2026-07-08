@@ -48,7 +48,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `fabrik — write handlers and providers, generate the wiring
+	fmt.Fprint(os.Stderr, `fabrik - write handlers and providers, generate the wiring
 
 Usage:
   fabrik <command> [args...]

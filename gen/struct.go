@@ -9,27 +9,44 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 )
 
-// EnsureStruct wires a named struct from exported fields.
-func EnsureStruct(g *Gen, fset *token.FileSet, t types.Type) (string, diag.Diagnostics) {
-	if expr, ds, ok := g.Instance(t, ""); ok {
-		return expr, ds
+// RegisterStruct lazily registers the wiring for a handler struct, given a
+// pointer-to-named-struct type. Registration up front (before anything
+// resolves dependencies) makes struct injection independent of emission
+// order. An existing binding for the type - e.g. a user provider - wins.
+func RegisterStruct(g *Gen, fset *token.FileSet, t types.Type) {
+	ptr := types.Unalias(t)
+	if g.HasBinding(ptr, "") {
+		return
 	}
+	named := namedStructOf(ptr)
+	g.BindLazy(ptr, "", func() (string, diag.Diagnostics) {
+		return buildStruct(g, fset, named)
+	})
+}
 
-	elem := types.Unalias(t)
-	deref := elem
-	if p, ok := elem.(*types.Pointer); ok {
-		deref = types.Unalias(p.Elem())
+// EnsureStruct returns the wired expression for a handler struct, given a
+// pointer-to-named-struct type, registering it first if needed.
+func EnsureStruct(g *Gen, fset *token.FileSet, t types.Type) (string, diag.Diagnostics) {
+	RegisterStruct(g, fset, t)
+	expr, ds, ok := g.Instance(types.Unalias(t), "")
+	if !ok {
+		// Only a dependency cycle through the struct itself lands here; the
+		// diagnostics explain it.
+		return "nil", ds
 	}
-	named := deref.(*types.Named)
+	return expr, ds
+}
+
+// buildStruct emits `v := &pkg.T{...}` with one injected expression per
+// exported field. Embedded fields wire like named ones (their field name is
+// the type name); unexported and unresolved fields produce diagnostics.
+func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.Diagnostics) {
 	st := named.Underlying().(*types.Struct)
 
 	var ds diag.Diagnostics
 	var fields []string
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
-		if f.Embedded() {
-			continue
-		}
 		owner := g.TypeExpr(named)
 		if !f.Exported() {
 			ds.Error(fset.Position(f.Pos()),
@@ -38,13 +55,20 @@ func EnsureStruct(g *Gen, fset *token.FileSet, t types.Type) (string, diag.Diagn
 			continue
 		}
 		expr, eds, ok := g.Instance(f.Type(), "")
-		ds = append(ds, eds...)
 		if !ok {
-			ds.Error(fset.Position(f.Pos()),
-				fmt.Sprintf("no provider for %s (field %s of %s)", g.TypeExpr(f.Type()), f.Name(), owner),
-				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(f.Type())))
+			if len(eds) == 0 {
+				ds.Error(fset.Position(f.Pos()),
+					fmt.Sprintf("no provider for %s (field %s of %s)", g.TypeExpr(f.Type()), f.Name(), owner),
+					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(f.Type())))
+			}
 			expr = "nil"
 		}
+		for i := range eds {
+			if !eds[i].Pos.IsValid() {
+				eds[i].Pos = fset.Position(f.Pos())
+			}
+		}
+		ds = append(ds, eds...)
 		fields = append(fields, fmt.Sprintf("%s: %s,", f.Name(), expr))
 	}
 
@@ -54,11 +78,17 @@ func EnsureStruct(g *Gen, fset *token.FileSet, t types.Type) (string, diag.Diagn
 	} else {
 		g.Stmt(PhaseWire, "%s := &%s{\n%s\n}", v, g.TypeExpr(named), strings.Join(fields, "\n"))
 	}
-	g.Bind(types.NewPointer(named), "", v)
-	g.Bind(named, "", "*"+v)
-
-	if _, isPtr := elem.(*types.Pointer); isPtr {
-		return v, ds
+	// The pointer form is bound by Instance when this build returns. The
+	// value form may already be bound by a value-returning provider.
+	if !g.HasBinding(named, "") {
+		g.Bind(named, "", "*"+v)
 	}
-	return "*" + v, ds
+	return v, ds
+}
+
+// namedStructOf unwraps a pointer-to-named-struct type; callers guarantee
+// the shape at Check time.
+func namedStructOf(ptr types.Type) *types.Named {
+	p := ptr.(*types.Pointer)
+	return types.Unalias(p.Elem()).(*types.Named)
 }

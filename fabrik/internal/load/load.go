@@ -56,11 +56,20 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 			byName[pkg.Name] = append(byName[pkg.Name], pkg)
 		}
 	}
-	lookup := func(pkgName, name string) types.Object {
-		if list := byName[pkgName]; len(list) == 1 {
-			return list[0].Types.Scope().Lookup(name)
+	lookup := func(pkgName, name string) (types.Object, []string) {
+		list := byName[pkgName]
+		switch len(list) {
+		case 0:
+			return nil, nil
+		case 1:
+			return list[0].Types.Scope().Lookup(name), nil
+		default:
+			paths := make([]string, len(list))
+			for i, p := range list {
+				paths[i] = p.PkgPath
+			}
+			return nil, paths
 		}
-		return nil
 	}
 
 	for _, pkg := range pkgs {
@@ -76,13 +85,20 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 				}
 				res.MainDir = mainDir
 			}
-			// package main may not type-check until main.gen.go is current.
+			// package main cannot compile until main.gen.go is current, so
+			// type and list errors ("undefined: run") are expected here; only
+			// parse errors in hand-written files are real and must surface.
+			var parseErrs []packages.Error
+			for _, e := range pkg.Errors {
+				if e.Kind == packages.ParseError {
+					parseErrs = append(parseErrs, e)
+				}
+			}
+			reportPkgErrors(parseErrs, &res.Diags)
 			warnMainDirectives(pkg, &res.Diags)
 			continue
 		}
-		for _, e := range pkg.Errors {
-			res.Diags.Error(errorPosition(e), e.Msg, "")
-		}
+		reportPkgErrors(pkg.Errors, &res.Diags)
 		scanPackage(pkg, res, lookup)
 	}
 
@@ -97,7 +113,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 	return res, nil
 }
 
-func scanPackage(pkg *packages.Package, res *Result, lookup func(string, string) types.Object) {
+func scanPackage(pkg *packages.Package, res *Result, lookup func(string, string) (types.Object, []string)) {
 	for _, file := range pkg.Syntax {
 		anns, ds := ScanFile(pkg.Fset, file)
 		res.Diags = append(res.Diags, ds...)
@@ -197,7 +213,8 @@ func argsOffset(comment, name, args string) int {
 // warnMainDirectives reports directives in package main as ignored.
 func warnMainDirectives(pkg *packages.Package, ds *diag.Diagnostics) {
 	for _, file := range pkg.Syntax {
-		anns, _ := ScanFile(pkg.Fset, file)
+		anns, sds := ScanFile(pkg.Fset, file)
+		*ds = append(*ds, sds...)
 		for _, ann := range anns {
 			ds.Warn(ann.Pos,
 				fmt.Sprintf("//fabrik:%s in package main is ignored", ann.Name),
@@ -206,20 +223,49 @@ func warnMainDirectives(pkg *packages.Package, ds *diag.Diagnostics) {
 	}
 }
 
-// errorPosition parses a packages.Error position ("file:line:col").
+// reportPkgErrors converts package errors to diagnostics, dropping exact
+// duplicates and the position-less go-list blobs that restate positioned
+// errors.
+func reportPkgErrors(errs []packages.Error, ds *diag.Diagnostics) {
+	positioned := false
+	for _, e := range errs {
+		if e.Pos != "" && e.Pos != "-" {
+			positioned = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, e := range errs {
+		if positioned && (e.Pos == "" || e.Pos == "-") {
+			continue
+		}
+		key := e.Pos + "|" + e.Msg
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		ds.Error(errorPosition(e), e.Msg, "")
+	}
+}
+
+// errorPosition parses a packages.Error position ("file:line:col" or
+// "file:line") from the right, so Windows drive-letter paths survive.
 func errorPosition(e packages.Error) token.Position {
-	parts := strings.Split(e.Pos, ":")
-	pos := token.Position{}
-	if len(parts) >= 1 {
-		pos.Filename = parts[0]
+	pos := token.Position{Filename: e.Pos}
+	rest := e.Pos
+	i := strings.LastIndexByte(rest, ':')
+	if i < 0 {
+		return pos
 	}
-	if len(parts) >= 2 {
-		pos.Line, _ = strconv.Atoi(parts[1])
+	last, err := strconv.Atoi(rest[i+1:])
+	if err != nil {
+		return pos
 	}
-	if len(parts) >= 3 {
-		pos.Column, _ = strconv.Atoi(parts[2])
+	if j := strings.LastIndexByte(rest[:i], ':'); j >= 0 {
+		if line, err := strconv.Atoi(rest[j+1 : i]); err == nil {
+			return token.Position{Filename: rest[:j], Line: line, Column: last}
+		}
 	}
-	return pos
+	return token.Position{Filename: rest[:i], Line: last}
 }
 
 func splitFirst(s string) (head, rest string) {

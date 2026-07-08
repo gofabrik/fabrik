@@ -67,25 +67,56 @@ func (rt *routeTable) conflictDiag(key string, pos token.Position, panicMsg stri
 	return d
 }
 
+// effectiveRoute applies the receiver's group to a route: prefixed pattern,
+// group chain before the route's own.
+func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []*types.Func) (string, []*types.Func) {
+	var mws []*types.Func
+	if recvObj != nil {
+		if info := groups.lookup(recvObj); info != nil {
+			path = joinPattern(info.prefix, path)
+			mws = append(mws, info.mws...)
+		}
+	}
+	return path, append(mws, own...)
+}
+
 // handlerExpr returns the expression for a handler: pkg.Func for a plain
 // function, or instance.Method through the wired receiver struct.
 func handlerExpr(g *gen.Gen, recv types.Type, pkg *types.Package, fn string, fset *token.FileSet) (string, diag.Diagnostics) {
 	if recv == nil {
 		return g.ImportPkg(pkg) + "." + fn, nil
 	}
-	// Wire through the pointer type so the instance is a selector-friendly
-	// variable; methods on value receivers are reachable through it too.
+	inst, ds := gen.EnsureStruct(g, fset, receiverPtr(recv))
+	return inst + "." + fn, ds
+}
+
+// receiverPtr normalizes a receiver type to its pointer form, so both
+// pointer and value receiver methods are selectable on the wired variable.
+func receiverPtr(recv types.Type) types.Type {
 	t := types.Unalias(recv)
 	if _, ok := t.(*types.Pointer); !ok {
 		t = types.NewPointer(t)
 	}
-	bindRouterFields(g, t)
-	inst, ds := gen.EnsureStruct(g, fset, t)
-	return inst + "." + fn, ds
+	return t
 }
 
-// bindRouterFields makes *router.Router injectable into handler structs.
-func bindRouterFields(g *gen.Gen, t types.Type) {
+// prepareReceiver registers a route receiver's struct and, when the struct
+// asks for it, the router itself, before any dependency resolution runs.
+// This keeps struct injection independent of emission order and routes
+// every materialization diagnostic through Instance.
+func prepareReceiver(g *gen.Gen, recv types.Type, fset *token.FileSet) {
+	if recv == nil {
+		return
+	}
+	t := receiverPtr(recv)
+	gen.RegisterStruct(g, fset, t)
+	registerRouterFieldBinding(g, t)
+}
+
+// registerRouterFieldBinding makes *router.Router injectable: any field of
+// that type resolves to the run's router instance. A user provider for the
+// type wins.
+func registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 	n := namedOf(t)
 	if n == nil {
 		return
@@ -99,9 +130,10 @@ func bindRouterFields(g *gen.Gen, t types.Type) {
 		if types.TypeString(types.Unalias(ft), nil) != "*"+routerPath+".Router" {
 			continue
 		}
-		if _, _, bound := g.Instance(ft, ""); !bound {
-			r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
-			g.Bind(ft, "", r)
+		if !g.HasBinding(ft, "") {
+			g.BindLazy(ft, "", func() (string, diag.Diagnostics) {
+				return g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"), nil
+			})
 		}
 	}
 }

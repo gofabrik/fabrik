@@ -109,3 +109,9 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	g.Stmt(gen.PhaseRegister, "%s.%s(%s)", r, h.method, handler)
 	return ds
 }
+
+// PrepareNode registers the hook's receiver struct before resolution.
+func (h *Hook) PrepareNode(n any, g *gen.Gen) {
+	nd := n.(*hookNode)
+	prepareReceiver(g, nd.recv, nd.fset)
+}

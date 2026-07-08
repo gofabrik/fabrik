@@ -508,7 +508,7 @@ func TestRoutesIntrospection(t *testing.T) {
 }
 
 func TestZeroValueRouterPanicsClearly(t *testing.T) {
-	// A Router built without New reports itself instead of a bare nil dereference.
+	// A zero-value Router reports constructor misuse.
 	for name, fn := range map[string]func(){
 		"Get":    func() { var r router.Router; r.Get("/a", text("a")) },
 		"Use":    func() { var r router.Router; r.Use(func(h http.Handler) http.Handler { return h }) },

@@ -13,7 +13,8 @@ import (
 
 // Provider is the //fabrik:provider directive.
 type Provider struct {
-	seen map[string]token.Position
+	seen  map[string]token.Position
+	nodes []*node
 }
 
 // NewProvider returns a Provider directive for one run.
@@ -47,6 +48,7 @@ type node struct {
 	returns []types.Type
 	params  []param
 	fset    *token.FileSet
+	built   bool // the lazy build ran, so params were already validated
 }
 
 func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
@@ -112,13 +114,37 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 // Emit registers the provider lazily.
 func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*node)
+	p.nodes = append(p.nodes, nd)
 	g.BindLazy(nd.returns[0], "", func() (string, diag.Diagnostics) {
+		nd.built = true
 		args, ds := resolveParams(g, nd.params)
 		v := g.Var(varBase(nd.pkg, nd.returns[0]))
 		g.Stmt(gen.PhaseWire, "%s := %s.%s(%s)", v, g.ImportPkg(nd.pkg), nd.fn, strings.Join(args, ", "))
 		return v, ds
 	})
 	return nil
+}
+
+// Finish validates the parameters of providers nothing materialized: their
+// build closures never ran, so unresolvable dependencies would otherwise go
+// undiagnosed until the provider is first consumed.
+func (p *Provider) Finish(g *gen.Gen) diag.Diagnostics {
+	var ds diag.Diagnostics
+	for _, nd := range p.nodes {
+		if nd.built {
+			continue
+		}
+		for _, pr := range nd.params {
+			if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
+				continue
+			}
+			if !g.HasBinding(pr.t, "") {
+				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)))
+			}
+		}
+	}
+	return ds
 }
 
 // resolveParams builds call arguments for wired parameters.
@@ -131,15 +157,27 @@ func resolveParams(g *gen.Gen, params []param) ([]string, diag.Diagnostics) {
 			continue
 		}
 		expr, eds, ok := g.Instance(pr.t, "")
-		ds = append(ds, eds...)
 		if !ok {
-			ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)))
+			if len(eds) == 0 {
+				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)))
+			}
 			expr = "nil"
 		}
+		ds = append(ds, anchor(eds, pr.pos)...)
 		args = append(args, expr)
 	}
 	return args, ds
+}
+
+// anchor fills missing diagnostic positions.
+func anchor(ds diag.Diagnostics, pos token.Position) diag.Diagnostics {
+	for i := range ds {
+		if !ds[i].Pos.IsValid() {
+			ds[i].Pos = pos
+		}
+	}
+	return ds
 }
 
 // varBase derives the generated variable name for a provided value.

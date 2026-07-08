@@ -155,3 +155,9 @@ addr = ":" + p
 func isErrorType(t types.Type) bool {
 	return types.TypeString(types.Unalias(t), nil) == "error"
 }
+
+// PrepareNode registers the serve function's receiver struct before resolution.
+func (s *Serve) PrepareNode(n any, g *gen.Gen) {
+	nd := n.(*serveNode)
+	prepareReceiver(g, nd.recv, nd.fset)
+}

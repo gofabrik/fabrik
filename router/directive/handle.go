@@ -124,15 +124,7 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*handleNode)
 	var ds diag.Diagnostics
 
-	pattern := nd.path
-	var mws []*types.Func
-	if nd.recvObj != nil {
-		if info := h.groups.lookup(nd.recvObj); info != nil {
-			pattern = joinPattern(info.prefix, nd.path)
-			mws = append(mws, info.mws...)
-		}
-	}
-	mws = append(mws, nd.mws...)
+	pattern, mws := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.mws)
 
 	if d, ok := h.routes.add(pattern, nd.pos); !ok {
 		return append(ds, d)
@@ -162,4 +154,10 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 func producesHandler(sig *types.Signature) bool {
 	return sig.Params().Len() == 0 && sig.Results().Len() == 1 && !sig.Variadic() &&
 		types.TypeString(sig.Results().At(0).Type(), nil) == "net/http.Handler"
+}
+
+// PrepareNode registers the handler's receiver struct before resolution.
+func (h *Handle) PrepareNode(n any, g *gen.Gen) {
+	nd := n.(*handleNode)
+	prepareReceiver(g, nd.recv, nd.fset)
 }

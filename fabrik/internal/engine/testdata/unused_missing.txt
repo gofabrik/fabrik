@@ -1,0 +1,30 @@
+Unresolvable dependencies are diagnosed even when nothing consumes the provider.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type DB struct{}
+
+type Unused struct{}
+
+//fabrik:provider
+func NewUnused(db *DB) *Unused { return &Unused{} }
+
+//fabrik:http GET /
+func Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:10:16: no provider for *web.DB
+  help: add a //fabrik:provider returning *web.DB
