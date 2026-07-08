@@ -1,0 +1,35 @@
+Ambiguous short package names in middleware references say so explicitly.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- a/shared/mw.go --
+package shared
+
+import "net/http"
+
+func RequireAuth(next http.Handler) http.Handler { return next }
+-- b/shared/mw.go --
+package shared
+
+import "net/http"
+
+func RequireAuth(next http.Handler) http.Handler { return next }
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /x middleware=shared.RequireAuth
+func X(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:5:33: package name "shared" in middleware shared.RequireAuth is ambiguous
+  help: matches app/a/shared and app/b/shared; rename one of the packages

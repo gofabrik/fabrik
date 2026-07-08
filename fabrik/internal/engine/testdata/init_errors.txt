@@ -1,0 +1,40 @@
+Init misuse: methods, Go's init, bad returns, arguments.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+type T struct{}
+
+//fabrik:init
+func (t *T) Setup() {}
+
+//fabrik:init
+func Bad() int { return 0 }
+
+//fabrik:init verbose
+func WithArg() {}
+
+type Dep struct{}
+
+//fabrik:init
+func Wired(d *Dep) {}
+-- want/diags --
+error: web/web.go:5:1: //fabrik:init must be on a package-level function (func Setup is a method)
+  help: move the setup function out of the method set
+error: web/web.go:8:1: init Bad must return nothing or error
+  help: example: func InitTracing(ctx context.Context) error
+error: web/web.go:11:15: //fabrik:init takes no arguments (got "verbose")
+  help: example: //fabrik:init
+error: web/web.go:17:12: init parameter d must be context.Context (inits run before providers)
+  help: move dependency setup into a //fabrik:provider

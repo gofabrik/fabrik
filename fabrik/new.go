@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -21,8 +22,14 @@ func newCmd(args []string) error {
 		return fmt.Errorf("usage: fabrik new <project> [--module path]")
 	}
 	project := args[0]
+	if strings.HasPrefix(project, "-") || len(args) > 1 {
+		return fmt.Errorf("usage: fabrik new <project> [--module path]")
+	}
 	if module == "" {
-		module = project
+		module = filepath.Base(project)
+	}
+	if strings.ContainsAny(module, " \t") {
+		return fmt.Errorf("invalid module path %q", module)
 	}
 	if _, err := os.Stat(project); err == nil {
 		return fmt.Errorf("%s already exists", project)
@@ -58,8 +65,11 @@ func newCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		defer out.Close()
 		if err := tmpl.Execute(out, data); err != nil {
+			out.Close()
+			return err
+		}
+		if err := out.Close(); err != nil {
 			return err
 		}
 		fmt.Printf("  created  %s\n", outPath)
@@ -69,12 +79,19 @@ func newCmd(args []string) error {
 		return err
 	}
 
+	// The starter must resolve its router dependency before it can build.
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = project
+	if out, terr := tidy.CombinedOutput(); terr != nil {
+		fmt.Fprintf(os.Stderr, "%s", out)
+		return fmt.Errorf("created %s, but its dependencies could not be resolved (offline?); run `go mod tidy` in %s and retry", project, project)
+	}
+
 	fmt.Printf("\nCreated %s. Next:\n  cd %s\n  fabrik run\n", project, project)
 	return nil
 }
 
-// extractFlag pulls "--name value" or "--name=value" out of args regardless of
-// position, returning the value and the remaining args.
+// extractFlag removes "--name value" or "--name=value" from args.
 func extractFlag(args []string, name string) (string, []string) {
 	prefix := "--" + name
 	for i := 0; i < len(args); i++ {

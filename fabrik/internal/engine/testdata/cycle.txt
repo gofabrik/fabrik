@@ -1,0 +1,36 @@
+Provider cycles report the chain, not a misleading missing-provider error.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type A struct{}
+type B struct{}
+
+//fabrik:provider
+func NewA(b *B) *A { return &A{} }
+
+//fabrik:provider
+func NewB(a *A) *B { return &B{} }
+
+type Handlers struct {
+	A *A
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:12:11: provider cycle: *web.A -> *web.B -> *web.A
+  help: break the cycle by removing one of the dependencies

@@ -1,0 +1,58 @@
+Misuse of hooks, handle, and static.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import (
+	"embed"
+	"net/http"
+)
+
+//fabrik:http:notfound
+func NF1(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:notfound
+func NF2(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:methodnotallowed
+func BadSig() {}
+
+//fabrik:http:handle /x
+func BadHandle(s string) {}
+
+//fabrik:http:static /assets
+var notEmbed int
+
+//fabrik:http:static /files
+//
+//go:embed web.go
+var hidden embed.FS
+
+//fabrik:http:static assets
+//
+//go:embed web.go
+var Assets2 embed.FS
+-- want/diags --
+error: web/web.go:11:1: duplicate //fabrik:http:notfound
+  help: first declared at $WORK/web/web.go:8:1
+error: web/web.go:14:1: handler BadSig has the wrong signature
+  help: want func(w http.ResponseWriter, r *http.Request)
+error: web/web.go:17:1: handler BadHandle has the wrong signature
+  help: want func(w http.ResponseWriter, r *http.Request), or func() http.Handler
+error: web/web.go:20:1: //fabrik:http:static must be on an embed.FS variable (notEmbed is int)
+  help: declare it with //go:embed as: var Assets embed.FS
+error: web/web.go:23:1: embed.FS variable hidden is unexported
+  help: fabrik wires from package main; export the variable
+error: web/web.go:28:22: static prefix must be a non-root path starting with "/" (got "assets")
+  help: example: //fabrik:http:static /assets

@@ -1,0 +1,32 @@
+Duplicate providers for one type. Route duplicates are detected at emission
+on effective patterns; see group_dup.txt.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type X struct{}
+
+//fabrik:provider
+func NewX() *X { return &X{} }
+
+//fabrik:provider
+func NewX2() *X { return &X{} }
+
+//fabrik:http GET /
+func A(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:10:1: multiple providers for type *app/web.X
+  help: only one //fabrik:provider per type is supported; first declared at $WORK/web/web.go:7:1

@@ -1,0 +1,54 @@
+Pattern syntax caught in Parse: partial-segment wildcards, bad names,
+misplaced terminal wildcards, invalid group prefixes.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /a{x}
+func A(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /{1bad}
+func B(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /{$}/tail
+func C(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /{p...}/tail
+func D(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /x/{}
+func E(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:group /api/{$}
+type F struct{}
+
+//fabrik:http:group /files/{p...}
+type G struct{}
+-- want/diags --
+error: web/web.go:5:19: invalid route pattern: a wildcard must be a full segment (in "a{x}")
+  help: wildcards: /{name}, /{name...} (rest of path, last), /{$} (exact match, last)
+error: web/web.go:8:19: invalid route pattern: invalid wildcard name in "{1bad}"
+  help: wildcards: /{name}, /{name...} (rest of path, last), /{$} (exact match, last)
+error: web/web.go:11:19: invalid route pattern: "{$}" must be the last segment
+  help: wildcards: /{name}, /{name...} (rest of path, last), /{$} (exact match, last)
+error: web/web.go:14:19: invalid route pattern: "{p...}" must be the last segment
+  help: wildcards: /{name}, /{name...} (rest of path, last), /{$} (exact match, last)
+error: web/web.go:17:19: invalid route pattern: invalid wildcard name in "{}"
+  help: wildcards: /{name}, /{name...} (rest of path, last), /{$} (exact match, last)
+error: web/web.go:20:21: group prefix cannot contain "{$}" or "{name...}" (got "/api/{$}")
+  help: terminal wildcards cannot have routes appended after them
+error: web/web.go:23:21: group prefix cannot contain "{$}" or "{name...}" (got "/files/{p...}")
+  help: terminal wildcards cannot have routes appended after them

@@ -1,0 +1,30 @@
+Multi-result providers are wire-time diagnostics, never compile errors.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+type DB struct{}
+
+//fabrik:provider
+func NewDB() (*DB, error) { return &DB{}, nil }
+
+type Pair struct{}
+
+//fabrik:provider
+func NewPair() (*Pair, *DB) { return nil, nil }
+-- want/diags --
+error: web/web.go:5:1: provider NewDB returns (*DB, error), which is not supported yet
+  help: return the value only, or handle the error inside the provider
+error: web/web.go:10:1: provider NewPair must return exactly one value
+  help: example: func NewGreeter() *Greeter

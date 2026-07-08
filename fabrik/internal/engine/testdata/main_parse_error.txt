@@ -1,0 +1,28 @@
+Syntax errors in hand-written main-package files surface at wire time.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(; err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /
+func Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: main.go:4:16: expected operand, found ';'
+error: main.go:7:3: expected ')', found 'EOF'
+error: main.go:7:3: expected ';', found 'EOF'
+error: main.go:7:3: expected '{', found 'EOF'
+error: main.go:7:3: expected '}', found 'EOF'
+error: main.go:7:3: expected operand, found 'EOF'
+error: main.go:7:3: missing ',' in argument list

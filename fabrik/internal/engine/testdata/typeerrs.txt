@@ -1,0 +1,24 @@
+Type errors stop the run before directive checks, with no follow-on noise.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+//fabrik:provider
+func NewA() *Missing1 { return nil }
+
+//fabrik:provider
+func NewB() *Missing2 { return nil }
+-- want/diags --
+error: web/web.go:4:14: undefined: Missing1
+error: web/web.go:7:14: undefined: Missing2
