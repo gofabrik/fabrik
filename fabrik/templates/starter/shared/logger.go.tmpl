@@ -1,0 +1,14 @@
+// Package shared holds resources used across the whole app.
+package shared
+
+import (
+	"log/slog"
+	"os"
+)
+
+// InitLogger installs the process-wide default logger.
+//
+//fabrik:init
+func InitLogger() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+}

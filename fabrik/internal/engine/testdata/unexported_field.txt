@@ -1,0 +1,34 @@
+Unexported handler-struct fields cannot be wired from package main.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type Greeter struct{}
+
+//fabrik:provider
+func NewGreeter() *Greeter { return &Greeter{} }
+
+type Handlers struct {
+	greeter *Greeter
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {
+	_ = h.greeter
+}
+-- want/diags --
+error: web/web.go:11:2: field greeter of web.Handlers is unexported
+  help: fabrik wires from package main; export the field

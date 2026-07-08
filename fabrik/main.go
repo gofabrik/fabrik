@@ -6,9 +6,7 @@ import (
 	"os"
 )
 
-// errSilent is returned when a command has already printed its own output
-// (e.g. formatted diagnostics) and main should exit non-zero without prefixing
-// another message.
+// errSilent exits non-zero without an extra "fabrik:" prefix.
 var errSilent = errors.New("silent")
 
 func main() {
@@ -29,6 +27,10 @@ func main() {
 		err = runCmd(args)
 	case "build":
 		err = buildCmd(args)
+	case "directives":
+		err = directivesCmd(args)
+	case "lsp":
+		err = lspCmd(args)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -52,11 +54,13 @@ Usage:
   fabrik <command> [args...]
 
 Commands:
-  new    <project>      Scaffold a new project
-  wire   [dir]          Scan directives and generate main.gen.go
-  run    [dir] [args]   Generate wiring, then go run
-  build  [dir] [-o out] Generate wiring, then go build
-  help                  Show this help
+  new    <project>       Scaffold a new project
+  wire   [-check] [dir]  Scan directives and generate main.gen.go
+  run    [dir] [args]    Generate wiring, then go run
+  build  [dir] [-o out]  Generate wiring, then go build
+  directives             Print the directive reference (DIRECTIVES.md)
+  lsp                    Run the language server (JSON-RPC over stdio)
+  help                   Show this help
 
 If [dir] is omitted, the current directory is used.
 `)

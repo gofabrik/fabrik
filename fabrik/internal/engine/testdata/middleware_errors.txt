@@ -1,0 +1,52 @@
+Middleware misuse: unresolved, wrong signature, bad reference grammar.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+func NotMiddleware(s string) string { return s }
+
+//fabrik:http:middleware
+func Wrong(s string) string { return s }
+
+type T struct{}
+
+//fabrik:http:middleware
+func (t *T) Method(next http.Handler) http.Handler { return next }
+
+//fabrik:http GET /a middleware=Missing
+func A(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /b middleware=NotMiddleware
+func B(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /c middleware=bad-ref
+func C(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /d middleware=nosuchpkg.Fn
+func D(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:7:1: middleware Wrong has the wrong signature
+  help: want func(next http.Handler) http.Handler
+error: web/web.go:12:1: //fabrik:http:middleware must be on a package-level function (func Method is a method)
+  help: move the middleware out of the method set
+error: web/web.go:15:33: cannot resolve middleware Missing
+  help: expected a package-level func(next http.Handler) http.Handler
+error: web/web.go:18:33: middleware NotMiddleware has the wrong signature
+  help: want func(next http.Handler) http.Handler
+error: web/web.go:21:33: invalid middleware reference "bad-ref"
+  help: use Name or pkg.Name, comma-separated
+error: web/web.go:24:33: cannot resolve middleware nosuchpkg.Fn
+  help: expected a package-level func(next http.Handler) http.Handler

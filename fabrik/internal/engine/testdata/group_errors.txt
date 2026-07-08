@@ -1,0 +1,31 @@
+Group misuse: non-struct target, bad prefix, unresolved middleware.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+//fabrik:http:group /api
+type NotAStruct int
+
+//fabrik:http:group api
+type BadPrefix struct{}
+
+//fabrik:http:group /admin middleware=Missing
+type Admin struct{}
+-- want/diags --
+error: web/web.go:3:1: //fabrik:http:group must be on a struct type (NotAStruct is not a struct)
+  help: handler structs hold the group's routes as methods
+error: web/web.go:6:21: group prefix must be a non-root path starting with "/" (got "api")
+  help: example: //fabrik:http:group /api
+error: web/web.go:9:39: cannot resolve middleware Missing
+  help: expected a package-level func(next http.Handler) http.Handler

@@ -1,0 +1,42 @@
+Typed checks: handler signature, provider on a method, provider without a return.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /a
+func NoArgs() {}
+
+//fabrik:http GET /b
+func WrongOrder(r *http.Request, w http.ResponseWriter) {}
+
+type T struct{}
+
+//fabrik:provider
+func (t *T) New() *T { return t }
+
+//fabrik:provider
+func NoReturn() {}
+
+var _ = http.NotFound
+-- want/diags --
+error: web/web.go:5:1: handler NoArgs has the wrong signature
+  help: want func(w http.ResponseWriter, r *http.Request)
+error: web/web.go:8:1: handler WrongOrder has the wrong signature
+  help: want func(w http.ResponseWriter, r *http.Request)
+error: web/web.go:13:1: //fabrik:provider must be on a package-level function (func New is a method)
+  help: move the constructor out of the method set
+error: web/web.go:16:1: //fabrik:provider requires a return value (func NoReturn returns nothing)
+  help: example: func NewGreeter() *Greeter

@@ -1,0 +1,32 @@
+Duplicate detection runs on effective patterns, across groups.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http:group /api
+type A struct{}
+
+//fabrik:http GET /users
+func (a *A) Users(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:group /api
+type B struct{}
+
+//fabrik:http GET /users
+func (b *B) Users(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:14:1: duplicate route GET /api/users
+  help: first declared at $WORK/web/web.go:8:1

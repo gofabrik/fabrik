@@ -1,0 +1,301 @@
+// Package load reads typed directive annotations from a fabrik project.
+package load
+
+import (
+	"fmt"
+	"go/ast"
+	"go/token"
+	"go/types"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/gen"
+	"golang.org/x/tools/go/packages"
+)
+
+// Item is one directive annotation with its semantic view.
+type Item struct {
+	Ann   gen.Annotation
+	Typed gen.Typed
+}
+
+// Result is the loaded view of a project.
+type Result struct {
+	ModulePath string
+	Root       string
+	MainDir    string // directory of package main, where main.gen.go is written
+	Items      []Item
+	Diags      diag.Diagnostics // typo warnings, ignored-in-main warnings, type errors
+}
+
+// Load type-checks the module rooted at dir and collects //fabrik: annotations.
+func Load(dir string, overlay map[string][]byte) (*Result, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+			packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedModule,
+		Dir:     dir,
+		Overlay: overlay,
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, err
+	}
+	if len(pkgs) == 0 {
+		return nil, fmt.Errorf("no Go packages found under %s", dir)
+	}
+
+	res := &Result{Root: dir}
+	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].PkgPath < pkgs[j].PkgPath })
+
+	byName := map[string][]*packages.Package{}
+	for _, pkg := range pkgs {
+		if pkg.Name != "main" && pkg.Types != nil {
+			byName[pkg.Name] = append(byName[pkg.Name], pkg)
+		}
+	}
+	lookup := func(pkgName, name string) types.Object {
+		if list := byName[pkgName]; len(list) == 1 {
+			return list[0].Types.Scope().Lookup(name)
+		}
+		return nil
+	}
+
+	for _, pkg := range pkgs {
+		if res.ModulePath == "" && pkg.Module != nil {
+			res.ModulePath = pkg.Module.Path
+			res.Root = pkg.Module.Dir
+		}
+		if pkg.Name == "main" {
+			if len(pkg.GoFiles) > 0 {
+				mainDir := filepath.Dir(pkg.GoFiles[0])
+				if res.MainDir != "" && res.MainDir != mainDir {
+					return nil, fmt.Errorf("multiple package main found: %s and %s", res.MainDir, mainDir)
+				}
+				res.MainDir = mainDir
+			}
+			// package main may not type-check until main.gen.go is current.
+			warnMainDirectives(pkg, &res.Diags)
+			continue
+		}
+		for _, e := range pkg.Errors {
+			res.Diags.Error(errorPosition(e), e.Msg, "")
+		}
+		scanPackage(pkg, res, lookup)
+	}
+
+	res.Diags.Sort()
+	sort.SliceStable(res.Items, func(i, j int) bool {
+		a, b := res.Items[i].Ann.Pos, res.Items[j].Ann.Pos
+		if a.Filename != b.Filename {
+			return a.Filename < b.Filename
+		}
+		return a.Line < b.Line
+	})
+	return res, nil
+}
+
+func scanPackage(pkg *packages.Package, res *Result, lookup func(string, string) types.Object) {
+	for _, file := range pkg.Syntax {
+		anns, ds := ScanFile(pkg.Fset, file)
+		res.Diags = append(res.Diags, ds...)
+		for _, ann := range anns {
+			var target types.Object
+			switch n := ann.Decl.(type) {
+			case *ast.FuncDecl:
+				target = pkg.TypesInfo.Defs[n.Name]
+			case *ast.TypeSpec:
+				target = pkg.TypesInfo.Defs[n.Name]
+			case *ast.ValueSpec:
+				if len(n.Names) == 1 {
+					target = pkg.TypesInfo.Defs[n.Names[0]]
+				}
+			}
+			res.Items = append(res.Items, Item{
+				Ann: ann,
+				Typed: gen.Typed{
+					Target: target,
+					Fset:   pkg.Fset,
+					Lookup: lookup,
+				},
+			})
+		}
+	}
+}
+
+// ScanFile extracts //fabrik: annotations from a parsed file.
+func ScanFile(fset *token.FileSet, file *ast.File) ([]gen.Annotation, diag.Diagnostics) {
+	var anns []gen.Annotation
+	var ds diag.Diagnostics
+	scan := func(doc *ast.CommentGroup, target ast.Node) {
+		for _, c := range doc.List {
+			text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
+			if !strings.HasPrefix(text, "fabrik:") {
+				maybeTypoWarning(fset.Position(c.Slash), text, &ds)
+				continue
+			}
+			name, args := splitFirst(strings.TrimPrefix(text, "fabrik:"))
+			pos := fset.Position(c.Slash)
+			anns = append(anns, gen.Annotation{
+				Name:    name,
+				Args:    args,
+				Pos:     pos,
+				ArgsCol: pos.Column + argsOffset(c.Text, name, args),
+				Decl:    target,
+			})
+		}
+	}
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Doc != nil {
+				scan(d.Doc, d)
+			}
+		case *ast.GenDecl:
+			if d.Tok != token.TYPE && d.Tok != token.VAR {
+				continue
+			}
+			// Match standard Go doc attribution for single-spec declarations.
+			if d.Doc != nil && len(d.Specs) == 1 {
+				scan(d.Doc, d.Specs[0])
+			}
+			for _, spec := range d.Specs {
+				switch sp := spec.(type) {
+				case *ast.TypeSpec:
+					if sp.Doc != nil {
+						scan(sp.Doc, sp)
+					}
+				case *ast.ValueSpec:
+					if sp.Doc != nil {
+						scan(sp.Doc, sp)
+					}
+				}
+			}
+		}
+	}
+	return anns, ds
+}
+
+// argsOffset returns the byte offset of the argument text.
+func argsOffset(comment, name, args string) int {
+	if args == "" {
+		return len(comment)
+	}
+	base := strings.Index(comment, "fabrik:")
+	if base < 0 {
+		return len(comment)
+	}
+	i := base + len("fabrik:") + len(name)
+	for i < len(comment) && (comment[i] == ' ' || comment[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+// warnMainDirectives reports directives in package main as ignored.
+func warnMainDirectives(pkg *packages.Package, ds *diag.Diagnostics) {
+	for _, file := range pkg.Syntax {
+		anns, _ := ScanFile(pkg.Fset, file)
+		for _, ann := range anns {
+			ds.Warn(ann.Pos,
+				fmt.Sprintf("//fabrik:%s in package main is ignored", ann.Name),
+				"move it to a subpackage")
+		}
+	}
+}
+
+// errorPosition parses a packages.Error position ("file:line:col").
+func errorPosition(e packages.Error) token.Position {
+	parts := strings.Split(e.Pos, ":")
+	pos := token.Position{}
+	if len(parts) >= 1 {
+		pos.Filename = parts[0]
+	}
+	if len(parts) >= 2 {
+		pos.Line, _ = strconv.Atoi(parts[1])
+	}
+	if len(parts) >= 3 {
+		pos.Column, _ = strconv.Atoi(parts[2])
+	}
+	return pos
+}
+
+func splitFirst(s string) (head, rest string) {
+	i := strings.IndexAny(s, " \t")
+	if i < 0 {
+		return s, ""
+	}
+	return s[:i], strings.TrimSpace(s[i:])
+}
+
+// maybeTypoWarning reports near-miss directive prefixes.
+func maybeTypoWarning(pos token.Position, text string, ds *diag.Diagnostics) {
+	word := leadingIdent(text)
+	if word == "" || word == "fabrik" {
+		return
+	}
+	rest := text[len(word)+1:]
+	if strings.EqualFold(word, "fabrik") {
+		ds.Warn(pos, fmt.Sprintf("directive prefix %q has wrong case", word),
+			"use lowercase: //fabrik:"+rest)
+		return
+	}
+	if d := levenshtein(strings.ToLower(word), "fabrik"); d > 0 && d <= 2 {
+		ds.Warn(pos, fmt.Sprintf("suspicious directive prefix %q (did you mean \"fabrik:\"?)", word+":"),
+			"example: //fabrik:"+rest)
+	}
+}
+
+// leadingIdent returns the leading ASCII identifier of text if immediately
+// followed by ":", else "".
+func leadingIdent(text string) string {
+	end := 0
+	for end < len(text) {
+		b := text[end]
+		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') {
+			end++
+			continue
+		}
+		break
+	}
+	if end == 0 || end >= len(text) || text[end] != ':' {
+		return ""
+	}
+	return text[:end]
+}
+
+func levenshtein(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			c := curr[j-1] + 1
+			if prev[j]+1 < c {
+				c = prev[j] + 1
+			}
+			if prev[j-1]+cost < c {
+				c = prev[j-1] + cost
+			}
+			curr[j] = c
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
+}

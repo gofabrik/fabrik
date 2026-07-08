@@ -1,0 +1,10 @@
+package web
+
+import "embed"
+
+// Assets are the files served under /assets.
+//
+//fabrik:http:static /assets dir=assets
+//
+//go:embed assets
+var Assets embed.FS

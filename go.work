@@ -1,7 +1,10 @@
 go 1.26
 
 use (
-	./examples/hello
+	./diag
+	./examples/demo
 	./fabrik
+	./gen
 	./router
+	./router/directive
 )

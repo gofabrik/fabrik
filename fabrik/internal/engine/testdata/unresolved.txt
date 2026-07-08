@@ -1,0 +1,37 @@
+Unresolved dependencies: a struct field and a provider parameter.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type Missing struct{}
+
+type Dep struct{}
+
+//fabrik:provider
+func NewDep(m *Missing) *Dep { return &Dep{} }
+
+type Handlers struct {
+	Dep  *Dep
+	Also *Missing
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:10:13: no provider for *web.Missing
+  help: add a //fabrik:provider returning *web.Missing
+error: web/web.go:14:2: no provider for *web.Missing (field Also of web.Handlers)
+  help: add a //fabrik:provider returning *web.Missing

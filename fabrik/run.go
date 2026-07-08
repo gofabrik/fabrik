@@ -4,14 +4,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 func runCmd(args []string) error {
 	dir := "."
 	var passthrough []string
-	if len(args) > 0 {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		dir = args[0]
 		passthrough = args[1:]
+	} else {
+		passthrough = args
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {

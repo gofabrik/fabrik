@@ -1,0 +1,34 @@
+Equivalent patterns conflict at wire time instead of panicking at startup.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /users/{id}
+func ByID(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /users/{name}
+func ByName(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /a/{x}/c
+func X(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /a/b/{y}
+func Y(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:8:1: route GET /users/{name} conflicts with GET /users/{id}
+  help: declared at $WORK/web/web.go:5:1; the patterns match the same requests and neither is more specific
+error: web/web.go:14:1: route GET /a/b/{y} conflicts with GET /a/{x}/c
+  help: declared at $WORK/web/web.go:11:1; the patterns match the same requests and neither is more specific

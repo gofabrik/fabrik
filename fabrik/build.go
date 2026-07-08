@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,13 @@ func buildCmd(args []string) error {
 	dir := "."
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)
+		// Accept flags after the optional directory.
+		if err := fs.Parse(fs.Args()[1:]); err != nil {
+			return err
+		}
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q; usage: fabrik build [dir] [-o out]", fs.Arg(0))
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
