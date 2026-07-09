@@ -128,12 +128,14 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	pattern, refs := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.refs)
 
+	// Resolve middleware before any early return: a duplicate route must
+	// still report unknown names, and its valid references count as used.
+	mws, mds := h.mw.resolve(refs)
+	ds = append(ds, mds...)
+
 	if d, ok := h.routes.add(pattern, nd.pos); !ok {
 		return append(ds, d)
 	}
-
-	mws, mds := h.mw.resolve(refs)
-	ds = append(ds, mds...)
 
 	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 	callee, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)

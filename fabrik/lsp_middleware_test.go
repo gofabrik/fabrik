@@ -31,6 +31,9 @@ import "net/http"
 //fabrik:http:middleware name=auth
 func RequireAuth(next http.Handler) http.Handler { return next }
 
+//fabrik:http:middleware name=No.Cache
+func Rejected(next http.Handler) http.Handler { return next }
+
 func unnamed(next http.Handler) http.Handler { return next }
 `)
 	webSrc := `package web
@@ -40,7 +43,7 @@ import "net/http"
 //fabrik:http:middleware name=nocache
 func NoCache(next http.Handler) http.Handler { return next }
 
-//fabrik:http GET /x middleware=
+//fabrik:http GET /x middleware=nocache, au
 func X(w http.ResponseWriter, r *http.Request) {}
 `
 	write("web/web.go", webSrc)
@@ -62,21 +65,33 @@ func X(w http.ResponseWriter, r *http.Request) {}
 		t.Fatalf("middleware completions = %+v, want nocache and auth", items)
 	}
 	for _, it := range items {
-		if strings.Contains(it.Label, "unnamed") || strings.Contains(it.Label, "RequireAuth") {
-			t.Fatalf("undeclared middleware offered: %+v", items)
+		if strings.Contains(it.Label, "unnamed") || strings.Contains(it.Label, "RequireAuth") || strings.Contains(it.Label, "No.Cache") {
+			t.Fatalf("undeclared or invalid middleware offered: %+v", items)
 		}
 	}
 
+	// After a comma and a space, the chain continues.
 	items = completionResult(t, c.request(3, "textDocument/completion", completionParams{
 		TextDocument: struct {
 			URI string `json:"uri"`
 		}{uri},
-		Position: lspPosition{Line: 7, Character: len("//fabrik:http GET /x middleware=")},
+		Position: lspPosition{Line: 7, Character: len("//fabrik:http GET /x middleware=nocache, ")},
 	}))
-	if len(items) == 0 {
-		t.Fatal("no completions for chained middleware")
+	if !hasLabel(items, "auth") {
+		t.Fatalf("chained completions after comma+space = %+v, want auth", items)
 	}
 
-	c.request(4, "shutdown", nil)
+	// A typed partial after comma+space filters by prefix.
+	items = completionResult(t, c.request(4, "textDocument/completion", completionParams{
+		TextDocument: struct {
+			URI string `json:"uri"`
+		}{uri},
+		Position: lspPosition{Line: 7, Character: len("//fabrik:http GET /x middleware=nocache, au")},
+	}))
+	if !hasLabel(items, "auth") || hasLabel(items, "nocache") {
+		t.Fatalf("partial completions after comma+space = %+v, want auth only", items)
+	}
+
+	c.request(5, "shutdown", nil)
 	c.notifyServer("exit", nil)
 }
