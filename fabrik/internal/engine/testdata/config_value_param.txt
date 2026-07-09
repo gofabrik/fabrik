@@ -41,7 +41,8 @@ import (
 )
 
 type Handlers struct {
-	DB *store.DB
+	DB  *store.DB
+	Cfg store.Config
 }
 
 //fabrik:http GET /
@@ -50,4 +51,6 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 error: store/store.go:9:12: init parameters must be context.Context or //fabrik:config structs (inits run before providers)
   help: config structs are injected as pointers; take *store.Config
 error: store/store.go:14:11: no provider for store.Config
+  help: config structs are injected as pointers; take *store.Config
+error: web/web.go:11:2: no provider for store.Config (field Cfg of web.Handlers)
   help: config structs are injected as pointers; take *store.Config

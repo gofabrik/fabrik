@@ -55,9 +55,13 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 		expr, eds, ok := g.Instance(f.Type(), "")
 		if !ok {
 			if len(eds) == 0 {
+				help, hinted := g.MissingHint(f.Type())
+				if !hinted {
+					help = fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(f.Type()))
+				}
 				ds.Error(fset.Position(f.Pos()),
 					fmt.Sprintf("no provider for %s (field %s of %s)", g.TypeExpr(f.Type()), f.Name(), owner),
-					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(f.Type())))
+					help)
 			}
 			expr = "nil"
 		}

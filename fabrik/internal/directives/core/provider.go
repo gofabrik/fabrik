@@ -188,41 +188,25 @@ func (p *Provider) Finish(g *gen.Gen) diag.Diagnostics {
 				continue
 			}
 			if !g.HasBinding(pr.t, "") {
-				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)), p.paramHelp(g, pr.t))
+				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+					missingHelp(p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
 			}
 		}
 	}
 	return ds
 }
 
-// resolveParams builds call arguments for wired parameters.
+// resolveParams builds call arguments for wired parameters: any binding
+// resolves.
 func (p *Provider) resolveParams(g *gen.Gen, params []param) ([]string, diag.Diagnostics) {
-	var ds diag.Diagnostics
-	args := make([]string, 0, len(params))
-	for _, pr := range params {
-		if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
-			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
-			continue
-		}
-		expr, eds, ok := g.Instance(pr.t, "")
-		if !ok {
-			if len(eds) == 0 {
-				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)), p.paramHelp(g, pr.t))
-			}
-			expr = "nil"
-		}
-		ds = append(ds, anchor(eds, pr.pos)...)
-		args = append(args, expr)
-	}
-	return args, ds
-}
-
-// paramHelp suggests the fix for an unresolvable parameter.
-func (p *Provider) paramHelp(g *gen.Gen, t types.Type) string {
-	if p.cfg.IsConfigValue(t) {
-		return fmt.Sprintf("config structs are injected as pointers; take *%s", g.TypeExpr(t))
-	}
-	return fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(t))
+	return resolveArgs(g, p.cfg, params,
+		func(pr param) (string, diag.Diagnostics, bool) {
+			return g.Instance(pr.t, "")
+		},
+		func(pr param) (string, string) {
+			return fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))
+		})
 }
 
 // anchor fills missing diagnostic positions.

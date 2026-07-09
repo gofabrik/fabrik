@@ -59,6 +59,7 @@ type Gen struct {
 	stmts      []stmtRecord
 	current    string // directive name, for provenance
 	module     string // module path of the generated app
+	hints      []func(types.Type) (string, bool)
 
 	materializing []string // active lazy-bind stack
 }

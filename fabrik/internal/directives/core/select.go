@@ -275,31 +275,23 @@ func checkDefaultCase(grp *selGroup, kf cfgdir.Key, impls []*node) diag.Diagnost
 // inside the case arm, so unselected implementations cost nothing at
 // startup. Anything heavier belongs inside the constructor.
 func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node, keyVar string, body *strings.Builder) ([]string, diag.Diagnostics) {
-	var ds diag.Diagnostics
-	args := make([]string, 0, len(nd.params))
-	for _, pr := range nd.params {
-		if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
-			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
-			continue
-		}
-		if cn := p.cfg.NodeFor(pr.t); cn != nil {
+	return resolveArgs(g, p.cfg, nd.params,
+		func(pr param) (string, diag.Diagnostics, bool) {
+			cn := p.cfg.NodeFor(pr.t)
+			if cn == nil {
+				return "", nil, false
+			}
 			if cn == keyNode {
-				args = append(args, keyVar)
-				continue
+				return keyVar, nil, true
 			}
 			v, stmt := p.cfg.LoadStmt(cn, g)
 			fmt.Fprintf(body, "%s\n", stmt)
-			args = append(args, v)
-			continue
-		}
-		help := "construct other dependencies inside the provider, so unselected implementations cost nothing"
-		if p.cfg.IsConfigValue(pr.t) {
-			help = fmt.Sprintf("config structs are injected as pointers; take *%s", g.TypeExpr(pr.t))
-		}
-		ds.Error(pr.pos, "case provider parameters must be //fabrik:config structs or context.Context", help)
-		args = append(args, "nil")
-	}
-	return args, ds
+			return v, nil, true
+		},
+		func(param) (string, string) {
+			return "case provider parameters must be //fabrik:config structs or context.Context",
+				"construct other dependencies inside the provider, so unselected implementations cost nothing"
+		})
 }
 
 // finishGroups validates selection completeness after emission.
@@ -325,15 +317,11 @@ func (p *Provider) finishGroups(ds *diag.Diagnostics) {
 			*ds = append(*ds, vds...)
 			for _, impl := range impls {
 				for _, pr := range impl.params {
-					if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" || p.cfg.IsConfig(pr.t) {
+					if gen.IsContext(pr.t) || p.cfg.IsConfig(pr.t) {
 						continue
 					}
-					help := "construct other dependencies inside the provider, so unselected implementations cost nothing"
-					if p.cfg.IsConfigValue(pr.t) {
-						name := types.TypeString(types.Unalias(pr.t), func(tp *types.Package) string { return tp.Name() })
-						help = fmt.Sprintf("config structs are injected as pointers; take *%s", name)
-					}
-					ds.Error(pr.pos, "case provider parameters must be //fabrik:config structs or context.Context", help)
+					ds.Error(pr.pos, "case provider parameters must be //fabrik:config structs or context.Context",
+						missingHelp(p.cfg, pr.t, "construct other dependencies inside the provider, so unselected implementations cost nothing"))
 				}
 			}
 		}

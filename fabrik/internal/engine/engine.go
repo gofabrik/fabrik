@@ -81,6 +81,11 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 
 	g := gen.New()
 	g.SetModule(res.ModulePath)
+	for _, d := range directives {
+		if h, ok := d.(gen.Hinter); ok {
+			g.AddMissingHint(h.MissingHint)
+		}
+	}
 	emitTierNodes := func(tier int) error {
 		for _, p := range parsed {
 			if emitTier(p.Directive) != tier {

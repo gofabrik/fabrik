@@ -104,29 +104,17 @@ func (i *Init) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*initNode)
 	// Inits run before providers: parameters resolve to the shared context
 	// or configuration, which the Config phase makes available first.
-	var ds diag.Diagnostics
-	args := make([]string, 0, len(nd.params))
-	for _, pr := range nd.params {
-		if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
-			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
-			continue
-		}
-		if i.cfg.IsConfig(pr.t) {
-			expr, eds, ok := g.Instance(pr.t, "")
-			ds = append(ds, anchor(eds, pr.pos)...)
-			if ok {
-				args = append(args, expr)
-				continue
+	args, ds := resolveArgs(g, i.cfg, nd.params,
+		func(pr param) (string, diag.Diagnostics, bool) {
+			if !i.cfg.IsConfig(pr.t) {
+				return "", nil, false
 			}
-		}
-		help := "move dependency setup into a //fabrik:provider"
-		if i.cfg.IsConfigValue(pr.t) {
-			help = fmt.Sprintf("config structs are injected as pointers; take *%s", g.TypeExpr(pr.t))
-		}
-		ds.Error(pr.pos, "init parameters must be context.Context or //fabrik:config structs (inits run before providers)",
-			help)
-		args = append(args, "nil")
-	}
+			return g.Instance(pr.t, "")
+		},
+		func(param) (string, string) {
+			return "init parameters must be context.Context or //fabrik:config structs (inits run before providers)",
+				"move dependency setup into a //fabrik:provider"
+		})
 	call := fmt.Sprintf("%s.%s(%s)", g.ImportPkg(nd.pkg), nd.fn, strings.Join(args, ", "))
 	if nd.returnsErr {
 		g.Stmt(gen.PhaseInit, "if err := %s; err != nil {\nreturn err\n}", call)

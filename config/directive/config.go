@@ -202,14 +202,19 @@ func (c *Config) IsConfig(t types.Type) bool {
 	return ok
 }
 
-// IsConfigValue reports config values passed where pointers are required.
-func (c *Config) IsConfigValue(t types.Type) bool {
+// MissingHint improves a missing-binding diagnostic when t is a config
+// struct passed by value - a near-miss worth its own hint, since
+// injection is by pointer. The struct counts as referenced: this runs
+// only while diagnosing, and the take-a-pointer error should not come
+// with an "unused" warning.
+func (c *Config) MissingHint(t types.Type) (string, bool) {
 	nd := c.NodeFor(types.NewPointer(types.Unalias(t)))
 	if nd == nil {
-		return false
+		return "", false
 	}
 	nd.referenced = true
-	return true
+	name := types.TypeString(types.Unalias(t), func(p *types.Package) string { return p.Name() })
+	return "config structs are injected as pointers; take *" + name, true
 }
 
 // Key is a resolved config field.
