@@ -1,14 +1,23 @@
 package web
 
-type Greeter struct {
-	Prefix string
+// Greeter builds greeting messages; greeter.kind decides which variant is
+// wired at startup.
+//
+//fabrik:provider:select greeter.kind
+type Greeter interface {
+	Greet(name string) string
 }
 
-func (g *Greeter) Greet(name string) string {
-	return g.Prefix + ", " + name + "!"
-}
+type HelloGreeter struct{}
 
-//fabrik:provider
-func NewGreeter() *Greeter {
-	return &Greeter{Prefix: "Hello"}
-}
+func (*HelloGreeter) Greet(name string) string { return "Hello, " + name + "!" }
+
+//fabrik:provider case=hello
+func NewHelloGreeter() *HelloGreeter { return &HelloGreeter{} }
+
+type GoodbyeGreeter struct{}
+
+func (*GoodbyeGreeter) Greet(name string) string { return "Goodbye, " + name + "!" }
+
+//fabrik:provider case=goodbye
+func NewGoodbyeGreeter() *GoodbyeGreeter { return &GoodbyeGreeter{} }

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	configdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
 	"github.com/gofabrik/fabrik/gen"
 	routerdir "github.com/gofabrik/fabrik/router/directive"
@@ -14,9 +15,18 @@ import (
 func New() []gen.Directive {
 	group := routerdir.NewGroup()
 	routes := routerdir.NewRouteTable()
+	// Configuration files are conventional: the base file plus a local
+	// development overlay, both optional. Apps needing different sources
+	// write a plain provider for their config struct instead.
+	cfg := configdir.New("config.yaml", "config.local.yaml")
+	provider := core.NewProvider(cfg)
+	// Slice order is Finish order: directives whose Finish emits code
+	// (http:server) come before validation-only finishers (config,
+	// provider), which must observe everything materialized.
 	return []gen.Directive{
-		core.NewProvider(),
-		core.NewInit(),
+		provider,
+		core.NewSelect(provider, cfg),
+		core.NewInit(cfg),
 		routerdir.NewHTTP(group, routes),
 		routerdir.NewHandle(group, routes),
 		routerdir.NewStatic(routes),
@@ -25,6 +35,7 @@ func New() []gen.Directive {
 		routerdir.NewNotFound(),
 		routerdir.NewMethodNotAllowed(),
 		routerdir.NewServe(),
+		cfg,
 	}
 }
 

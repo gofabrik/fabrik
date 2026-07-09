@@ -36,5 +36,3 @@ error: web/web.go:8:1: init Bad must return nothing or error
   help: example: func InitTracing(ctx context.Context) error
 error: web/web.go:11:15: //fabrik:init takes no arguments (got "verbose")
   help: example: //fabrik:init
-error: web/web.go:17:12: init parameter d must be context.Context (inits run before providers)
-  help: move dependency setup into a //fabrik:provider

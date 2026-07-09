@@ -1,0 +1,43 @@
+Section names are single top-level keys; dots are rejected at parse
+time.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- store/config.go --
+package store
+
+//fabrik:config store.primary
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+}
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type Handlers struct {
+	Store *store.Config
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/config.go:3:1: section name "store.primary" must not contain dots
+  help: a section is a single top-level key; model nesting as struct fields and address them as <section>.<field>

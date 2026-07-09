@@ -1,6 +1,8 @@
 go 1.26
 
 use (
+	./config
+	./config/directive
 	./diag
 	./examples/demo
 	./fabrik

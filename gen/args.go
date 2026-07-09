@@ -62,7 +62,7 @@ func ParseArgs(a Annotation, m Meta) (Args, diag.Diagnostics) {
 		}
 	}
 
-	if len(out.Pos) < len(m.Pos) {
+	if len(out.Pos) < requiredPos(m) {
 		missing := m.Pos[len(out.Pos)].Name
 		msg := fmt.Sprintf("%s requires %s", directive, posNames(m))
 		if len(out.Pos) > 0 {
@@ -97,6 +97,18 @@ func isIdent(s string) bool {
 		return false
 	}
 	return s != ""
+}
+
+// requiredPos counts the leading non-optional positionals.
+func requiredPos(m Meta) int {
+	n := 0
+	for _, p := range m.Pos {
+		if p.Optional {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 func posNames(m Meta) string {

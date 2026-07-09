@@ -2,11 +2,9 @@ package web
 
 import "net/http"
 
-// API groups the programmatic endpoints under /api.
-//
 //fabrik:http:group /api
 type API struct {
-	Greeter *Greeter
+	Greeter Greeter
 }
 
 //fabrik:http GET /greet/{name}

@@ -1,0 +1,25 @@
+Providers with more than one non-error result are rejected.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+type DB struct{}
+
+type Pair struct{}
+
+//fabrik:provider
+func NewPair() (*Pair, *DB) { return nil, nil }
+-- want/diags --
+error: web/web.go:7:1: provider NewPair must return exactly one value, or a value and an error
+  help: example: func NewGreeter() (*Greeter, error)

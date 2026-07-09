@@ -1,0 +1,35 @@
+Init parameters are context or config only; provider types are rejected.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type Dep struct{}
+
+//fabrik:provider
+func NewDep() *Dep { return &Dep{} }
+
+//fabrik:init
+func BadInit(d *Dep) {}
+
+type Handlers struct {
+	Dep *Dep
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:11:14: init parameters must be context.Context or //fabrik:config structs (inits run before providers)
+  help: move dependency setup into a //fabrik:provider

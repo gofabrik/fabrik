@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
+type Server struct {
+	Config *Config
+}
+
 //fabrik:http:server
-func Serve(h http.Handler) error {
-	addr := ":8080"
-	if p := os.Getenv("PORT"); p != "" {
-		addr = ":" + p
-	}
+func (s *Server) Serve(h http.Handler) error {
 	srv := &http.Server{
-		Addr:              addr,
+		Addr:              s.Config.Addr,
 		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
 	}

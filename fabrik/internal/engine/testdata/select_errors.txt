@@ -1,0 +1,87 @@
+Selection misuse: bad targets, orphan and ambiguous case providers,
+duplicate cases, unresolvable keys.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- store/store.go --
+package store
+
+//fabrik:config store
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+	Mode string `yaml:"mode"`
+}
+
+//fabrik:provider:select store.kind
+type Store interface {
+	Greet(name string) string
+}
+
+//fabrik:provider:select store.mode
+type Cache interface {
+	Get(key string) string
+}
+
+//fabrik:provider:select store.missing
+type Queue interface {
+	Push(v string)
+}
+
+type Both struct{}
+
+func (*Both) Greet(name string) string { return name }
+func (*Both) Get(key string) string    { return key }
+
+//fabrik:provider case=both
+func NewBoth() *Both { return nil }
+
+type Orphan struct{}
+
+//fabrik:provider case=orphan
+func NewOrphan() *Orphan { return nil }
+
+type Q struct{}
+
+func (*Q) Push(v string) {}
+
+//fabrik:provider case=a
+func NewQA() *Q { return nil }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type API struct {
+	Store store.Store
+	Cache store.Cache
+	Queue store.Queue
+}
+
+//fabrik:http GET /
+func (a *API) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:9:1: config key "store.kind" defaults to "memory", which matches no case= implementation
+  help: known cases: both; add a provider with case=memory or fix the default: tag
+error: store/store.go:19:1: config key "store.missing" does not match any //fabrik:config field
+  help: declare the key as a string field of a //fabrik:config struct
+error: store/store.go:29:1: case= provider matches multiple selected interfaces: app/store.Cache, app/store.Store
+  help: a case provider must implement exactly one selected interface
+error: store/store.go:34:1: case= provider matches no //fabrik:provider:select interface
+  help: declare //fabrik:provider:select <config-key> on the interface this type implements

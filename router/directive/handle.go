@@ -30,7 +30,8 @@ func (*Handle) Meta() gen.Meta {
 			"Registers a handler for every method of a pattern. Two shapes: a " +
 			"standard handler func, or a function without parameters returning " +
 			"`http.Handler`, called once at startup - the escape hatch for " +
-			"third-party handlers.\n\n" +
+			"third-party handlers. `middleware=` wraps the route in a " +
+			"comma-separated chain, same as on `//fabrik:http`.\n\n" +
 			"```go\n//fabrik:http:handle /metrics\nfunc Metrics() http.Handler { return promhttp.Handler() }\n```",
 		Example: "//fabrik:http:handle /metrics",
 		Pos: []gen.PosSpec{
@@ -88,6 +89,11 @@ func (h *Handle) Check(n any, t gen.Typed) diag.Diagnostics {
 	fn, ok := t.Target.(*types.Func)
 	if !ok {
 		ds.Error(nd.pos, "//fabrik:http:handle must be on a function", "")
+		return ds
+	}
+	if isGenericFunc(fn) {
+		ds.Error(nd.pos, fmt.Sprintf("handler %s cannot be generic (generated code cannot instantiate type parameters)", fn.Name()),
+			"declare a concrete handler")
 		return ds
 	}
 	sig := fn.Signature()

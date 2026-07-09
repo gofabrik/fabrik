@@ -35,7 +35,10 @@ func newCmd(args []string) error {
 		return fmt.Errorf("%s already exists", project)
 	}
 
-	data := struct{ Module string }{Module: module}
+	data := struct {
+		Module    string
+		EnvPrefix string
+	}{Module: module, EnvPrefix: envPrefix(module)}
 
 	err := fs.WalkDir(templatesFS, starterRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -87,8 +90,47 @@ func newCmd(args []string) error {
 		return fmt.Errorf("created %s, but its dependencies could not be resolved (offline?); run `go mod tidy` in %s and retry", project, project)
 	}
 
+	// Wire immediately and tidy again: the generated file imports modules
+	// (config) that no hand-written source references, and the project
+	// should build the moment new returns.
+	abs, err := filepath.Abs(project)
+	if err != nil {
+		return err
+	}
+	if _, err := wire(abs); err != nil {
+		return err
+	}
+	tidy = exec.Command("go", "mod", "tidy")
+	tidy.Dir = project
+	if out, terr := tidy.CombinedOutput(); terr != nil {
+		fmt.Fprintf(os.Stderr, "%s", out)
+		return fmt.Errorf("created and wired %s, but `go mod tidy` failed; fix and retry", project)
+	}
+
 	fmt.Printf("\nCreated %s. Next:\n  cd %s\n  fabrik run\n", project, project)
 	return nil
+}
+
+// envPrefix derives the scaffolded app's environment prefix from the last
+// module path element: my-app -> MY_APP.
+func envPrefix(module string) string {
+	base := module
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	var b strings.Builder
+	for _, r := range strings.ToUpper(base) {
+		if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	p := b.String()
+	if p == "" || p[0] >= '0' && p[0] <= '9' {
+		p = "APP" + p
+	}
+	return p
 }
 
 // extractFlag removes "--name value" or "--name=value" from args.

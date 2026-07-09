@@ -1,0 +1,53 @@
+Config structs are injected as pointers; value parameters get a
+pointer hint instead of a generic missing-provider error.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- store/store.go --
+package store
+
+//fabrik:config store
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+}
+
+//fabrik:init
+func Setup(c Config) error { return nil }
+
+type DB struct{}
+
+//fabrik:provider
+func Open(c Config) *DB { return &DB{} }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type Handlers struct {
+	DB *store.DB
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:9:12: init parameters must be context.Context or //fabrik:config structs (inits run before providers)
+  help: config structs are injected as pointers; take *store.Config
+error: store/store.go:14:11: no provider for store.Config
+  help: config structs are injected as pointers; take *store.Config

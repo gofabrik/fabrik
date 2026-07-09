@@ -60,6 +60,11 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 			"move the middleware out of the method set")
 		return ds
 	}
+	if isGenericFunc(fn) {
+		ds.Error(nd.pos, fmt.Sprintf("middleware %s cannot be generic (generated code cannot instantiate type parameters)", fn.Name()),
+			"declare a concrete middleware")
+		return ds
+	}
 	if !isMiddlewareSignature(sig) {
 		ds.Error(nd.pos, fmt.Sprintf("middleware %s has the wrong signature", fn.Name()),
 			"want func(next http.Handler) http.Handler")

@@ -1,0 +1,6 @@
+package shared
+
+//fabrik:config http
+type Config struct {
+	Addr string `yaml:"addr" env:"{{.EnvPrefix}}_HTTP_ADDR" default:":8080"`
+}

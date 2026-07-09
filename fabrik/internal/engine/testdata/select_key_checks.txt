@@ -1,0 +1,92 @@
+Static key checks: yaml:"-" fields are invisible to selection keys, and
+a default: value must name a known case.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- store/store.go --
+package store
+
+//fabrik:config store
+type Config struct {
+	Kind   string `yaml:"kind" default:"redis"`
+	Hidden string `yaml:"-"`
+}
+
+//fabrik:provider:select store.-
+type Store interface {
+	Get(key string) string
+}
+
+type Memory struct{}
+
+func (*Memory) Get(key string) string { return key }
+
+//fabrik:provider case=memory
+func NewMemory() *Memory { return &Memory{} }
+
+//fabrik:provider:select store.kind
+type Cache interface {
+	Lookup(key string) string
+}
+
+type MemCache struct{}
+
+func (*MemCache) Lookup(key string) string { return key }
+
+//fabrik:provider case=memory
+func NewMemCache() *MemCache { return &MemCache{} }
+
+//fabrik:provider:select store.kind
+type Queue interface {
+	Push(item string)
+}
+
+type RedisQueue struct{}
+
+func (*RedisQueue) Push(item string) {}
+
+//fabrik:provider case=redis
+func NewRedisQueue() *RedisQueue { return &RedisQueue{} }
+
+type RedisQueue2 struct{}
+
+func (*RedisQueue2) Push(item string) {}
+
+//fabrik:provider case=redis
+func NewRedisQueue2() *RedisQueue2 { return &RedisQueue2{} }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type Handlers struct {
+	Store store.Store
+	Cache store.Cache
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:9:1: config key "store.-" does not match any //fabrik:config field
+  help: declare the key as a string field of a //fabrik:config struct
+error: store/store.go:21:1: config key "store.kind" defaults to "redis", which matches no case= implementation
+  help: known cases: memory; add a provider with case=redis or fix the default: tag
+error: store/store.go:49:1: duplicate implementation for case=redis
+  help: first declared at $WORK/store/store.go:42:1

@@ -71,6 +71,11 @@ func (s *Serve) Check(n any, t gen.Typed) diag.Diagnostics {
 		ds.Error(nd.pos, "//fabrik:http:server must be on a function", "")
 		return ds
 	}
+	if isGenericFunc(fn) {
+		ds.Error(nd.pos, fmt.Sprintf("serve function %s cannot be generic (generated code cannot instantiate type parameters)", fn.Name()),
+			"declare a concrete function")
+		return ds
+	}
 	sig := fn.Signature()
 	if recv := sig.Recv(); recv != nil {
 		if !isNamedStruct(recv.Type()) {
