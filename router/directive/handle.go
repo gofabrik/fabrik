@@ -142,17 +142,31 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	// Middleware and produced handlers require http.Handler registration.
 	if !nd.produces && len(mws) == 0 {
-		g.Stmt(gen.PhaseRegister, "%s.HandleFunc(%q, %s)", r, pattern, callee)
+		g.Node(&gen.Route{
+			Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+			Router:  r,
+			Kind:    gen.RouteHandleFunc,
+			Pattern: pattern,
+			Handler: callee,
+		})
 		return ds
 	}
-	expr := callee + "()"
+	handler := callee + "()"
 	if !nd.produces {
-		expr = g.Import("net/http") + ".HandlerFunc(" + callee + ")"
+		handler = g.Import("net/http") + ".HandlerFunc(" + callee + ")"
 	}
-	for i := len(mws) - 1; i >= 0; i-- {
-		expr = g.ImportPkg(mws[i].pkg) + "." + mws[i].fn + "(" + expr + ")"
+	chain := make([]string, 0, len(mws))
+	for _, mw := range mws {
+		chain = append(chain, g.ImportPkg(mw.pkg)+"."+mw.fn)
 	}
-	g.Stmt(gen.PhaseRegister, "%s.Handle(%q, %s)", r, pattern, expr)
+	g.Node(&gen.Route{
+		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+		Router:  r,
+		Kind:    gen.RouteHandle,
+		Pattern: pattern,
+		Handler: handler,
+		Chain:   chain,
+	})
 	return ds
 }
 

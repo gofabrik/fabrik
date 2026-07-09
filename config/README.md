@@ -60,7 +60,7 @@ addr := cfg.Server.Addr
 ttl := cfg.Cache.StatusTTL.Duration()
 ```
 
-A layer can also come from memory:
+Layers can also come from memory:
 
 ```go
 //go:embed defaults.yaml
@@ -118,7 +118,7 @@ A few behaviors worth knowing:
 |---|---|
 | `yaml:"name"` | Key in the file and dotted path in errors. `yaml:"-"` hides the field from the file; `default:` and `env:` still apply. |
 | `default:"v"` | Value used when nothing else sets the field. |
-| `env:"NAME"` | This field may be overridden by `$NAME`. |
+| `env:"NAME"` | Override from `$NAME`. |
 | `secret:"true"` | Redacted by `config.Dump`. |
 
 ## Types

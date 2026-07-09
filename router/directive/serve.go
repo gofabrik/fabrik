@@ -133,11 +133,19 @@ func (s *Serve) Finish(g *gen.Gen) diag.Diagnostics {
 		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 		osPkg := g.Import("os")
 		httpPkg := g.Import("net/http")
-		g.Stmt(gen.PhaseServe, `addr := ":8080"`)
-		g.Stmt(gen.PhaseServe, `if p := %s.Getenv("PORT"); p != "" {
-addr = ":" + p
-}`, osPkg)
-		g.Stmt(gen.PhaseServe, "return %s.ListenAndServe(addr, %s)", httpPkg, r)
+		g.Node(&gen.Raw{
+			Base:    gen.Base{Phase: gen.PhaseServe},
+			Lines:   []string{`addr := ":8080"`},
+			Defines: []string{"addr"},
+		})
+		g.Node(&gen.Raw{
+			Base:  gen.Base{Phase: gen.PhaseServe},
+			Lines: []string{fmt.Sprintf(`if p := %s.Getenv("PORT"); p != "" {`, osPkg), `addr = ":" + p`, `}`},
+		})
+		g.Node(&gen.Serve{
+			Base: gen.Base{Phase: gen.PhaseServe},
+			Expr: httpPkg + ".ListenAndServe(addr, " + r + ")",
+		})
 		return nil
 	}
 
@@ -154,7 +162,10 @@ addr = ":" + p
 			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
 		}
 	}
-	g.Stmt(gen.PhaseServe, "return %s(%s)", callee, strings.Join(args, ", "))
+	g.Node(&gen.Serve{
+		Base: gen.Base{Phase: gen.PhaseServe, Origin: gen.Origin{Pos: nd.pos}},
+		Expr: callee + "(" + strings.Join(args, ", ") + ")",
+	})
 	return ds
 }
 

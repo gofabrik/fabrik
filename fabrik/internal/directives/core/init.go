@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"strings"
 
 	cfgdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/diag"
@@ -114,11 +113,15 @@ func (i *Init) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			return "init parameters must be context.Context or //fabrik:config structs (inits run before providers)",
 				"move dependency setup into a //fabrik:provider"
 		})
-	call := fmt.Sprintf("%s.%s(%s)", g.ImportPkg(nd.pkg), nd.fn, strings.Join(args, ", "))
+	errStyle := gen.ErrNone
 	if nd.returnsErr {
-		g.Stmt(gen.PhaseInit, "if err := %s; err != nil {\nreturn err\n}", call)
-	} else {
-		g.Stmt(gen.PhaseInit, "%s", call)
+		errStyle = gen.ErrInline
 	}
+	g.Node(&gen.Call{
+		Base: gen.Base{Phase: gen.PhaseInit, Origin: gen.Origin{Pos: nd.pos}},
+		Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
+		Args: args,
+		Err:  errStyle,
+	})
 	return ds
 }

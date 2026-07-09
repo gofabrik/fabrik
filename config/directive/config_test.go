@@ -31,7 +31,11 @@ func typecheck(t *testing.T, src string) (*types.Package, *token.FileSet) {
 // register drives Parse and Check for one annotated struct.
 func register(t *testing.T, c *Config, pkg *types.Package, fset *token.FileSet, section, typeName string) []string {
 	t.Helper()
-	n, ds := c.Parse(gen.Annotation{Name: "config", Args: section})
+	n, ds := c.Parse(gen.Annotation{
+		Name: "config",
+		Args: section,
+		Pos:  token.Position{Filename: "store/config.go", Line: 3, Column: 1},
+	})
 	if ds.HasFatal() {
 		t.Fatalf("Parse(%q): %v", section, ds)
 	}
@@ -135,5 +139,34 @@ func TestMissingHint(t *testing.T) {
 	}
 	if _, ok := c.MissingHint(pkg.Scope().Lookup("Kind").Type()); ok {
 		t.Fatal("MissingHint(Kind) matched a non-config type")
+	}
+}
+
+func TestLoadNodePhaseContract(t *testing.T) {
+	pkg, fset := typecheck(t, keySrc)
+	c := New("config.yaml")
+	if msgs := register(t, c, pkg, fset, "store", "Config"); len(msgs) > 0 {
+		t.Fatalf("Check: %v", msgs)
+	}
+	nd, _, ok := c.ResolveKey("store.kind")
+	if !ok {
+		t.Fatal("ResolveKey failed")
+	}
+
+	g := gen.New()
+	_, load := c.LoadNode(nd, g, gen.PhaseWire)
+	if load.Phase != gen.PhaseWire {
+		t.Fatalf("nested load phase = %v, want the caller's PhaseWire", load.Phase)
+	}
+	if load.Origin.Directive != "config" {
+		t.Fatalf("load directive = %q, want explicit owner %q", load.Origin.Directive, "config")
+	}
+	if !load.Origin.Pos.IsValid() {
+		t.Fatal("load has no source anchor")
+	}
+
+	_, global := c.LoadNode(nd, gen.New(), gen.PhaseConfig)
+	if global.Phase != gen.PhaseConfig {
+		t.Fatalf("global load phase = %v, want PhaseConfig", global.Phase)
 	}
 }

@@ -172,15 +172,21 @@ func (p *Provider) buildGroup(grp *selGroup, g *gen.Gen) (string, diag.Diagnosti
 		return "nil", ds
 	}
 
-	kindVar := g.Var(base + "Kind")
-	g.Stmt(gen.PhaseWire, "%s := %s.%s", kindVar, cfgVar, strings.Join(kf.Path, "."))
-
 	v := g.Var(base)
-	g.Stmt(gen.PhaseWire, "var %s %s", v, g.TypeExpr(grp.iface))
+	iface := g.TypeExpr(grp.iface)
+	sel := &gen.Select{
+		Base: gen.Base{
+			Phase:  gen.PhaseWire,
+			Origin: gen.Origin{Pos: grp.sel.pos},
+			Label:  fmt.Sprintf("%s, selected by %s", iface, grp.sel.key),
+		},
+		Var:     v,
+		Iface:   iface,
+		KeyExpr: cfgVar + "." + strings.Join(kf.Path, "."),
+		FmtPkg:  g.Import("fmt"),
+	}
 
 	impls := p.groupImpls(grp)
-	var b strings.Builder
-	fmt.Fprintf(&b, "switch %s {\n", kindVar)
 	emitted := map[string]bool{}
 	for _, impl := range impls {
 		if emitted[impl.caseVal] {
@@ -188,20 +194,17 @@ func (p *Provider) buildGroup(grp *selGroup, g *gen.Gen) (string, diag.Diagnosti
 		}
 		emitted[impl.caseVal] = true
 		impl.built = true
-		fmt.Fprintf(&b, "case %q:\n", impl.caseVal)
-		args, ids := p.resolveCaseParams(g, impl, cfgNode, cfgVar, &b)
+		var body []gen.Node
+		args, ids := p.resolveCaseParams(g, impl, cfgNode, cfgVar, &body)
 		ds = append(ds, ids...)
-		call := fmt.Sprintf("%s.%s(%s)", g.ImportPkg(impl.pkg), impl.fn, strings.Join(args, ", "))
+		result := gen.Call{Fn: g.ImportPkg(impl.pkg) + "." + impl.fn, Args: args}
 		if impl.returnsErr {
-			tmp := g.Var(base + exportish(impl.caseVal))
-			fmt.Fprintf(&b, "%s, err := %s\nif err != nil {\nreturn err\n}\n%s = %s\n", tmp, call, v, tmp)
-		} else {
-			fmt.Fprintf(&b, "%s = %s\n", v, call)
+			result.Var = g.Var(base + exportish(impl.caseVal))
+			result.Err = gen.ErrReturn
 		}
+		sel.Cases = append(sel.Cases, gen.Case{Value: impl.caseVal, Body: body, Result: result})
 	}
-	fmt.Fprintf(&b, "default:\nreturn %s.Errorf(\"no %s implementation for %%q\", %s)\n}",
-		g.Import("fmt"), g.TypeExpr(grp.iface), kindVar)
-	g.Stmt(gen.PhaseWire, "%s", b.String())
+	g.Node(sel)
 	return v, ds
 }
 
@@ -260,7 +263,7 @@ func checkDefaultCase(grp *selGroup, kf cfgdir.Key, impls []*node) diag.Diagnost
 }
 
 // resolveCaseParams accepts only context and config parameters.
-func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node, keyVar string, body *strings.Builder) ([]string, diag.Diagnostics) {
+func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node, keyVar string, body *[]gen.Node) ([]string, diag.Diagnostics) {
 	return resolveArgs(g, p.cfg, nd.params,
 		func(pr param) (string, diag.Diagnostics, bool) {
 			cn := p.cfg.NodeFor(pr.t)
@@ -270,8 +273,8 @@ func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node,
 			if cn == keyNode {
 				return keyVar, nil, true
 			}
-			v, stmt := p.cfg.LoadStmt(cn, g)
-			fmt.Fprintf(body, "%s\n", stmt)
+			v, load := p.cfg.LoadNode(cn, g, gen.PhaseWire)
+			*body = append(*body, load)
 			return v, nil, true
 		},
 		func(param) (string, string) {
