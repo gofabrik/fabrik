@@ -67,16 +67,17 @@ func (rt *routeTable) conflictDiag(key string, pos token.Position, panicMsg stri
 	return d
 }
 
-// effectiveRoute applies the receiver group's prefix and middleware.
-func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []*types.Func) (string, []*types.Func) {
-	var mws []*types.Func
+// effectiveRoute applies the receiver group's prefix and middleware
+// references; the route resolves the merged chain against declared names.
+func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []mwRef) (string, []mwRef) {
+	var refs []mwRef
 	if recvObj != nil {
 		if info := groups.lookup(recvObj); info != nil {
 			path = joinPattern(info.prefix, path)
-			mws = append(mws, info.mws...)
+			refs = append(refs, info.refs...)
 		}
 	}
-	return path, append(mws, own...)
+	return path, append(refs, own...)
 }
 
 // handlerExpr returns the expression for a handler: pkg.Func for a plain

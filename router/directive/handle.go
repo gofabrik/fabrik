@@ -14,24 +14,25 @@ import (
 type Handle struct {
 	groups *Group
 	routes *routeTable
+	mw     *Middleware
 }
 
 // NewHandle returns a Handle directive for one run.
-func NewHandle(groups *Group, routes *routeTable) *Handle {
-	return &Handle{groups: groups, routes: routes}
+func NewHandle(groups *Group, routes *routeTable, mw *Middleware) *Handle {
+	return &Handle{groups: groups, routes: routes, mw: mw}
 }
 
 func (*Handle) Name() string { return "http:handle" }
 
 func (*Handle) Meta() gen.Meta {
 	return gen.Meta{
-		Synopsis: "Method-agnostic handler: /path [middleware=A,B]",
-		Doc: "**`//fabrik:http:handle /path [middleware=Name,pkg.Name]`**\n\n" +
+		Synopsis: "Method-agnostic handler: /path [middleware=a,b]",
+		Doc: "**`//fabrik:http:handle /path [middleware=name,name2]`**\n\n" +
 			"Registers a handler for every method of a pattern. Two shapes: a " +
 			"standard handler func, or a function without parameters returning " +
 			"`http.Handler`, called once at startup - the escape hatch for " +
 			"third-party handlers. `middleware=` wraps the route in a " +
-			"comma-separated chain, same as on `//fabrik:http`.\n\n" +
+			"comma-separated chain of declared names, same as on `//fabrik:http`.\n\n" +
 			"```go\n//fabrik:http:handle /metrics\nfunc Metrics() http.Handler { return promhttp.Handler() }\n```",
 		Example: "//fabrik:http:handle /metrics",
 		Pos: []gen.PosSpec{
@@ -53,7 +54,6 @@ type handleNode struct {
 	recv     types.Type
 	recvObj  *types.TypeName
 	produces bool // func() http.Handler shape
-	mws      []*types.Func
 	fset     *token.FileSet
 }
 
@@ -116,10 +116,6 @@ func (h *Handle) Check(n any, t gen.Typed) diag.Diagnostics {
 		nd.recvObj = namedOf(recv.Type()).Obj()
 	}
 
-	mws, mds := resolveMWRefs(t, fn.Pkg(), nd.refs)
-	ds = append(ds, mds...)
-	nd.mws = mws
-
 	nd.fn = fn.Name()
 	nd.pkg = fn.Pkg()
 	nd.fset = t.Fset
@@ -130,11 +126,14 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*handleNode)
 	var ds diag.Diagnostics
 
-	pattern, mws := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.mws)
+	pattern, refs := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.refs)
 
 	if d, ok := h.routes.add(pattern, nd.pos); !ok {
 		return append(ds, d)
 	}
+
+	mws, mds := h.mw.resolve(refs)
+	ds = append(ds, mds...)
 
 	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 	callee, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
@@ -150,7 +149,7 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		expr = g.Import("net/http") + ".HandlerFunc(" + callee + ")"
 	}
 	for i := len(mws) - 1; i >= 0; i-- {
-		expr = g.ImportPkg(mws[i].Pkg()) + "." + mws[i].Name() + "(" + expr + ")"
+		expr = g.ImportPkg(mws[i].pkg) + "." + mws[i].fn + "(" + expr + ")"
 	}
 	g.Stmt(gen.PhaseRegister, "%s.Handle(%q, %s)", r, pattern, expr)
 	return ds

@@ -15,6 +15,7 @@ import (
 func New() []gen.Directive {
 	group := routerdir.NewGroup()
 	routes := routerdir.NewRouteTable()
+	mw := routerdir.NewMiddleware()
 	// Configuration files are conventional: the base file plus a local
 	// development overlay, both optional. Apps needing different sources
 	// write a plain provider for their config struct instead.
@@ -27,11 +28,11 @@ func New() []gen.Directive {
 		provider,
 		core.NewSelect(provider, cfg),
 		core.NewInit(cfg),
-		routerdir.NewHTTP(group, routes),
-		routerdir.NewHandle(group, routes),
+		routerdir.NewHTTP(group, routes, mw),
+		routerdir.NewHandle(group, routes, mw),
 		routerdir.NewStatic(routes),
 		group,
-		routerdir.NewMiddleware(),
+		mw,
 		routerdir.NewNotFound(),
 		routerdir.NewMethodNotAllowed(),
 		routerdir.NewServe(),

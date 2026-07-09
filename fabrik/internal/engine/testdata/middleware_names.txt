@@ -1,0 +1,43 @@
+Name resolution: middleware= references declared names; unknown names
+error with the declared set, unreferenced named middleware warns.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http:middleware name=auth
+func RequireAuth(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=idle
+func Idle(next http.Handler) http.Handler { return next }
+
+//fabrik:http:group /admin middleware=missing
+type Admin struct{}
+
+//fabrik:http GET /users
+func (a *Admin) Users(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /login middleware=nosuch
+func Login(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /account middleware=auth
+func Account(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+warning: web/web.go:8:1: middleware "idle" is never referenced
+  help: list it in a middleware= chain, or drop name= to make it global
+error: web/web.go:11:39: unknown middleware "missing"
+  help: declared names: auth, idle
+error: web/web.go:17:37: unknown middleware "nosuch"
+  help: declared names: auth, idle

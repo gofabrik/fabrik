@@ -19,26 +19,27 @@ var httpMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPT
 type HTTP struct {
 	groups *Group
 	routes *routeTable
+	mw     *Middleware
 }
 
 // NewHTTP returns an HTTP directive for one run.
-func NewHTTP(groups *Group, routes *routeTable) *HTTP {
-	return &HTTP{groups: groups, routes: routes}
+func NewHTTP(groups *Group, routes *routeTable, mw *Middleware) *HTTP {
+	return &HTTP{groups: groups, routes: routes, mw: mw}
 }
 
 func (*HTTP) Name() string { return "http" }
 
 func (*HTTP) Meta() gen.Meta {
 	return gen.Meta{
-		Synopsis: "HTTP route: METHOD /path [middleware=A,B]",
-		Doc: "**`//fabrik:http METHOD /path [middleware=Name,pkg.Name]`**\n\n" +
+		Synopsis: "HTTP route: METHOD /path [middleware=a,b]",
+		Doc: "**`//fabrik:http METHOD /path [middleware=name,name2]`**\n\n" +
 			"Registers a standard `net/http` handler on the fabrik router. " +
 			"METHOD is any HTTP method token, including extensions like PURGE. " +
 			"Handler signature: `func(w http.ResponseWriter, r *http.Request)`, " +
 			"on a plain function or a method of a wired struct. " +
-			"`middleware=` wraps this route in a comma-separated chain, " +
-			"outermost first; a bare name resolves in the handler's package.\n\n" +
-			"```go\n//fabrik:http GET /login\n//fabrik:http POST /account middleware=shared.RequireAuth\n```",
+			"`middleware=` wraps this route in a comma-separated chain of " +
+			"`//fabrik:http:middleware name=` declarations, outermost first.\n\n" +
+			"```go\n//fabrik:http GET /login\n//fabrik:http POST /account middleware=auth\n```",
 		Example: "//fabrik:http GET /login",
 		Pos: []gen.PosSpec{
 			// Values seed completions; Parse accepts any method token.
@@ -51,18 +52,10 @@ func (*HTTP) Meta() gen.Meta {
 	}
 }
 
-// mwRef is one unresolved middleware reference from a middleware= chain.
+// mwRef is one middleware= reference to a declared middleware name.
 type mwRef struct {
-	pkg  string // "" resolves in the handler's package
 	name string
 	pos  token.Position
-}
-
-func (r mwRef) String() string {
-	if r.pkg == "" {
-		return r.name
-	}
-	return r.pkg + "." + r.name
 }
 
 type node struct {
@@ -74,7 +67,6 @@ type node struct {
 	pkg     *types.Package
 	recv    types.Type      // nil for a plain function handler
 	recvObj *types.TypeName // the receiver's type name, for group lookup
-	mws     []*types.Func
 	fset    *token.FileSet
 }
 
@@ -112,7 +104,7 @@ func (h *HTTP) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	return nd, ds
 }
 
-// parseMWRefs splits middleware= into positioned Name or pkg.Name references.
+// parseMWRefs splits middleware= into positioned declared-name references.
 func parseMWRefs(a gen.Annotation, mw gen.Arg) ([]mwRef, diag.Diagnostics) {
 	var refs []mwRef
 	var ds diag.Diagnostics
@@ -124,16 +116,17 @@ func parseMWRefs(a gen.Annotation, mw gen.Arg) ([]mwRef, diag.Diagnostics) {
 		pos := a.ArgPos(mw.Col + offset + lead)
 		offset += len(part)
 
-		pkg, name, qualified := strings.Cut(ref, ".")
-		if !qualified {
-			pkg, name = "", ref
-		}
-		if name == "" || !isIdentifier(name) || (qualified && !isIdentifier(pkg)) {
-			ds.Error(pos, fmt.Sprintf("invalid middleware reference %q", ref),
-				"use Name or pkg.Name, comma-separated")
+		if strings.Contains(ref, ".") {
+			ds.Error(pos, fmt.Sprintf("middleware %q references code; middleware= takes declared names", ref),
+				"declare //fabrik:http:middleware name=<name> on the function and reference the name")
 			continue
 		}
-		refs = append(refs, mwRef{pkg: pkg, name: name, pos: pos})
+		if !isIdentifier(ref) {
+			ds.Error(pos, fmt.Sprintf("invalid middleware name %q", ref),
+				"use declared names, comma-separated: middleware=auth,audit")
+			continue
+		}
+		refs = append(refs, mwRef{name: ref, pos: pos})
 	}
 	return refs, ds
 }
@@ -179,53 +172,10 @@ func (h *HTTP) Check(n any, t gen.Typed) diag.Diagnostics {
 		nd.recvObj = namedOf(recv.Type()).Obj()
 	}
 
-	mws, mds := resolveMWRefs(t, fn.Pkg(), nd.refs)
-	ds = append(ds, mds...)
-	nd.mws = mws
-
 	nd.fn = fn.Name()
 	nd.pkg = fn.Pkg()
 	nd.fset = t.Fset
 	return ds
-}
-
-// resolveMWRefs resolves and validates middleware references.
-func resolveMWRefs(t gen.Typed, own *types.Package, refs []mwRef) ([]*types.Func, diag.Diagnostics) {
-	var out []*types.Func
-	var ds diag.Diagnostics
-	for _, ref := range refs {
-		var obj types.Object
-		switch {
-		case ref.pkg == "":
-			obj = own.Scope().Lookup(ref.name)
-		case t.Lookup != nil:
-			var ambiguous []string
-			obj, ambiguous = t.Lookup(ref.pkg, ref.name)
-			if len(ambiguous) > 0 {
-				ds.Error(ref.pos, fmt.Sprintf("package name %q in middleware %s is ambiguous", ref.pkg, ref),
-					"matches "+strings.Join(ambiguous, " and ")+"; rename one of the packages")
-				continue
-			}
-		}
-		mf, isFunc := obj.(*types.Func)
-		if !isFunc {
-			ds.Error(ref.pos, fmt.Sprintf("cannot resolve middleware %s", ref),
-				"expected a package-level func(next http.Handler) http.Handler")
-			continue
-		}
-		if isGenericFunc(mf) {
-			ds.Error(ref.pos, fmt.Sprintf("middleware %s cannot be generic (generated code cannot instantiate type parameters)", ref),
-				"declare a concrete middleware")
-			continue
-		}
-		if !isMiddlewareSignature(mf.Signature()) {
-			ds.Error(ref.pos, fmt.Sprintf("middleware %s has the wrong signature", ref),
-				"want func(next http.Handler) http.Handler")
-			continue
-		}
-		out = append(out, mf)
-	}
-	return out, ds
 }
 
 func (h *HTTP) Emit(n any, g *gen.Gen) diag.Diagnostics {
@@ -233,20 +183,23 @@ func (h *HTTP) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 
 	// Apply groups before checking duplicate effective patterns.
-	pattern, mws := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.mws)
+	pattern, refs := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.refs)
 
 	key := nd.method + " " + pattern
 	if d, ok := h.routes.add(key, nd.pos); !ok {
 		return append(ds, d)
 	}
 
+	mws, mds := h.mw.resolve(refs)
+	ds = append(ds, mds...)
+
 	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 
 	handler, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 	ds = append(ds, hds...)
 	var chain strings.Builder
-	for _, mf := range mws {
-		chain.WriteString(", " + g.ImportPkg(mf.Pkg()) + "." + mf.Name())
+	for _, mw := range mws {
+		chain.WriteString(", " + g.ImportPkg(mw.pkg) + "." + mw.fn)
 	}
 	g.Stmt(gen.PhaseRegister, "%s.Method(%q, %q, %s%s)", r, nd.method, pattern, handler, chain.String())
 	return ds

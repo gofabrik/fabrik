@@ -1,4 +1,4 @@
-Middleware misuse: unresolved, wrong signature, bad reference grammar.
+Middleware misuse: wrong signature, methods, bad names, code references.
 -- go.mod --
 module app
 
@@ -16,8 +16,6 @@ package web
 
 import "net/http"
 
-func NotMiddleware(s string) string { return s }
-
 //fabrik:http:middleware
 func Wrong(s string) string { return s }
 
@@ -26,27 +24,30 @@ type T struct{}
 //fabrik:http:middleware
 func (t *T) Method(next http.Handler) http.Handler { return next }
 
-//fabrik:http GET /a middleware=Missing
+//fabrik:http:middleware name=No.Cache
+func BadName(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=twice
+func First(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=twice
+func Second(next http.Handler) http.Handler { return next }
+
+//fabrik:http GET /a middleware=bad-ref
 func A(w http.ResponseWriter, r *http.Request) {}
 
-//fabrik:http GET /b middleware=NotMiddleware
+//fabrik:http GET /b middleware=shared.RequireAuth
 func B(w http.ResponseWriter, r *http.Request) {}
-
-//fabrik:http GET /c middleware=bad-ref
-func C(w http.ResponseWriter, r *http.Request) {}
-
-//fabrik:http GET /d middleware=nosuchpkg.Fn
-func D(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
-error: web/web.go:7:1: middleware Wrong has the wrong signature
+error: web/web.go:5:1: middleware Wrong has the wrong signature
   help: want func(next http.Handler) http.Handler
-error: web/web.go:12:1: //fabrik:http:middleware must be on a package-level function (func Method is a method)
+error: web/web.go:10:1: //fabrik:http:middleware must be on a package-level function (func Method is a method)
   help: move the middleware out of the method set
-error: web/web.go:15:33: cannot resolve middleware Missing
-  help: expected a package-level func(next http.Handler) http.Handler
-error: web/web.go:18:33: middleware NotMiddleware has the wrong signature
-  help: want func(next http.Handler) http.Handler
-error: web/web.go:21:33: invalid middleware reference "bad-ref"
-  help: use Name or pkg.Name, comma-separated
-error: web/web.go:24:33: cannot resolve middleware nosuchpkg.Fn
-  help: expected a package-level func(next http.Handler) http.Handler
+error: web/web.go:13:31: invalid middleware name "No.Cache"
+  help: use a short identifier: name=auth
+error: web/web.go:19:1: duplicate middleware name "twice"
+  help: first declared at $WORK/web/web.go:16:1
+error: web/web.go:22:33: invalid middleware name "bad-ref"
+  help: use declared names, comma-separated: middleware=auth,audit
+error: web/web.go:25:33: middleware "shared.RequireAuth" references code; middleware= takes declared names
+  help: declare //fabrik:http:middleware name=<name> on the function and reference the name

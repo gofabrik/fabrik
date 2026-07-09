@@ -29,10 +29,6 @@ func (a Annotation) ArgPos(col int) token.Position {
 type Typed struct {
 	Target types.Object   // the annotated func/method/type, fully typed
 	Fset   *token.FileSet // resolves positions of typed objects
-
-	// Lookup resolves pkg.Name references by package name.
-	// Ambiguous names return candidate import paths.
-	Lookup func(pkgName, name string) (obj types.Object, ambiguous []string)
 }
 
 // Directive implements one //fabrik:NAME annotation.

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestLSPMiddlewareCompletion verifies local and foreign middleware labels.
+// TestLSPMiddlewareCompletion verifies declared middleware names complete.
 func TestLSPMiddlewareCompletion(t *testing.T) {
 	dir := t.TempDir()
 	if r, err := filepath.EvalSymlinks(dir); err == nil {
@@ -28,14 +28,16 @@ func TestLSPMiddlewareCompletion(t *testing.T) {
 
 import "net/http"
 
+//fabrik:http:middleware name=auth
 func RequireAuth(next http.Handler) http.Handler { return next }
 
-func hidden(next http.Handler) http.Handler { return next }
+func unnamed(next http.Handler) http.Handler { return next }
 `)
 	webSrc := `package web
 
 import "net/http"
 
+//fabrik:http:middleware name=nocache
 func NoCache(next http.Handler) http.Handler { return next }
 
 //fabrik:http GET /x middleware=
@@ -54,14 +56,14 @@ func X(w http.ResponseWriter, r *http.Request) {}
 		TextDocument: struct {
 			URI string `json:"uri"`
 		}{uri},
-		Position: lspPosition{Line: 6, Character: len("//fabrik:http GET /x middleware=")},
+		Position: lspPosition{Line: 7, Character: len("//fabrik:http GET /x middleware=")},
 	}))
-	if !hasLabel(items, "NoCache") || !hasLabel(items, "shared.RequireAuth") {
-		t.Fatalf("middleware completions = %+v, want NoCache and shared.RequireAuth", items)
+	if !hasLabel(items, "nocache") || !hasLabel(items, "auth") {
+		t.Fatalf("middleware completions = %+v, want nocache and auth", items)
 	}
 	for _, it := range items {
-		if strings.Contains(it.Label, "hidden") {
-			t.Fatalf("unexported foreign middleware offered: %+v", items)
+		if strings.Contains(it.Label, "unnamed") || strings.Contains(it.Label, "RequireAuth") {
+			t.Fatalf("undeclared middleware offered: %+v", items)
 		}
 	}
 
@@ -69,7 +71,7 @@ func X(w http.ResponseWriter, r *http.Request) {}
 		TextDocument: struct {
 			URI string `json:"uri"`
 		}{uri},
-		Position: lspPosition{Line: 6, Character: len("//fabrik:http GET /x middleware=")},
+		Position: lspPosition{Line: 7, Character: len("//fabrik:http GET /x middleware=")},
 	}))
 	if len(items) == 0 {
 		t.Fatal("no completions for chained middleware")
