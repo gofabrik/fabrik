@@ -1,0 +1,52 @@
+A sectionless config struct owns the whole file; mixing it with
+sectioned structs is an error.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/config.go --
+package shared
+
+//fabrik:config
+type Config struct {
+	Addr string `yaml:"addr" default:":8080"`
+}
+-- store/config.go --
+package store
+
+//fabrik:config store
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+}
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/shared"
+	"app/store"
+)
+
+type Handlers struct {
+	Shared *shared.Config
+	Store  *store.Config
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/config.go:3:1: sectionless config struct Config owns the whole file and cannot be combined with sectioned config structs
+  help: sectionless struct declared at $WORK/shared/config.go:3:1; declare a section for every config struct

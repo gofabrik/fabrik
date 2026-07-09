@@ -4,7 +4,7 @@ import "net/http"
 
 //fabrik:http:group /api
 type API struct {
-	Greeter *Greeter
+	Greeter Greeter
 }
 
 //fabrik:http GET /greet/{name}

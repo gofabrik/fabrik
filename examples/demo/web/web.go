@@ -6,7 +6,7 @@ import (
 )
 
 type Handlers struct {
-	Greeter *Greeter
+	Greeter Greeter
 }
 
 //fabrik:http GET /{$}

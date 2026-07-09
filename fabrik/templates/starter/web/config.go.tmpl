@@ -1,0 +1,6 @@
+package web
+
+//fabrik:config greeter
+type Config struct {
+	Kind string `yaml:"kind" env:"{{.EnvPrefix}}_GREETER_KIND" default:"hello"`
+}

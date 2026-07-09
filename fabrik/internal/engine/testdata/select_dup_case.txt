@@ -1,0 +1,61 @@
+Duplicate case values within one selection are rejected.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- store/store.go --
+package store
+
+//fabrik:config store
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+}
+
+//fabrik:provider:select store.kind
+type Store interface {
+	Greet(name string) string
+}
+
+type A struct{}
+
+func (*A) Greet(name string) string { return name }
+
+//fabrik:provider case=memory
+func NewA() *A { return nil }
+
+type B struct{}
+
+func (*B) Greet(name string) string { return name }
+
+//fabrik:provider case=memory
+func NewB() *B { return nil }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type API struct {
+	Store store.Store
+}
+
+//fabrik:http GET /
+func (a *API) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:24:1: duplicate implementation for case=memory
+  help: first declared at $WORK/store/store.go:17:1

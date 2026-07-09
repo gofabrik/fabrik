@@ -2,6 +2,14 @@ module demo
 
 go 1.26
 
-require github.com/gofabrik/fabrik/router v0.0.0
+require (
+	github.com/gofabrik/fabrik/config v0.0.0
+	github.com/gofabrik/fabrik/router v0.0.0
+)
 
-replace github.com/gofabrik/fabrik/router => ../../router
+require gopkg.in/yaml.v3 v3.0.1 // indirect
+
+replace (
+	github.com/gofabrik/fabrik/config => ../../config
+	github.com/gofabrik/fabrik/router => ../../router
+)

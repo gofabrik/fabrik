@@ -22,6 +22,10 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	configDir, err := filepath.Abs("../config")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tmp := t.TempDir()
 	if r, err := filepath.EvalSymlinks(tmp); err == nil {
@@ -43,14 +47,28 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod = append(mod, []byte(fmt.Sprintf(
-		"\nrequire github.com/gofabrik/fabrik/router v0.0.0\n\nreplace github.com/gofabrik/fabrik/router => %s\n",
-		routerDir))...)
+		"\nrequire (\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n)\n",
+		configDir, routerDir))...)
 	if err := os.WriteFile(gomod, mod, 0o644); err != nil {
 		t.Fatal(err)
+	}
+	// Fill go.sum for transitive deps (yaml.v3) from the local module
+	// cache; GOPROXY=off keeps this hermetic.
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = dir
+	if out, err := tidy.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy after pinning: %v\n%s", err, out)
 	}
 
 	if _, err := wire(dir); err != nil {
 		t.Fatalf("fabrik wire: %v", err)
+	}
+	// The generated file imports the config module, which no hand-written
+	// source references; tidy again so its require lands.
+	tidy = exec.Command("go", "mod", "tidy")
+	tidy.Dir = dir
+	if out, err := tidy.CombinedOutput(); err != nil {
+		t.Fatalf("go mod tidy after wire: %v\n%s", err, out)
 	}
 	if err := wireCheck(dir); err != nil {
 		t.Fatalf("fabrik wire -check right after wire: %v", err)
@@ -67,7 +85,7 @@ func TestEndToEnd(t *testing.T) {
 	port := freePort(t)
 	server := exec.Command(bin)
 	server.Dir = dir
-	server.Env = append(os.Environ(), "PORT="+port)
+	server.Env = append(os.Environ(), "HELLO_HTTP_ADDR=:"+port)
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}

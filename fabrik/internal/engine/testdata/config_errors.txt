@@ -1,0 +1,50 @@
+Config misuse.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/config.go --
+package shared
+
+//fabrik:config
+func NotAStruct() {}
+
+//fabrik:config
+type Config struct {
+	Addr string `yaml:"addr"`
+}
+
+//fabrik:config
+type Config2 struct{}
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/shared"
+)
+
+type Handlers struct {
+	Config  *shared.Config
+	Config2 *shared.Config2
+}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: shared/config.go:3:1: //fabrik:config must be on a struct type declaration
+error: shared/config.go:11:1: section "" is already configured by Config
+  help: first declared at $WORK/shared/config.go:6:1

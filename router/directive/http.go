@@ -158,6 +158,11 @@ func (h *HTTP) Check(n any, t gen.Typed) diag.Diagnostics {
 		ds.Error(nd.pos, "//fabrik:http must be on a function", "")
 		return ds
 	}
+	if isGenericFunc(fn) {
+		ds.Error(nd.pos, fmt.Sprintf("handler %s cannot be generic (generated code cannot instantiate type parameters)", fn.Name()),
+			"declare a concrete handler")
+		return ds
+	}
 	sig := fn.Signature()
 	if !isHandlerSignature(sig) {
 		ds.Error(nd.pos, fmt.Sprintf("handler %s has the wrong signature", fn.Name()),
@@ -206,6 +211,11 @@ func resolveMWRefs(t gen.Typed, own *types.Package, refs []mwRef) ([]*types.Func
 		if !isFunc {
 			ds.Error(ref.pos, fmt.Sprintf("cannot resolve middleware %s", ref),
 				"expected a package-level func(next http.Handler) http.Handler")
+			continue
+		}
+		if isGenericFunc(mf) {
+			ds.Error(ref.pos, fmt.Sprintf("middleware %s cannot be generic (generated code cannot instantiate type parameters)", ref),
+				"declare a concrete middleware")
 			continue
 		}
 		if !isMiddlewareSignature(mf.Signature()) {
@@ -264,6 +274,13 @@ func isHandlerSignature(sig *types.Signature) bool {
 	return p.Len() == 2 && sig.Results().Len() == 0 && !sig.Variadic() &&
 		types.TypeString(p.At(0).Type(), nil) == "net/http.ResponseWriter" &&
 		types.TypeString(p.At(1).Type(), nil) == "*net/http.Request"
+}
+
+// isGenericFunc reports whether fn has type parameters of its own or via
+// its receiver - generated code cannot instantiate either.
+func isGenericFunc(fn *types.Func) bool {
+	sig := fn.Signature()
+	return sig.TypeParams().Len() > 0 || sig.RecvTypeParams().Len() > 0
 }
 
 // isNamedStruct reports whether t is a named struct or a pointer to one.

@@ -3,6 +3,7 @@ module github.com/gofabrik/fabrik/fabrik
 go 1.26
 
 require (
+	github.com/gofabrik/fabrik/config/directive v0.0.0
 	github.com/gofabrik/fabrik/diag v0.0.0
 	github.com/gofabrik/fabrik/gen v0.0.0
 	github.com/gofabrik/fabrik/router/directive v0.0.0
@@ -15,6 +16,7 @@ require (
 )
 
 replace (
+	github.com/gofabrik/fabrik/config/directive => ../config/directive
 	github.com/gofabrik/fabrik/diag => ../diag
 	github.com/gofabrik/fabrik/gen => ../gen
 	github.com/gofabrik/fabrik/router/directive => ../router/directive

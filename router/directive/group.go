@@ -98,6 +98,11 @@ func (gr *Group) Check(n any, t gen.Typed) diag.Diagnostics {
 			"handler structs hold the group's routes as methods")
 		return ds
 	}
+	if namedOf(tn.Type()).TypeParams().Len() > 0 {
+		ds.Error(nd.pos, fmt.Sprintf("//fabrik:http:group cannot be on a generic type (%s has type parameters)", tn.Name()),
+			"declare a concrete struct")
+		return ds
+	}
 	if first, dup := gr.byType[tn]; dup {
 		ds.Error(nd.pos, fmt.Sprintf("duplicate group on %s", tn.Name()),
 			fmt.Sprintf("first declared at %s", first.pos))

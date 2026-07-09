@@ -80,6 +80,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	}
 
 	g := gen.New()
+	g.SetModule(res.ModulePath)
 	emitTierNodes := func(tier int) error {
 		for _, p := range parsed {
 			if emitTier(p.Directive) != tier {
@@ -197,7 +198,9 @@ const (
 
 func emitTier(d gen.Directive) int {
 	switch d.Name() {
-	case "provider":
+	// Registration-only emissions: they populate bindings before anything
+	// resolves dependencies.
+	case "provider", "provider:select", "config":
 		return tierProvider
 	case "init":
 		return tierInit

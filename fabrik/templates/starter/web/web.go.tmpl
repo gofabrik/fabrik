@@ -7,7 +7,7 @@ import (
 
 // Handlers holds the HTTP handlers and their wired dependencies.
 type Handlers struct {
-	Greeter *Greeter
+	Greeter Greeter
 }
 
 //fabrik:http GET /{$}

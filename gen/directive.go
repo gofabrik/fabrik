@@ -69,11 +69,13 @@ type Meta struct {
 	Attrs    []AttrSpec // key=value options
 }
 
-// PosSpec describes one positional argument.
+// PosSpec describes one positional argument. Optional positionals must
+// trail the required ones.
 type PosSpec struct {
-	Name   string    // e.g. "METHOD"; used in messages and docs
-	Kind   ValueKind // completion hint; values are validated by Parse
-	Values []string  // completion candidates; a closed set only when Kind is KindEnum
+	Name     string    // e.g. "METHOD"; used in messages and docs
+	Kind     ValueKind // completion hint; values are validated by Parse
+	Values   []string  // completion candidates; a closed set only when Kind is KindEnum
+	Optional bool
 }
 
 // AttrSpec describes one key=value option.

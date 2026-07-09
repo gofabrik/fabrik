@@ -1,0 +1,56 @@
+Generic targets are rejected: generated code cannot instantiate type
+parameters.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- store/store.go --
+package store
+
+//fabrik:config store
+type Config[T any] struct {
+	Kind string `yaml:"kind"`
+}
+
+//fabrik:init
+func Setup[T any]() error { return nil }
+
+type DB struct{}
+
+//fabrik:provider
+func Open[T any]() *DB { return &DB{} }
+
+//fabrik:provider:select store.kind
+type Store[T any] interface {
+	Get(key string) T
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type Handlers struct{}
+
+//fabrik:http GET /
+func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:3:1: //fabrik:config cannot be on a generic type (Config has type parameters)
+  help: configuration is loaded by reflection at startup; declare a concrete struct
+error: store/store.go:8:1: init Setup cannot be generic (generated code cannot infer type arguments)
+  help: declare a concrete setup function
+error: store/store.go:13:1: provider Open cannot be generic (generated code cannot infer type arguments)
+  help: declare a concrete constructor
+error: store/store.go:16:1: //fabrik:provider:select cannot be on a generic interface (Store has type parameters)
+  help: declare a concrete interface

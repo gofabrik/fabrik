@@ -1,0 +1,63 @@
+Router directives reject generic targets: handlers, receivers, groups,
+middleware (declared and referenced), hooks, and serve functions.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /generic
+func Index[T any](w http.ResponseWriter, r *http.Request) {}
+
+type Box[T any] struct{}
+
+//fabrik:http GET /boxed
+func (b *Box[T]) Get(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:group /api
+type Group[T any] struct{}
+
+//fabrik:http:middleware
+func Trace[T any](next http.Handler) http.Handler { return next }
+
+func Logging[T any](next http.Handler) http.Handler { return next }
+
+//fabrik:http GET /ref middleware=Logging
+func Ref(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:notfound
+func Missing[T any](w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:handle /files
+func Files[T any]() http.Handler { return nil }
+
+//fabrik:http:server
+func Serve[T any](h http.Handler) error { return nil }
+-- want/diags --
+error: web/web.go:5:1: handler Index cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete handler
+error: web/web.go:10:1: handler Get cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete handler
+error: web/web.go:13:1: //fabrik:http:group cannot be on a generic type (Group has type parameters)
+  help: declare a concrete struct
+error: web/web.go:16:1: middleware Trace cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete middleware
+error: web/web.go:21:35: middleware Logging cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete middleware
+error: web/web.go:24:1: handler Missing cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete handler
+error: web/web.go:27:1: handler Files cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete handler
+error: web/web.go:30:1: serve function Serve cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete function

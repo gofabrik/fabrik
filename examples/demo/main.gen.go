@@ -5,19 +5,46 @@ package main
 import (
 	"demo/shared"
 	"demo/web"
+	"fmt"
 	"io/fs"
 	"net/http"
 
+	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
 )
 
 func run() error {
+	// Config
+	sharedLog, err := config.Load[shared.Log](config.FileOptional("config.yaml"), config.FileOptional("config.local.yaml"), config.KnownSections("greeter", "http", "log"), config.Section("log"))
+	if err != nil {
+		return err
+	}
+	webConfig, err := config.Load[web.Config](config.FileOptional("config.yaml"), config.FileOptional("config.local.yaml"), config.KnownSections("greeter", "http", "log"), config.Section("greeter"))
+	if err != nil {
+		return err
+	}
+	sharedConfig, err := config.Load[shared.Config](config.FileOptional("config.yaml"), config.FileOptional("config.local.yaml"), config.KnownSections("greeter", "http", "log"), config.Section("http"))
+	if err != nil {
+		return err
+	}
+
 	// Init
-	shared.InitLogger()
+	if err := shared.InitLogger(sharedLog); err != nil {
+		return err
+	}
 
 	// Providers
 	r := router.New()
-	webGreeter := web.NewGreeter()
+	webGreeterKind := webConfig.Kind
+	var webGreeter web.Greeter
+	switch webGreeterKind {
+	case "goodbye":
+		webGreeter = web.NewGoodbyeGreeter()
+	case "hello":
+		webGreeter = web.NewHelloGreeter()
+	default:
+		return fmt.Errorf("no web.Greeter implementation for %q", webGreeterKind)
+	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
@@ -31,6 +58,9 @@ func run() error {
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 	}
+	sharedServer := &shared.Server{
+		Config: sharedConfig,
+	}
 
 	// Middleware
 	r.Use(shared.Logged)
@@ -43,5 +73,5 @@ func run() error {
 	r.Method("GET", "/{$}", webHandlers.Index)
 
 	// Serve
-	return shared.Serve(r)
+	return sharedServer.Serve(r)
 }

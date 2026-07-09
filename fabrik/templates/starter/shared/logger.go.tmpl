@@ -1,4 +1,3 @@
-// Package shared holds resources used across the whole app.
 package shared
 
 import (
@@ -6,9 +5,17 @@ import (
 	"os"
 )
 
-// InitLogger installs the process-wide default logger.
-//
+//fabrik:config log
+type Log struct {
+	Level string `yaml:"level" env:"{{.EnvPrefix}}_LOG_LEVEL" default:"info"`
+}
+
 //fabrik:init
-func InitLogger() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+func InitLogger(l *Log) error {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(l.Level)); err != nil {
+		return err
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	return nil
 }

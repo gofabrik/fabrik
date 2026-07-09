@@ -75,6 +75,11 @@ func (h *Hook) Check(n any, t gen.Typed) diag.Diagnostics {
 		ds.Error(nd.pos, "//fabrik:"+h.name+" must be on a function", "")
 		return ds
 	}
+	if isGenericFunc(fn) {
+		ds.Error(nd.pos, fmt.Sprintf("handler %s cannot be generic (generated code cannot instantiate type parameters)", fn.Name()),
+			"declare a concrete handler")
+		return ds
+	}
 	sig := fn.Signature()
 	if !isHandlerSignature(sig) {
 		ds.Error(nd.pos, fmt.Sprintf("handler %s has the wrong signature", fn.Name()),

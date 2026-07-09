@@ -17,7 +17,8 @@ import (
 type Phase int
 
 const (
-	PhaseInit       Phase = iota // setup calls that run before everything
+	PhaseConfig     Phase = iota // configuration loading, before all else
+	PhaseInit                    // setup calls that run before wiring
 	PhaseWire                    // construct app and runtime values
 	PhaseMiddleware              // global middleware registration
 	PhaseRegister                // register generated behavior
@@ -28,6 +29,7 @@ var phaseLabels = []struct {
 	phase Phase
 	label string
 }{
+	{PhaseConfig, "Config"},
 	{PhaseInit, "Init"},
 	{PhaseWire, "Providers"},
 	{PhaseMiddleware, "Middleware"},
@@ -56,6 +58,7 @@ type Gen struct {
 	singletons map[string]string // singleton key -> var name
 	stmts      []stmtRecord
 	current    string // directive name, for provenance
+	module     string // module path of the generated app
 
 	materializing []string // active lazy-bind stack
 }
@@ -68,6 +71,12 @@ func New() *Gen {
 		singletons: map[string]string{},
 	}
 }
+
+// SetModule records the module path of the app being generated.
+func (g *Gen) SetModule(path string) { g.module = path }
+
+// Module returns the module path of the app being generated.
+func (g *Gen) Module() string { return g.module }
 
 // SetDirective records the directive currently emitting code.
 func (g *Gen) SetDirective(name string) { g.current = name }
@@ -151,7 +160,10 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 	}
 	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
 		if lb, ok := m[name]; ok {
-			key := g.TypeExpr(t)
+			// Short name for cycle reporting, without TypeExpr's import
+			// registration: a name-only key must not add imports to the
+			// generated file.
+			key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
 			if lb.running {
 				return "", diag.Diagnostics{g.cycleDiag(key)}, false
 			}

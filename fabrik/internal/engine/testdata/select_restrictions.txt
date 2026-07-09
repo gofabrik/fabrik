@@ -1,0 +1,76 @@
+Case providers take config and context only; selection keys must be
+strings.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/config v0.0.0
+
+replace github.com/gofabrik/fabrik/config => CONFIGDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- store/store.go --
+package store
+
+//fabrik:config store
+type Config struct {
+	Kind  string `yaml:"kind" default:"memory"`
+	Level int    `yaml:"level"`
+}
+
+//fabrik:provider:select store.level
+type Cache interface {
+	Get(key string) string
+}
+
+type MemCache struct{}
+
+func (*MemCache) Get(key string) string { return key }
+
+//fabrik:provider case=mem
+func NewMemCache() *MemCache { return nil }
+
+//fabrik:provider:select store.kind
+type Store interface {
+	Greet(name string) string
+}
+
+type Pool struct{}
+
+//fabrik:provider
+func NewPool() *Pool { return &Pool{} }
+
+type Memory struct{}
+
+func (*Memory) Greet(name string) string { return name }
+
+//fabrik:provider case=memory
+func NewMemory(p *Pool) *Memory { return nil }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type API struct {
+	Store store.Store
+	Cache store.Cache
+}
+
+//fabrik:http GET /
+func (a *API) Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:9:1: config key "store.level" is int, not string
+  help: the selection switches on a string kind
+error: store/store.go:36:16: case provider parameters must be //fabrik:config structs or context.Context
+  help: construct other dependencies inside the provider, so unselected implementations cost nothing

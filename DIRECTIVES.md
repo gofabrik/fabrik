@@ -7,6 +7,23 @@ Positional arguments come first, `key=value` options after; values may be
 double-quoted to contain spaces. Unknown option keys are errors, which is what
 makes new keys backwards-compatible additions.
 
+## fabrik:config
+
+**`//fabrik:config [section]`**
+
+Marks a struct as configuration: generated code loads it in the Config phase (before inits and providers) with `config.Load` and binds the pointer into DI. Both conventional files (config.yaml, config.local.yaml) are optional: a missing file means defaults and env overrides apply. `yaml:` tags name keys, `default:` tags set fallbacks, `env:"NAME"` opts a field into environment override. The optional section scopes a domain package to its subtree of config.yaml (`store` -> keys under `store:`); the name is a single key, no dots. Structs sharing the file must each declare a section; a single sectionless struct owns the whole file and cannot be combined with sectioned ones. When every struct is sectioned, generated Load calls validate the file's top-level keys against the declared sections, so a typo'd section fails startup.
+
+```go
+//fabrik:config store
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+}
+```
+
+Positional arguments:
+
+- `SECTION`
+
 ## fabrik:http
 
 **`//fabrik:http METHOD /path [middleware=Name,pkg.Name]`**
@@ -50,7 +67,7 @@ Options:
 
 **`//fabrik:http:handle /path [middleware=Name,pkg.Name]`**
 
-Registers a handler for every method of a pattern. Two shapes: a standard handler func, or a function without parameters returning `http.Handler`, called once at startup - the escape hatch for third-party handlers.
+Registers a handler for every method of a pattern. Two shapes: a standard handler func, or a function without parameters returning `http.Handler`, called once at startup - the escape hatch for third-party handlers. `middleware=` wraps the route in a comma-separated chain, same as on `//fabrik:http`.
 
 ```go
 //fabrik:http:handle /metrics
@@ -136,7 +153,7 @@ Options:
 
 **`//fabrik:init`**
 
-Marks a setup function that the generated `run()` calls early, in source order. Use it for process-level setup like installing the default `slog` logger. It may take a `context.Context`; a returned `error` aborts startup.
+Marks a setup function that the generated `run()` calls early, in source order. Use it for process-level setup like installing the default `slog` logger. It may take a `context.Context` and pointers to //fabrik:config structs, which load first; a returned `error` aborts startup.
 
 ```go
 //fabrik:init
@@ -147,11 +164,30 @@ func InitLogger() {
 
 ## fabrik:provider
 
-**`//fabrik:provider`**
+**`//fabrik:provider [case=kind]`**
 
-Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive a shared background context.
+Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive a shared background context. A second `error` return aborts startup. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
 
 ```go
 //fabrik:provider
 func NewGreeter() *Greeter { ... }
 ```
+
+Options:
+
+- `case=`
+
+## fabrik:provider:select
+
+**`//fabrik:provider:select <config-key>`**
+
+Declared on an interface: the configuration value under the key decides which implementation is wired at startup. The key must match a string field of a //fabrik:config struct; its `default:` tag is the fallback and must name a known case. Implementations are providers with `case=<kind>`, matched by their return type implementing the interface. An unmatched value aborts startup naming it.
+
+```go
+//fabrik:provider:select store.kind
+type Store interface { ... }
+```
+
+Positional arguments:
+
+- `CONFIG-KEY`

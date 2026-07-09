@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,8 +44,13 @@ func runFixture(t *testing.T, fixture string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	configDir, err := filepath.Abs("../../../config")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wantGen, wantDiags []byte
 	hasGen, hasDiags := false, false
+	needsTidy := false
 	for _, f := range ar.Files {
 		switch f.Name {
 		case "want/main.gen.go":
@@ -58,10 +64,25 @@ func runFixture(t *testing.T, fixture string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		// Router fixtures resolve the local checkout.
+		// Fixtures resolve local module checkouts.
 		data := bytes.ReplaceAll(f.Data, []byte("ROUTERDIR"), []byte(routerDir))
+		if bytes.Contains(f.Data, []byte("CONFIGDIR")) {
+			// The config module has an external dependency, so the fixture
+			// needs go.sum entries from the local module cache.
+			needsTidy = true
+		}
+		data = bytes.ReplaceAll(data, []byte("CONFIGDIR"), []byte(configDir))
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
+		}
+	}
+
+	if needsTidy {
+		tidy := exec.Command("go", "mod", "tidy")
+		tidy.Dir = dir
+		tidy.Env = append(os.Environ(), "GOPROXY=off")
+		if out, err := tidy.CombinedOutput(); err != nil {
+			t.Fatalf("go mod tidy: %v\n%s", err, out)
 		}
 	}
 
