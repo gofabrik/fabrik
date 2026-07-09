@@ -16,8 +16,7 @@ type Init struct {
 	cfg *cfgdir.Config
 }
 
-// NewInit returns an Init directive for one run, sharing the config
-// directive so inits can receive configuration.
+// NewInit returns an Init directive for one run.
 func NewInit(cfg *cfgdir.Config) *Init { return &Init{cfg: cfg} }
 
 func (*Init) Name() string { return "init" }
@@ -103,8 +102,7 @@ func (i *Init) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (i *Init) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*initNode)
-	// Inits run before providers: parameters resolve to the shared context
-	// or configuration, which the Config phase makes available first.
+	// Inits run before providers, so parameters resolve only to context or config.
 	args, ds := resolveArgs(g, i.cfg, nd.params,
 		func(pr param) (string, diag.Diagnostics, bool) {
 			if !i.cfg.IsConfig(pr.t) {

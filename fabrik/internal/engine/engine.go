@@ -27,8 +27,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		return nil, err
 	}
 	if res.MainDir == "" {
-		// Run the grammar tier so directive mistakes surface alongside the
-		// error instead of being silently discarded.
+		// Report directive syntax even when no main package is found.
 		anns := make([]gen.Annotation, len(res.Items))
 		for i, item := range res.Items {
 			anns[i] = item.Ann
@@ -73,7 +72,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		parsed = append(parsed, gen.Parsed{Directive: d, Node: node})
 	}
 
-	// Emit only after Parse and Check succeed across the project.
+	// Emit only after project-wide Parse and Check pass.
 	if diags.HasFatal() {
 		diags.Sort()
 		return &Result{MainDir: res.MainDir, Diags: diags}, nil
@@ -119,7 +118,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 			return nil, err
 		}
 	}
-	// Finishers may still emit; validators observe the completed result.
+	// Validators run after finishers because finishers may emit.
 	for _, d := range directives {
 		f, ok := d.(gen.Finisher)
 		if !ok {

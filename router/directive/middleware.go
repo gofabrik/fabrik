@@ -11,8 +11,7 @@ import (
 	"github.com/gofabrik/fabrik/gen"
 )
 
-// Middleware is the //fabrik:http:middleware directive: global when bare,
-// referenceable by declared name when named.
+// Middleware registers global and named HTTP middleware.
 type Middleware struct {
 	byName map[string]*mwNode
 }
@@ -115,7 +114,7 @@ func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
-// Validate warns about named middleware nothing references.
+// Validate warns about unreferenced named middleware.
 func (m *Middleware) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, name := range m.names() {
@@ -127,8 +126,7 @@ func (m *Middleware) Validate(*gen.Gen) diag.Diagnostics {
 	return ds
 }
 
-// resolve maps middleware= references to their declarations, marking them
-// referenced.
+// resolve maps middleware= references to declarations.
 func (m *Middleware) resolve(refs []mwRef) ([]*mwNode, diag.Diagnostics) {
 	var out []*mwNode
 	var ds diag.Diagnostics

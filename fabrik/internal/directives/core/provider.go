@@ -21,8 +21,7 @@ type Provider struct {
 	cfg       *cfgdir.Config
 }
 
-// NewProvider returns a Provider directive for one run, sharing the config
-// directive for switch-key reads.
+// NewProvider returns a Provider directive for one run.
 func NewProvider(cfg *cfgdir.Config) *Provider {
 	return &Provider{seen: map[string]token.Position{}, cfg: cfg}
 }
@@ -132,8 +131,7 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	}
 
 	if nd.caseVal != "" {
-		// Case providers match a selected interface by type; membership is
-		// validated once every selection is known.
+		// Selection membership is validated after all interfaces are known.
 		p.caseNodes = append(p.caseNodes, nd)
 		return ds
 	}
@@ -158,8 +156,7 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*node)
 	p.nodes = append(p.nodes, nd)
 	if nd.caseVal != "" {
-		// Bound through the selected interface's group, registered by
-		// //fabrik:provider:select.
+		// Selected providers bind through their interface group.
 		return nil
 	}
 	g.BindLazy(nd.returns[0], "", func() (string, diag.Diagnostics) {
@@ -176,8 +173,7 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
-// Validate checks group completeness and unused provider parameters
-// once everything has materialized.
+// Validate checks group completeness and unused provider parameters.
 func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	p.finishGroups(&ds)

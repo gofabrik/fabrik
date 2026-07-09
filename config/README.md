@@ -4,7 +4,7 @@ Typed application configuration for Go: YAML files, explicit per-field environme
 
 ## Why YAML-first
 
-YAML keeps configuration structured and reviewable. Environment variables are explicit overrides: only fields with an `env:` tag can read from the process environment.
+YAML carries structure. Environment overrides are opt-in through `env:` tags.
 
 ## Usage
 
@@ -53,7 +53,7 @@ cfg, err := config.Load[Config](
 	config.FileOptional("config.local.yaml"),  // dev overlay, applied if present
 )
 if err != nil {
-		return err
+	return err
 }
 
 addr := cfg.Server.Addr

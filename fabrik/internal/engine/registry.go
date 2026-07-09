@@ -16,14 +16,10 @@ func New() []gen.Directive {
 	group := routerdir.NewGroup()
 	routes := routerdir.NewRouteTable()
 	mw := routerdir.NewMiddleware()
-	// Configuration files are conventional: the base file plus a local
-	// development overlay, both optional. Apps needing different sources
-	// write a plain provider for their config struct instead.
+	// Conventional config layers are optional; custom sources belong in providers.
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
-	// Order is presentation only (docs, diagnostics listings): emission
-	// tiers come from Meta.Tier, and finishers run before validators by
-	// contract.
+	// Registry order is presentation only; lifecycle order comes from Meta.Tier.
 	return []gen.Directive{
 		provider,
 		core.NewSelect(provider, cfg),

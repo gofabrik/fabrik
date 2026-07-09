@@ -46,15 +46,12 @@ type Parsed struct {
 	Node      any
 }
 
-// Finisher runs after every node has emitted. It may emit more code (a
-// server's listen call); anything it materializes is still observed by
-// validators.
+// Finisher runs after all nodes emit and may append more code.
 type Finisher interface {
 	Finish(g *Gen) diag.Diagnostics
 }
 
-// Validator runs after every finisher, observing the completed
-// generation. It must not emit.
+// Validator observes completed generation and must not emit.
 type Validator interface {
 	Validate(g *Gen) diag.Diagnostics
 }
@@ -64,9 +61,7 @@ type NodePreparer interface {
 	PrepareNode(node any, g *Gen)
 }
 
-// EmitTier orders Emit across the project, so a directive can rely on
-// earlier tiers being complete. Registration-only directives bind first,
-// init calls emit next, and everything else resolves last.
+// EmitTier orders directive emission.
 type EmitTier int
 
 const (

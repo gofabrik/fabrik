@@ -274,10 +274,7 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 	return argCompletions(meta, args, trailingSpace)
 }
 
-// activeMWChain reports whether the cursor is inside a middleware= chain
-// and returns the partial name being typed. Written "middleware=a, b",
-// the chain spans tokens: each token continues it only by ending with a
-// comma, so walking back from the cursor to the option decides membership.
+// activeMWChain returns the current middleware= item, if the cursor is inside one.
 func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, bool) {
 	for i := len(args) - 1; i >= 0; i-- {
 		key, val, hasEq := strings.Cut(args[i], "=")
@@ -285,12 +282,12 @@ func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, bo
 			continue
 		}
 		if !isMWAttr(meta, key) {
-			return "", false // a different option ends any chain
+			return "", false
 		}
 		cur := val
 		for j := i + 1; j < len(args); j++ {
 			if !strings.HasSuffix(cur, ",") {
-				return "", false // the chain ended before the cursor
+				return "", false
 			}
 			cur = args[j]
 		}
@@ -298,9 +295,9 @@ func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, bo
 			return cur, true
 		}
 		if strings.HasSuffix(cur, ",") {
-			return "", true // "middleware=a, " starts the next name
+			return "", true
 		}
-		return "", false // "middleware=a " closed the chain
+		return "", false
 	}
 	return "", false
 }
@@ -369,10 +366,7 @@ type mwCacheEntry struct {
 	names   []string
 }
 
-// mwDirective is the http:middleware directive itself, so declarations
-// parse and validate exactly as they do during generation. Parse is
-// stateless (registration happens in Check), so one instance serves
-// every scan.
+// mwDirective keeps completion parsing aligned with generation.
 var mwDirective = func() gen.Directive {
 	for _, d := range engine.New() {
 		if d.Name() == "http:middleware" {
@@ -382,9 +376,7 @@ var mwDirective = func() gen.Directive {
 	return nil
 }()
 
-// middlewareNames returns the middleware names one file declares, using
-// the same annotation scanner and argument grammar as generation - there
-// is no second definition of what a middleware is.
+// middlewareNames returns valid names declared in one file.
 func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) []string {
 	var info iofs.FileInfo
 	if overlayText == "" {
@@ -412,8 +404,6 @@ func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) [
 			if ann.Name != "http:middleware" || mwDirective == nil {
 				continue
 			}
-			// The directive's own Parse decides validity; a declaration
-			// generation rejects must not complete.
 			if _, ds := mwDirective.Parse(ann); ds.HasFatal() {
 				continue
 			}

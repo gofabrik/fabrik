@@ -10,12 +10,10 @@ import (
 	"github.com/gofabrik/fabrik/gen"
 )
 
-// routeTable tracks all patterns registered in one generation run. It
-// delegates the conflict decision to http.ServeMux - the specificity
-// rules stay the standard library's, never a second implementation.
+// routeTable tracks registrations and delegates conflicts to http.ServeMux.
 type routeTable struct {
 	seen    map[string]token.Position
-	order   []string // registration order, for deterministic conflict search
+	order   []string // deterministic conflict search
 	scratch *http.ServeMux
 }
 
@@ -51,9 +49,7 @@ func registers(mux *http.ServeMux, pattern string) (ok bool) {
 	return true
 }
 
-// conflictDiag names the earliest registered pattern that conflicts with
-// key, found by probing pairs on fresh muxes - the culprit comes from
-// ServeMux's own verdict, not from parsing its panic message.
+// conflictDiag names the earliest conflicting pattern using ServeMux probes.
 func (rt *routeTable) conflictDiag(key string, pos token.Position) diag.Diagnostic {
 	for _, earlier := range rt.order {
 		probe := http.NewServeMux()
@@ -67,8 +63,7 @@ func (rt *routeTable) conflictDiag(key string, pos token.Position) diag.Diagnost
 			}
 		}
 	}
-	// A conflict against the combined mux always has a pairwise culprit;
-	// this fallback only guards a future ServeMux behavior change.
+	// Keep a generic diagnostic if ServeMux conflict behavior changes.
 	return diag.Diagnostic{
 		Severity: diag.SevError,
 		Pos:      pos,
@@ -77,8 +72,7 @@ func (rt *routeTable) conflictDiag(key string, pos token.Position) diag.Diagnost
 	}
 }
 
-// effectiveRoute applies the receiver group's prefix and middleware
-// references; the route resolves the merged chain against declared names.
+// effectiveRoute applies the receiver group's prefix and middleware refs.
 func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []mwRef) (string, []mwRef) {
 	var refs []mwRef
 	if recvObj != nil {

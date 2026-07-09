@@ -8,12 +8,8 @@ import (
 	"github.com/gofabrik/fabrik/gen"
 )
 
-// resolveArgs turns parameters into call arguments under a site policy:
-// context.Context resolves to the shared background context, accept
-// resolves the site's supported types, and anything else is rejected
-// with the site's diagnostic. Diagnostics returned by accept explain the
-// failure themselves (e.g. a provider cycle), so no rejection is added
-// on top of them.
+// resolveArgs turns parameters into call arguments under a caller policy.
+// Diagnostics from accept are complete and suppress the generic rejection.
 func resolveArgs(g *gen.Gen, cfg *cfgdir.Config, params []param,
 	accept func(pr param) (string, diag.Diagnostics, bool),
 	reject func(pr param) (msg, help string)) ([]string, diag.Diagnostics) {
@@ -40,8 +36,7 @@ func resolveArgs(g *gen.Gen, cfg *cfgdir.Config, params []param,
 	return args, ds
 }
 
-// missingHelp returns the config directive's hint for t when one applies
-// (the take-a-pointer near-miss), else the site's default help.
+// missingHelp returns a config-specific hint when one applies.
 func missingHelp(cfg *cfgdir.Config, t types.Type, def string) string {
 	if h, ok := cfg.MissingHint(t); ok {
 		return h

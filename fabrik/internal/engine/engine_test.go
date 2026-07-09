@@ -63,9 +63,7 @@ func runFixture(t *testing.T, fixture string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		// Fixtures resolve local module checkouts. No fixture source
-		// imports the config package (only generated code does, and it is
-		// never built here), so loading needs no go.sum and no tidy.
+		// Fixtures resolve local module checkouts; only generated output imports config.
 		data := bytes.ReplaceAll(f.Data, []byte("ROUTERDIR"), []byte(routerDir))
 		data = bytes.ReplaceAll(data, []byte("CONFIGDIR"), []byte(configDir))
 		if err := os.WriteFile(path, data, 0o644); err != nil {

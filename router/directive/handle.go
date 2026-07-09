@@ -128,8 +128,7 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	pattern, refs := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.refs)
 
-	// Resolve middleware before any early return: a duplicate route must
-	// still report unknown names, and its valid references count as used.
+	// Duplicate routes still validate middleware references.
 	mws, mds := h.mw.resolve(refs)
 	ds = append(ds, mds...)
 

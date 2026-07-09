@@ -203,11 +203,7 @@ func (c *Config) IsConfig(t types.Type) bool {
 	return ok
 }
 
-// MissingHint improves a missing-binding diagnostic when t is a config
-// struct passed by value - a near-miss worth its own hint, since
-// injection is by pointer. The struct counts as referenced: this runs
-// only while diagnosing, and the take-a-pointer error should not come
-// with an "unused" warning.
+// MissingHint explains config structs passed by value and marks them referenced.
 func (c *Config) MissingHint(t types.Type) (string, bool) {
 	nd := c.NodeFor(types.NewPointer(types.Unalias(t)))
 	if nd == nil {

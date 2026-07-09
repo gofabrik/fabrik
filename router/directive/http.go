@@ -182,11 +182,9 @@ func (h *HTTP) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*node)
 	var ds diag.Diagnostics
 
-	// Apply groups before checking duplicate effective patterns.
 	pattern, refs := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.refs)
 
-	// Resolve middleware before any early return: a duplicate route must
-	// still report unknown names, and its valid references count as used.
+	// Duplicate routes still validate middleware references.
 	mws, mds := h.mw.resolve(refs)
 	ds = append(ds, mds...)
 
@@ -231,8 +229,7 @@ func isHandlerSignature(sig *types.Signature) bool {
 		types.TypeString(p.At(1).Type(), nil) == "*net/http.Request"
 }
 
-// isGenericFunc reports whether fn has type parameters of its own or via
-// its receiver - generated code cannot instantiate either.
+// isGenericFunc reports whether fn has direct or receiver type parameters.
 func isGenericFunc(fn *types.Func) bool {
 	sig := fn.Signature()
 	return sig.TypeParams().Len() > 0 || sig.RecvTypeParams().Len() > 0

@@ -58,10 +58,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 		if pkg.Name == "main" {
 			mains = append(mains, pkg)
-			// package main may not type-check until main.gen.go is current,
-			// and errors inside main.gen.go itself never block wire: the file
-			// is about to be regenerated anyway. Parse errors in hand-written
-			// files are real and must surface.
+			// main.gen.go may be stale; handwritten parse errors still block wiring.
 			var parseErrs []packages.Error
 			for _, e := range pkg.Errors {
 				if e.Kind == packages.ParseError && filepath.Base(errorPosition(e).Filename) != "main.gen.go" {
@@ -172,9 +169,7 @@ func ScanFile(fset *token.FileSet, file *ast.File) ([]gen.Annotation, diag.Diagn
 			}
 		}
 	}
-	// Directives in comment groups that are not doc comments of a scanned
-	// declaration (blank line in between, or on an unsupported declaration)
-	// would otherwise vanish silently.
+	// Detached directives are ignored by Go doc attribution, so report them.
 	for _, cg := range file.Comments {
 		if consumed[cg] {
 			continue
