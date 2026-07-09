@@ -107,6 +107,7 @@ config: 2 problems:
 
 A few behaviors worth knowing:
 
+- **A later layer overrides mappings field by field, but replaces lists wholesale.** A `config.local.yaml` that sets one key under `server:` leaves the base layer's sibling keys intact; a list value replaces the base layer's entire list - there is no element-level merge.
 - **An empty env value is treated as unset.** `FOO=` does not override a configured value; set an empty string in YAML.
 - **Unknown YAML keys are rejected.** A `default:` or `env:` value on an unsupported scalar type is a load error.
 - File-read and YAML-parse failures are returned directly, before field-level resolution.
