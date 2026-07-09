@@ -86,9 +86,9 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 			g.AddMissingHint(h.MissingHint)
 		}
 	}
-	emitTierNodes := func(tier int) error {
+	emitTierNodes := func(tier gen.EmitTier) error {
 		for _, p := range parsed {
-			if emitTier(p.Directive) != tier {
+			if p.Directive.Meta().Tier != tier {
 				continue
 			}
 			g.SetDirective(p.Directive.Name())
@@ -100,7 +100,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 		return nil
 	}
-	if err := emitTierNodes(tierProvider); err != nil {
+	if err := emitTierNodes(gen.TierBind); err != nil {
 		return nil, err
 	}
 	// Prepare bindings before dependency resolution.
@@ -114,11 +114,12 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 			return nil, err
 		}
 	}
-	for tier := tierInit; tier <= tierRest; tier++ {
+	for _, tier := range []gen.EmitTier{gen.TierInit, gen.TierMain} {
 		if err := emitTierNodes(tier); err != nil {
 			return nil, err
 		}
 	}
+	// Finishers may still emit; validators observe the completed result.
 	for _, d := range directives {
 		f, ok := d.(gen.Finisher)
 		if !ok {
@@ -127,6 +128,18 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		g.SetDirective(d.Name())
 		if err := guard(d.Name(), "Finish", func() {
 			diags = append(diags, f.Finish(g)...)
+		}); err != nil {
+			return nil, err
+		}
+	}
+	for _, d := range directives {
+		v, ok := d.(gen.Validator)
+		if !ok {
+			continue
+		}
+		g.SetDirective(d.Name())
+		if err := guard(d.Name(), "Validate", func() {
+			diags = append(diags, v.Validate(g)...)
 		}); err != nil {
 			return nil, err
 		}
@@ -192,24 +205,4 @@ func guard(name, phase string, fn func()) (err error) {
 	}()
 	fn()
 	return nil
-}
-
-// Emission tiers preserve the current directive dependency order.
-const (
-	tierProvider = iota
-	tierInit
-	tierRest
-)
-
-func emitTier(d gen.Directive) int {
-	switch d.Name() {
-	// Registration-only emissions: they populate bindings before anything
-	// resolves dependencies.
-	case "provider", "provider:select", "config":
-		return tierProvider
-	case "init":
-		return tierInit
-	default:
-		return tierRest
-	}
 }

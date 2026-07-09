@@ -21,9 +21,9 @@ func New() []gen.Directive {
 	// write a plain provider for their config struct instead.
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
-	// Slice order is Finish order: directives whose Finish emits code
-	// (http:server) come before validation-only finishers (config,
-	// provider), which must observe everything materialized.
+	// Order is presentation only (docs, diagnostics listings): emission
+	// tiers come from Meta.Tier, and finishers run before validators by
+	// contract.
 	return []gen.Directive{
 		provider,
 		core.NewSelect(provider, cfg),

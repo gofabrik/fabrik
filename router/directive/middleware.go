@@ -115,8 +115,8 @@ func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
-// Finish warns about named middleware nothing references.
-func (m *Middleware) Finish(*gen.Gen) diag.Diagnostics {
+// Validate warns about named middleware nothing references.
+func (m *Middleware) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, name := range m.names() {
 		if nd := m.byName[name]; !nd.used {

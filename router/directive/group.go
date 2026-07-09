@@ -115,8 +115,8 @@ func (gr *Group) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (gr *Group) Emit(any, *gen.Gen) diag.Diagnostics { return nil }
 
-// Finish warns about groups without routed methods.
-func (gr *Group) Finish(*gen.Gen) diag.Diagnostics {
+// Validate warns about groups without routed methods.
+func (gr *Group) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for tn, info := range gr.byType {
 		if !info.used {

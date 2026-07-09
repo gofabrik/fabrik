@@ -53,6 +53,7 @@ func (*Config) Meta() gen.Meta {
 		Pos: []gen.PosSpec{
 			{Name: "SECTION", Kind: gen.KindFreeform, Optional: true},
 		},
+		Tier: gen.TierBind,
 	}
 }
 
@@ -184,8 +185,8 @@ func (c *Config) NodeFor(t types.Type) *Node {
 	return c.byType[types.TypeString(types.Unalias(t), nil)]
 }
 
-// Finish warns about unused config structs.
-func (c *Config) Finish(*gen.Gen) diag.Diagnostics {
+// Validate warns about unused config structs.
+func (c *Config) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, nd := range c.nodes {
 		if nd.named != nil && !nd.built && !nd.referenced {

@@ -46,6 +46,7 @@ func (*Provider) Meta() gen.Meta {
 		Attrs: []gen.AttrSpec{
 			{Key: "case", Kind: gen.KindFreeform},
 		},
+		Tier: gen.TierBind,
 	}
 }
 
@@ -175,8 +176,9 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
-// Finish validates group completeness and unused provider parameters.
-func (p *Provider) Finish(g *gen.Gen) diag.Diagnostics {
+// Validate checks group completeness and unused provider parameters
+// once everything has materialized.
+func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	p.finishGroups(&ds)
 	for _, nd := range p.nodes {

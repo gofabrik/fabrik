@@ -46,9 +46,17 @@ type Parsed struct {
 	Node      any
 }
 
-// Finisher runs after every directive has emitted.
+// Finisher runs after every node has emitted. It may emit more code (a
+// server's listen call); anything it materializes is still observed by
+// validators.
 type Finisher interface {
 	Finish(g *Gen) diag.Diagnostics
+}
+
+// Validator runs after every finisher, observing the completed
+// generation. It must not emit.
+type Validator interface {
+	Validate(g *Gen) diag.Diagnostics
 }
 
 // NodePreparer registers bindings before dependency resolution.
@@ -56,13 +64,25 @@ type NodePreparer interface {
 	PrepareNode(node any, g *Gen)
 }
 
-// Meta describes directive syntax, docs, and completions.
+// EmitTier orders Emit across the project, so a directive can rely on
+// earlier tiers being complete. Registration-only directives bind first,
+// init calls emit next, and everything else resolves last.
+type EmitTier int
+
+const (
+	TierMain EmitTier = iota // resolve dependencies and emit (the default)
+	TierBind                 // registration only: bind values, resolve nothing
+	TierInit                 // startup calls: bindings exist, nothing resolved yet
+)
+
+// Meta describes directive syntax, docs, completions, and lifecycle.
 type Meta struct {
 	Synopsis string     // one line, shown as completion detail
 	Doc      string     // markdown, shown on hover
 	Example  string     // canonical usage, shown in diagnostics help
 	Pos      []PosSpec  // required positional arguments, in order
 	Attrs    []AttrSpec // key=value options
+	Tier     EmitTier   // when Emit runs relative to other directives
 }
 
 // PosSpec describes one positional argument. Optional positionals must

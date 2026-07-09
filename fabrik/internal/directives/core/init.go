@@ -33,6 +33,7 @@ func (*Init) Meta() gen.Meta {
 			"load first; a returned `error` aborts startup.\n\n" +
 			"```go\n//fabrik:init\nfunc InitLogger() {\n\tslog.SetDefault(...)\n}\n```",
 		Example: "//fabrik:init",
+		Tier:    gen.TierInit,
 	}
 }
 

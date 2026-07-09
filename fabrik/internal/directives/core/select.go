@@ -45,6 +45,7 @@ func (*Select) Meta() gen.Meta {
 		Pos: []gen.PosSpec{
 			{Name: "CONFIG-KEY", Kind: gen.KindFreeform},
 		},
+		Tier: gen.TierBind,
 	}
 }
 
