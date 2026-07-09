@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"strings"
 
 	cfgdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/diag"
@@ -163,11 +162,17 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		nd.built = true
 		args, ds := p.resolveParams(g, nd.params)
 		v := g.Var(varBase(nd.pkg, nd.returns[0]))
+		errStyle := gen.ErrNone
 		if nd.returnsErr {
-			g.Stmt(gen.PhaseWire, "%s, err := %s.%s(%s)\nif err != nil {\nreturn err\n}", v, g.ImportPkg(nd.pkg), nd.fn, strings.Join(args, ", "))
-		} else {
-			g.Stmt(gen.PhaseWire, "%s := %s.%s(%s)", v, g.ImportPkg(nd.pkg), nd.fn, strings.Join(args, ", "))
+			errStyle = gen.ErrReturn
 		}
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
+			Var:  v,
+			Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
+			Args: args,
+			Err:  errStyle,
+		})
 		return v, ds
 	})
 	return nil

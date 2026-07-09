@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"strconv"
 	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
@@ -111,10 +112,25 @@ func (s *Static) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	if nd.dir != "" {
 		fsPkg := g.Import("io/fs")
 		v := g.Var(nd.pkg.Name() + nd.varName)
-		g.Stmt(gen.PhaseWire, "%s, err := %s.Sub(%s, %q)\nif err != nil {\nreturn err\n}", v, fsPkg, fsExpr, nd.dir)
+		g.Node(&gen.Call{
+			Base: gen.Base{
+				Phase:  gen.PhaseWire,
+				Origin: gen.Origin{Pos: nd.pos},
+				Label:  "embedded " + nd.varName + ", served under " + nd.prefix,
+			},
+			Var:  v,
+			Fn:   fsPkg + ".Sub",
+			Args: []string{fsExpr, strconv.Quote(nd.dir)},
+			Err:  gen.ErrReturn,
+		})
 		fsExpr = v
 	}
-	g.Stmt(gen.PhaseRegister, "%s.Handle(%q, %s.StripPrefix(%q, %s.FileServerFS(%s)))",
-		r, pattern, httpPkg, nd.prefix, httpPkg, fsExpr)
+	g.Node(&gen.Route{
+		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+		Router:  r,
+		Kind:    gen.RouteHandle,
+		Pattern: pattern,
+		Handler: httpPkg + ".StripPrefix(" + strconv.Quote(nd.prefix) + ", " + httpPkg + ".FileServerFS(" + fsExpr + "))",
+	})
 	return ds
 }

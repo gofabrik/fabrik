@@ -149,15 +149,15 @@ func (c *Config) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	}
 	ptr := types.NewPointer(nd.named)
 	g.BindLazy(ptr, "", func() (string, diag.Diagnostics) {
-		v, stmt := c.LoadStmt(nd, g)
-		g.Stmt(gen.PhaseConfig, "%s", stmt)
+		v, load := c.LoadNode(nd, g, gen.PhaseConfig)
+		g.Node(load)
 		return v, nil
 	})
 	return nil
 }
 
-// LoadStmt renders the config.Load statement for a node.
-func (c *Config) LoadStmt(nd *Node, g *gen.Gen) (string, string) {
+// LoadNode builds a config.Load node in the caller's phase.
+func (c *Config) LoadNode(nd *Node, g *gen.Gen, phase gen.Phase) (string, *gen.ConfigLoad) {
 	nd.built = true
 	cfgPkg := g.Import(configPath)
 	opts := make([]string, 0, len(c.files)+1)
@@ -175,9 +175,13 @@ func (c *Config) LoadStmt(nd *Node, g *gen.Gen) (string, string) {
 		opts = append(opts, fmt.Sprintf("%s.Section(%q)", cfgPkg, nd.section))
 	}
 	v := g.Var(nd.named.Obj().Pkg().Name() + nd.named.Obj().Name())
-	stmt := fmt.Sprintf("%s, err := %s.Load[%s](%s)\nif err != nil {\nreturn err\n}",
-		v, cfgPkg, g.TypeExpr(nd.named), strings.Join(opts, ", "))
-	return v, stmt
+	return v, &gen.ConfigLoad{
+		Base:    gen.Base{Phase: phase, Origin: gen.Origin{Directive: c.Name(), Pos: nd.pos}},
+		Var:     v,
+		Pkg:     cfgPkg,
+		Type:    g.TypeExpr(nd.named),
+		Options: opts,
+	}
 }
 
 // NodeFor returns the config node for a *Config parameter type, or nil.

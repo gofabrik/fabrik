@@ -82,7 +82,7 @@ func newCmd(args []string) error {
 		return err
 	}
 
-	// The starter must resolve its router dependency before it can build.
+	// Resolve starter dependencies before wiring.
 	tidy := exec.Command("go", "mod", "tidy")
 	tidy.Dir = project
 	if out, terr := tidy.CombinedOutput(); terr != nil {
@@ -90,9 +90,7 @@ func newCmd(args []string) error {
 		return fmt.Errorf("created %s, but its dependencies could not be resolved (offline?); run `go mod tidy` in %s and retry", project, project)
 	}
 
-	// Wire immediately and tidy again: the generated file imports modules
-	// (config) that no hand-written source references, and the project
-	// should build the moment new returns.
+	// Generated imports may add modules no handwritten source references.
 	abs, err := filepath.Abs(project)
 	if err != nil {
 		return err

@@ -111,7 +111,11 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*hookNode)
 	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 	handler, ds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
-	g.Stmt(gen.PhaseRegister, "%s.%s(%s)", r, h.method, handler)
+	g.Node(&gen.Call{
+		Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+		Fn:   r + "." + h.method,
+		Args: []string{handler},
+	})
 	return ds
 }
 

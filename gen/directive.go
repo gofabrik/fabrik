@@ -1,4 +1,3 @@
-// Package gen defines the directive contract and generated-code builder.
 package gen
 
 import (

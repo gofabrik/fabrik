@@ -52,8 +52,7 @@ func TestEndToEnd(t *testing.T) {
 	if err := os.WriteFile(gomod, mod, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Fill go.sum for transitive deps (yaml.v3) from the local module
-	// cache; GOPROXY=off keeps this hermetic.
+	// Populate transitive sums from the local cache.
 	tidy := exec.Command("go", "mod", "tidy")
 	tidy.Dir = dir
 	if out, err := tidy.CombinedOutput(); err != nil {
@@ -63,8 +62,7 @@ func TestEndToEnd(t *testing.T) {
 	if _, err := wire(dir); err != nil {
 		t.Fatalf("fabrik wire: %v", err)
 	}
-	// The generated file imports the config module, which no hand-written
-	// source references; tidy again so its require lands.
+	// Generated imports may add modules absent from handwritten sources.
 	tidy = exec.Command("go", "mod", "tidy")
 	tidy.Dir = dir
 	if out, err := tidy.CombinedOutput(); err != nil {

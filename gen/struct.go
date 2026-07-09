@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
 )
@@ -37,7 +36,7 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 	st := named.Underlying().(*types.Struct)
 
 	var ds diag.Diagnostics
-	var fields []string
+	var fields []Field
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
 		owner := g.TypeExpr(named)
@@ -69,15 +68,16 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 			}
 		}
 		ds = append(ds, eds...)
-		fields = append(fields, fmt.Sprintf("%s: %s,", f.Name(), expr))
+		fields = append(fields, Field{Name: f.Name(), Expr: expr})
 	}
 
 	v := g.Var(named.Obj().Pkg().Name() + named.Obj().Name())
-	if len(fields) == 0 {
-		g.Stmt(PhaseWire, "%s := &%s{}", v, g.TypeExpr(named))
-	} else {
-		g.Stmt(PhaseWire, "%s := &%s{\n%s\n}", v, g.TypeExpr(named), strings.Join(fields, "\n"))
-	}
+	g.Node(&StructLit{
+		Base:   Base{Phase: PhaseWire},
+		Var:    v,
+		Type:   g.TypeExpr(named),
+		Fields: fields,
+	})
 	// Bind the value form for value receivers when no provider owns it.
 	if !g.HasBinding(named, "") {
 		g.Bind(named, "", "*"+v)

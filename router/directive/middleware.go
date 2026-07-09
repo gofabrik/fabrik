@@ -110,7 +110,11 @@ func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
-	g.Stmt(gen.PhaseMiddleware, "%s.Use(%s.%s)", r, g.ImportPkg(nd.pkg), nd.fn)
+	g.Node(&gen.Call{
+		Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
+		Fn:   r + ".Use",
+		Args: []string{g.ImportPkg(nd.pkg) + "." + nd.fn},
+	})
 	return nil
 }
 

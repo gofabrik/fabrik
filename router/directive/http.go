@@ -197,11 +197,19 @@ func (h *HTTP) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	handler, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 	ds = append(ds, hds...)
-	var chain strings.Builder
+	chain := make([]string, 0, len(mws))
 	for _, mw := range mws {
-		chain.WriteString(", " + g.ImportPkg(mw.pkg) + "." + mw.fn)
+		chain = append(chain, g.ImportPkg(mw.pkg)+"."+mw.fn)
 	}
-	g.Stmt(gen.PhaseRegister, "%s.Method(%q, %q, %s%s)", r, nd.method, pattern, handler, chain.String())
+	g.Node(&gen.Route{
+		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+		Router:  r,
+		Kind:    gen.RouteMethod,
+		Method:  nd.method,
+		Pattern: pattern,
+		Handler: handler,
+		Chain:   chain,
+	})
 	return ds
 }
 
