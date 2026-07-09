@@ -16,8 +16,7 @@ type Init struct {
 	cfg *cfgdir.Config
 }
 
-// NewInit returns an Init directive for one run, sharing the config
-// directive so inits can receive configuration.
+// NewInit returns an Init directive for one run.
 func NewInit(cfg *cfgdir.Config) *Init { return &Init{cfg: cfg} }
 
 func (*Init) Name() string { return "init" }
@@ -33,6 +32,7 @@ func (*Init) Meta() gen.Meta {
 			"load first; a returned `error` aborts startup.\n\n" +
 			"```go\n//fabrik:init\nfunc InitLogger() {\n\tslog.SetDefault(...)\n}\n```",
 		Example: "//fabrik:init",
+		Tier:    gen.TierInit,
 	}
 }
 
@@ -102,31 +102,18 @@ func (i *Init) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (i *Init) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*initNode)
-	// Inits run before providers: parameters resolve to the shared context
-	// or configuration, which the Config phase makes available first.
-	var ds diag.Diagnostics
-	args := make([]string, 0, len(nd.params))
-	for _, pr := range nd.params {
-		if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
-			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
-			continue
-		}
-		if i.cfg.IsConfig(pr.t) {
-			expr, eds, ok := g.Instance(pr.t, "")
-			ds = append(ds, anchor(eds, pr.pos)...)
-			if ok {
-				args = append(args, expr)
-				continue
+	// Inits run before providers, so parameters resolve only to context or config.
+	args, ds := resolveArgs(g, i.cfg, nd.params,
+		func(pr param) (string, diag.Diagnostics, bool) {
+			if !i.cfg.IsConfig(pr.t) {
+				return "", nil, false
 			}
-		}
-		help := "move dependency setup into a //fabrik:provider"
-		if i.cfg.IsConfigValue(pr.t) {
-			help = fmt.Sprintf("config structs are injected as pointers; take *%s", g.TypeExpr(pr.t))
-		}
-		ds.Error(pr.pos, "init parameters must be context.Context or //fabrik:config structs (inits run before providers)",
-			help)
-		args = append(args, "nil")
-	}
+			return g.Instance(pr.t, "")
+		},
+		func(param) (string, string) {
+			return "init parameters must be context.Context or //fabrik:config structs (inits run before providers)",
+				"move dependency setup into a //fabrik:provider"
+		})
 	call := fmt.Sprintf("%s.%s(%s)", g.ImportPkg(nd.pkg), nd.fn, strings.Join(args, ", "))
 	if nd.returnsErr {
 		g.Stmt(gen.PhaseInit, "if err := %s; err != nil {\nreturn err\n}", call)

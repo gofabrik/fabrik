@@ -42,9 +42,7 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 		f := st.Field(i)
 		owner := g.TypeExpr(named)
 		if !f.Exported() {
-			// Private state (mutexes, counters) stays at its zero value; the
-			// error fires only when a binding exists for the field's type,
-			// i.e. wiring was plausibly intended.
+			// Private state stays zero-valued unless a binding makes injection likely.
 			if g.HasBinding(f.Type(), "") {
 				ds.Error(fset.Position(f.Pos()),
 					fmt.Sprintf("field %s of %s is unexported but its type has a provider", f.Name(), owner),
@@ -55,9 +53,13 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 		expr, eds, ok := g.Instance(f.Type(), "")
 		if !ok {
 			if len(eds) == 0 {
+				help, hinted := g.MissingHint(f.Type())
+				if !hinted {
+					help = fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(f.Type()))
+				}
 				ds.Error(fset.Position(f.Pos()),
 					fmt.Sprintf("no provider for %s (field %s of %s)", g.TypeExpr(f.Type()), f.Name(), owner),
-					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(f.Type())))
+					help)
 			}
 			expr = "nil"
 		}
@@ -76,7 +78,7 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 	} else {
 		g.Stmt(PhaseWire, "%s := &%s{\n%s\n}", v, g.TypeExpr(named), strings.Join(fields, "\n"))
 	}
-	// Bind the value form if no provider owns it.
+	// Bind the value form for value receivers when no provider owns it.
 	if !g.HasBinding(named, "") {
 		g.Bind(named, "", "*"+v)
 	}

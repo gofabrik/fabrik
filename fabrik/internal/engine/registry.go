@@ -15,23 +15,20 @@ import (
 func New() []gen.Directive {
 	group := routerdir.NewGroup()
 	routes := routerdir.NewRouteTable()
-	// Configuration files are conventional: the base file plus a local
-	// development overlay, both optional. Apps needing different sources
-	// write a plain provider for their config struct instead.
+	mw := routerdir.NewMiddleware()
+	// Conventional config layers are optional; custom sources belong in providers.
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
-	// Slice order is Finish order: directives whose Finish emits code
-	// (http:server) come before validation-only finishers (config,
-	// provider), which must observe everything materialized.
+	// Registry order is presentation only; lifecycle order comes from Meta.Tier.
 	return []gen.Directive{
 		provider,
 		core.NewSelect(provider, cfg),
 		core.NewInit(cfg),
-		routerdir.NewHTTP(group, routes),
-		routerdir.NewHandle(group, routes),
+		routerdir.NewHTTP(group, routes, mw),
+		routerdir.NewHandle(group, routes, mw),
 		routerdir.NewStatic(routes),
 		group,
-		routerdir.NewMiddleware(),
+		mw,
 		routerdir.NewNotFound(),
 		routerdir.NewMethodNotAllowed(),
 		routerdir.NewServe(),

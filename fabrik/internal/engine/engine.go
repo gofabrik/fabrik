@@ -27,8 +27,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		return nil, err
 	}
 	if res.MainDir == "" {
-		// Run the grammar tier so directive mistakes surface alongside the
-		// error instead of being silently discarded.
+		// Report directive syntax even when no main package is found.
 		anns := make([]gen.Annotation, len(res.Items))
 		for i, item := range res.Items {
 			anns[i] = item.Ann
@@ -73,7 +72,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		parsed = append(parsed, gen.Parsed{Directive: d, Node: node})
 	}
 
-	// Emit only after Parse and Check succeed across the project.
+	// Emit only after project-wide Parse and Check pass.
 	if diags.HasFatal() {
 		diags.Sort()
 		return &Result{MainDir: res.MainDir, Diags: diags}, nil
@@ -81,9 +80,14 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 
 	g := gen.New()
 	g.SetModule(res.ModulePath)
-	emitTierNodes := func(tier int) error {
+	for _, d := range directives {
+		if h, ok := d.(gen.Hinter); ok {
+			g.AddMissingHint(h.MissingHint)
+		}
+	}
+	emitTierNodes := func(tier gen.EmitTier) error {
 		for _, p := range parsed {
-			if emitTier(p.Directive) != tier {
+			if p.Directive.Meta().Tier != tier {
 				continue
 			}
 			g.SetDirective(p.Directive.Name())
@@ -95,7 +99,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 		return nil
 	}
-	if err := emitTierNodes(tierProvider); err != nil {
+	if err := emitTierNodes(gen.TierBind); err != nil {
 		return nil, err
 	}
 	// Prepare bindings before dependency resolution.
@@ -109,11 +113,12 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 			return nil, err
 		}
 	}
-	for tier := tierInit; tier <= tierRest; tier++ {
+	for _, tier := range []gen.EmitTier{gen.TierInit, gen.TierMain} {
 		if err := emitTierNodes(tier); err != nil {
 			return nil, err
 		}
 	}
+	// Validators run after finishers because finishers may emit.
 	for _, d := range directives {
 		f, ok := d.(gen.Finisher)
 		if !ok {
@@ -122,6 +127,18 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 		g.SetDirective(d.Name())
 		if err := guard(d.Name(), "Finish", func() {
 			diags = append(diags, f.Finish(g)...)
+		}); err != nil {
+			return nil, err
+		}
+	}
+	for _, d := range directives {
+		v, ok := d.(gen.Validator)
+		if !ok {
+			continue
+		}
+		g.SetDirective(d.Name())
+		if err := guard(d.Name(), "Validate", func() {
+			diags = append(diags, v.Validate(g)...)
 		}); err != nil {
 			return nil, err
 		}
@@ -187,24 +204,4 @@ func guard(name, phase string, fn func()) (err error) {
 	}()
 	fn()
 	return nil
-}
-
-// Emission tiers preserve the current directive dependency order.
-const (
-	tierProvider = iota
-	tierInit
-	tierRest
-)
-
-func emitTier(d gen.Directive) int {
-	switch d.Name() {
-	// Registration-only emissions: they populate bindings before anything
-	// resolves dependencies.
-	case "provider", "provider:select", "config":
-		return tierProvider
-	case "init":
-		return tierInit
-	default:
-		return tierRest
-	}
 }

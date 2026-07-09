@@ -1,0 +1,69 @@
+Name resolution: middleware= references declared names; unknown names
+error with the declared set, unreferenced named middleware warns.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http:middleware name=auth
+func RequireAuth(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=idle
+func Idle(next http.Handler) http.Handler { return next }
+
+//fabrik:http:group /admin middleware=missing
+type Admin struct{}
+
+//fabrik:http GET /users
+func (a *Admin) Users(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /login middleware=nosuch
+func Login(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /account middleware=auth
+func Account(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:middleware name=duponly
+func DupOnly(next http.Handler) http.Handler { return next }
+
+//fabrik:http GET /twice
+func TwiceA(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /twice middleware=duponly,ghost
+func TwiceB(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:middleware name=wrapped
+func Wrapped(next http.Handler) http.Handler { return next }
+
+//fabrik:http:handle /files
+func FilesA(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:handle /files middleware=wrapped,wraith
+func FilesB(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+warning: web/web.go:8:1: middleware "idle" is never referenced
+  help: list it in a middleware= chain, or drop name= to make it global
+error: web/web.go:11:39: unknown middleware "missing"
+  help: declared names: auth, duponly, idle, wrapped
+error: web/web.go:17:37: unknown middleware "nosuch"
+  help: declared names: auth, duponly, idle, wrapped
+error: web/web.go:29:1: duplicate route GET /twice
+  help: first declared at $WORK/web/web.go:26:1
+error: web/web.go:29:45: unknown middleware "ghost"
+  help: declared names: auth, duponly, idle, wrapped
+error: web/web.go:38:1: duplicate route /files
+  help: first declared at $WORK/web/web.go:35:1
+error: web/web.go:38:48: unknown middleware "wraith"
+  help: declared names: auth, duponly, idle, wrapped

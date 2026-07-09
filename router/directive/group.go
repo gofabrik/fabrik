@@ -13,7 +13,7 @@ import (
 // groupInfo is one registered group.
 type groupInfo struct {
 	prefix string
-	mws    []*types.Func
+	refs   []mwRef
 	pos    token.Position
 	used   bool
 }
@@ -31,12 +31,12 @@ func (*Group) Name() string { return "http:group" }
 func (*Group) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Route prefix and shared middleware for a handler struct",
-		Doc: "**`//fabrik:http:group /prefix [middleware=Name,pkg.Name]`**\n\n" +
+		Doc: "**`//fabrik:http:group /prefix [middleware=name,name2]`**\n\n" +
 			"Declared on a handler struct: every `//fabrik:http` route on its " +
 			"methods is registered under the prefix, wrapped in the group's " +
 			"middleware before its own. A route path of `/{$}` maps to the " +
 			"bare prefix. Plain-function routes are unaffected.\n\n" +
-			"```go\n//fabrik:http:group /api middleware=shared.RequireAuth\ntype API struct { ... }\n```",
+			"```go\n//fabrik:http:group /api middleware=auth\ntype API struct { ... }\n```",
 		Example: "//fabrik:http:group /api",
 		Pos: []gen.PosSpec{
 			{Name: "PREFIX", Kind: gen.KindFreeform},
@@ -109,20 +109,14 @@ func (gr *Group) Check(n any, t gen.Typed) diag.Diagnostics {
 		return ds
 	}
 
-	mws, mds := resolveMWRefs(t, tn.Pkg(), nd.refs)
-	ds = append(ds, mds...)
-	if ds.HasFatal() {
-		return ds
-	}
-
-	gr.byType[tn] = &groupInfo{prefix: nd.prefix, mws: mws, pos: nd.pos}
+	gr.byType[tn] = &groupInfo{prefix: nd.prefix, refs: nd.refs, pos: nd.pos}
 	return ds
 }
 
 func (gr *Group) Emit(any, *gen.Gen) diag.Diagnostics { return nil }
 
-// Finish warns about groups without routed methods.
-func (gr *Group) Finish(*gen.Gen) diag.Diagnostics {
+// Validate warns about groups without routed methods.
+func (gr *Group) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for tn, info := range gr.byType {
 		if !info.used {

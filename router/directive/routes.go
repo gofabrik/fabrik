@@ -5,15 +5,15 @@ import (
 	"go/token"
 	"go/types"
 	"net/http"
-	"regexp"
 
 	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/gen"
 )
 
-// routeTable tracks all patterns registered in one generation run.
+// routeTable tracks registrations and delegates conflicts to http.ServeMux.
 type routeTable struct {
 	seen    map[string]token.Position
+	order   []string // deterministic conflict search
 	scratch *http.ServeMux
 }
 
@@ -30,53 +30,58 @@ func (rt *routeTable) add(key string, pos token.Position) (diag.Diagnostic, bool
 			Help:    fmt.Sprintf("first declared at %s", first),
 		}, false
 	}
-	if msg := registerScratch(rt.scratch, key); msg != "" {
-		return rt.conflictDiag(key, pos, msg), false
+	if !registers(rt.scratch, key) {
+		return rt.conflictDiag(key, pos), false
 	}
 	rt.seen[key] = pos
+	rt.order = append(rt.order, key)
 	return diag.Diagnostic{}, true
 }
 
-// registerScratch converts ServeMux registration panics to messages.
-func registerScratch(mux *http.ServeMux, pattern string) (msg string) {
+// registers reports whether the pattern registers without conflicting.
+func registers(mux *http.ServeMux, pattern string) (ok bool) {
 	defer func() {
-		if p := recover(); p != nil {
-			msg = fmt.Sprint(p)
+		if recover() != nil {
+			ok = false
 		}
 	}()
 	mux.Handle(pattern, http.NotFoundHandler())
-	return ""
+	return true
 }
 
-var conflictRE = regexp.MustCompile(`conflicts with pattern "([^"]+)"`)
-
-// conflictDiag turns a ServeMux conflict into a positioned diagnostic.
-func (rt *routeTable) conflictDiag(key string, pos token.Position, panicMsg string) diag.Diagnostic {
-	d := diag.Diagnostic{
+// conflictDiag names the earliest conflicting pattern using ServeMux probes.
+func (rt *routeTable) conflictDiag(key string, pos token.Position) diag.Diagnostic {
+	for _, earlier := range rt.order {
+		probe := http.NewServeMux()
+		if registers(probe, earlier) && !registers(probe, key) {
+			return diag.Diagnostic{
+				Severity: diag.SevError,
+				Pos:      pos,
+				Message:  fmt.Sprintf("route %s conflicts with %s", key, earlier),
+				Help: fmt.Sprintf("declared at %s; the patterns match the same requests and neither is more specific",
+					rt.seen[earlier]),
+			}
+		}
+	}
+	// Keep a generic diagnostic if ServeMux conflict behavior changes.
+	return diag.Diagnostic{
 		Severity: diag.SevError,
 		Pos:      pos,
 		Message:  fmt.Sprintf("route %s conflicts with an earlier route", key),
 		Help:     "the patterns match the same requests and neither is more specific",
 	}
-	if m := conflictRE.FindStringSubmatch(panicMsg); m != nil {
-		d.Message = fmt.Sprintf("route %s conflicts with %s", key, m[1])
-		if first, ok := rt.seen[m[1]]; ok {
-			d.Help = fmt.Sprintf("declared at %s; the patterns match the same requests and neither is more specific", first)
-		}
-	}
-	return d
 }
 
-// effectiveRoute applies the receiver group's prefix and middleware.
-func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []*types.Func) (string, []*types.Func) {
-	var mws []*types.Func
+// effectiveRoute applies the receiver group's prefix and middleware refs.
+func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []mwRef) (string, []mwRef) {
+	var refs []mwRef
 	if recvObj != nil {
 		if info := groups.lookup(recvObj); info != nil {
 			path = joinPattern(info.prefix, path)
-			mws = append(mws, info.mws...)
+			refs = append(refs, info.refs...)
 		}
 	}
-	return path, append(mws, own...)
+	return path, append(refs, own...)
 }
 
 // handlerExpr returns the expression for a handler: pkg.Func for a plain

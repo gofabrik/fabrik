@@ -26,13 +26,13 @@ Positional arguments:
 
 ## fabrik:http
 
-**`//fabrik:http METHOD /path [middleware=Name,pkg.Name]`**
+**`//fabrik:http METHOD /path [middleware=name,name2]`**
 
-Registers a standard `net/http` handler on the fabrik router. METHOD is any HTTP method token, including extensions like PURGE. Handler signature: `func(w http.ResponseWriter, r *http.Request)`, on a plain function or a method of a wired struct. `middleware=` wraps this route in a comma-separated chain, outermost first; a bare name resolves in the handler's package.
+Registers a standard `net/http` handler on the fabrik router. METHOD is any HTTP method token, including extensions like PURGE. Handler signature: `func(w http.ResponseWriter, r *http.Request)`, on a plain function or a method of a wired struct. `middleware=` wraps this route in a comma-separated chain of `//fabrik:http:middleware name=` declarations, outermost first.
 
 ```go
 //fabrik:http GET /login
-//fabrik:http POST /account middleware=shared.RequireAuth
+//fabrik:http POST /account middleware=auth
 ```
 
 Positional arguments:
@@ -46,12 +46,12 @@ Options:
 
 ## fabrik:http:group
 
-**`//fabrik:http:group /prefix [middleware=Name,pkg.Name]`**
+**`//fabrik:http:group /prefix [middleware=name,name2]`**
 
 Declared on a handler struct: every `//fabrik:http` route on its methods is registered under the prefix, wrapped in the group's middleware before its own. A route path of `/{$}` maps to the bare prefix. Plain-function routes are unaffected.
 
 ```go
-//fabrik:http:group /api middleware=shared.RequireAuth
+//fabrik:http:group /api middleware=auth
 type API struct { ... }
 ```
 
@@ -65,9 +65,9 @@ Options:
 
 ## fabrik:http:handle
 
-**`//fabrik:http:handle /path [middleware=Name,pkg.Name]`**
+**`//fabrik:http:handle /path [middleware=name,name2]`**
 
-Registers a handler for every method of a pattern. Two shapes: a standard handler func, or a function without parameters returning `http.Handler`, called once at startup - the escape hatch for third-party handlers. `middleware=` wraps the route in a comma-separated chain, same as on `//fabrik:http`.
+Registers a handler for every method of a pattern. Two shapes: a standard handler func, or a function without parameters returning `http.Handler`, called once at startup - the escape hatch for third-party handlers. `middleware=` wraps the route in a comma-separated chain of declared names, same as on `//fabrik:http`.
 
 ```go
 //fabrik:http:handle /metrics
@@ -95,14 +95,18 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }
 
 ## fabrik:http:middleware
 
-**`//fabrik:http:middleware`**
+**`//fabrik:http:middleware [name=NAME]`**
 
-Registers a global middleware, applied to every request including 404/405, in source order. For per-route middleware, omit the directive and reference the function with `middleware=` on the route instead.
+On a `func(next http.Handler) http.Handler`. Bare, it registers a global middleware, applied to every request including 404/405, in source order. With `name=`, it is not global: routes and groups opt in by listing the name in their `middleware=` chain - directives reference declared names, never code.
 
 ```go
-//fabrik:http:middleware
-func RequestID(next http.Handler) http.Handler { ... }
+//fabrik:http:middleware name=auth
+func RequireAuth(next http.Handler) http.Handler { ... }
 ```
+
+Options:
+
+- `name=`
 
 ## fabrik:http:notfound
 

@@ -29,10 +29,6 @@ func (a Annotation) ArgPos(col int) token.Position {
 type Typed struct {
 	Target types.Object   // the annotated func/method/type, fully typed
 	Fset   *token.FileSet // resolves positions of typed objects
-
-	// Lookup resolves pkg.Name references by package name.
-	// Ambiguous names return candidate import paths.
-	Lookup func(pkgName, name string) (obj types.Object, ambiguous []string)
 }
 
 // Directive implements one //fabrik:NAME annotation.
@@ -50,9 +46,14 @@ type Parsed struct {
 	Node      any
 }
 
-// Finisher runs after every directive has emitted.
+// Finisher runs after all nodes emit and may append more code.
 type Finisher interface {
 	Finish(g *Gen) diag.Diagnostics
+}
+
+// Validator observes completed generation and must not emit.
+type Validator interface {
+	Validate(g *Gen) diag.Diagnostics
 }
 
 // NodePreparer registers bindings before dependency resolution.
@@ -60,13 +61,23 @@ type NodePreparer interface {
 	PrepareNode(node any, g *Gen)
 }
 
-// Meta describes directive syntax, docs, and completions.
+// EmitTier orders directive emission.
+type EmitTier int
+
+const (
+	TierMain EmitTier = iota // resolve dependencies and emit (the default)
+	TierBind                 // registration only: bind values, resolve nothing
+	TierInit                 // startup calls: bindings exist, nothing resolved yet
+)
+
+// Meta describes directive syntax, docs, completions, and lifecycle.
 type Meta struct {
 	Synopsis string     // one line, shown as completion detail
 	Doc      string     // markdown, shown on hover
 	Example  string     // canonical usage, shown in diagnostics help
 	Pos      []PosSpec  // required positional arguments, in order
 	Attrs    []AttrSpec // key=value options
+	Tier     EmitTier   // when Emit runs relative to other directives
 }
 
 // PosSpec describes one positional argument. Optional positionals must
@@ -92,5 +103,5 @@ type ValueKind int
 const (
 	KindFreeform ValueKind = iota
 	KindEnum
-	KindMiddlewareRef // completes from middleware-shaped functions in the app
+	KindMiddlewareRef // completes from declared //fabrik:http:middleware names
 )

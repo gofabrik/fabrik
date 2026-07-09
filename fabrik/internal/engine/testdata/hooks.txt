@@ -27,6 +27,7 @@ import (
 //go:embed assets
 var Assets embed.FS
 
+//fabrik:http:middleware name=nocache
 func NoCache(next http.Handler) http.Handler { return next }
 
 //fabrik:http:notfound
@@ -38,7 +39,7 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) {}
 //fabrik:http:handle /every
 func Every(w http.ResponseWriter, r *http.Request) {}
 
-//fabrik:http:handle /wrapped middleware=NoCache
+//fabrik:http:handle /wrapped middleware=nocache
 func Wrapped(w http.ResponseWriter, r *http.Request) {}
 
 //fabrik:http:handle /metrics

@@ -1,10 +1,8 @@
 package main
 
 import (
-	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	iofs "io/fs"
 	"os"
 	"path/filepath"
@@ -270,19 +268,50 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 	}
 
 	args := tokens[1:]
-	if !trailingSpace && len(args) > 0 {
-		if key, val, ok := strings.Cut(args[len(args)-1], "="); ok {
-			for _, spec := range meta.Attrs {
-				if spec.Key == key && spec.Kind == gen.KindMiddlewareRef {
-					return s.middlewareCompletions(uri, val)
-				}
-			}
-		}
+	if partial, ok := activeMWChain(meta, args, trailingSpace); ok {
+		return s.middlewareCompletions(uri, partial)
 	}
 	return argCompletions(meta, args, trailingSpace)
 }
 
-// middlewareCompletions offers local names or pkg.Name for middleware funcs.
+// activeMWChain returns the current middleware= item, if the cursor is inside one.
+func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, bool) {
+	for i := len(args) - 1; i >= 0; i-- {
+		key, val, hasEq := strings.Cut(args[i], "=")
+		if !hasEq {
+			continue
+		}
+		if !isMWAttr(meta, key) {
+			return "", false
+		}
+		cur := val
+		for j := i + 1; j < len(args); j++ {
+			if !strings.HasSuffix(cur, ",") {
+				return "", false
+			}
+			cur = args[j]
+		}
+		if !trailingSpace {
+			return cur, true
+		}
+		if strings.HasSuffix(cur, ",") {
+			return "", true
+		}
+		return "", false
+	}
+	return "", false
+}
+
+func isMWAttr(meta gen.Meta, key string) bool {
+	for _, spec := range meta.Attrs {
+		if spec.Key == key {
+			return spec.Kind == gen.KindMiddlewareRef
+		}
+	}
+	return false
+}
+
+// middlewareCompletions offers the declared //fabrik:http:middleware names.
 func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem {
 	if i := strings.LastIndex(partial, ","); i >= 0 {
 		partial = partial[i+1:]
@@ -290,14 +319,6 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 	root := s.rootForURI(uri)
 	if root == "" {
 		return nil
-	}
-
-	curPkg := ""
-	if text, ok := s.getDoc(uri); ok {
-		fset := token.NewFileSet()
-		if f, err := parser.ParseFile(fset, fileFromURI(uri), text, parser.PackageClauseOnly); err == nil {
-			curPkg = f.Name.Name
-		}
 	}
 
 	s.mu.Lock()
@@ -325,19 +346,12 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || filepath.Base(path) == "main.gen.go" {
 			return nil
 		}
-		for _, fn := range s.middlewareFuncs(path, overlay[path], d) {
-			if !fn.exported && fn.pkg != curPkg {
+		for _, name := range s.middlewareNames(path, overlay[path], d) {
+			if seen[name] || (partial != "" && !strings.HasPrefix(name, partial)) {
 				continue
 			}
-			label := fn.pkg + "." + fn.name
-			if fn.pkg == curPkg {
-				label = fn.name
-			}
-			if seen[label] || (partial != "" && !strings.HasPrefix(label, partial)) {
-				continue
-			}
-			seen[label] = true
-			out = append(out, completionItem{Label: label, Kind: 3, Detail: "middleware", InsertText: label})
+			seen[name] = true
+			out = append(out, completionItem{Label: name, Kind: 3, Detail: "middleware", InsertText: name})
 		}
 		return nil
 	})
@@ -345,21 +359,25 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 	return out
 }
 
-// mwFunc is one middleware-shaped function in the completion index.
-type mwFunc struct {
-	pkg, name string
-	exported  bool
-}
-
-// mwCacheEntry caches middleware functions by file size and modification time.
+// mwCacheEntry caches declared names by file size and modification time.
 type mwCacheEntry struct {
 	size    int64
 	modTime int64
-	funcs   []mwFunc
+	names   []string
 }
 
-// middlewareFuncs returns middleware-shaped functions for one file.
-func (s *lspServer) middlewareFuncs(path, overlayText string, d iofs.DirEntry) []mwFunc {
+// mwDirective keeps completion parsing aligned with generation.
+var mwDirective = func() gen.Directive {
+	for _, d := range engine.New() {
+		if d.Name() == "http:middleware" {
+			return d
+		}
+	}
+	return nil
+}()
+
+// middlewareNames returns valid names declared in one file.
+func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) []string {
 	var info iofs.FileInfo
 	if overlayText == "" {
 		if fi, err := d.Info(); err == nil {
@@ -368,7 +386,7 @@ func (s *lspServer) middlewareFuncs(path, overlayText string, d iofs.DirEntry) [
 			entry, hit := s.mwCache[path]
 			s.mu.Unlock()
 			if hit && entry.size == fi.Size() && entry.modTime == fi.ModTime().UnixNano() {
-				return entry.funcs
+				return entry.names
 			}
 		}
 	}
@@ -378,44 +396,29 @@ func (s *lspServer) middlewareFuncs(path, overlayText string, d iofs.DirEntry) [
 		src = overlayText
 	}
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, src, 0)
-	var funcs []mwFunc
+	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+	var names []string
 	if err == nil && f.Name.Name != "main" {
-		for _, decl := range f.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Recv != nil || !isMiddlewareShape(fd.Type) {
+		anns, _ := load.ScanFile(fset, f)
+		for _, ann := range anns {
+			if ann.Name != "http:middleware" || mwDirective == nil {
 				continue
 			}
-			funcs = append(funcs, mwFunc{pkg: f.Name.Name, name: fd.Name.Name, exported: fd.Name.IsExported()})
+			if _, ds := mwDirective.Parse(ann); ds.HasFatal() {
+				continue
+			}
+			args, _ := gen.ParseArgs(ann, mwDirective.Meta())
+			if nm, ok := args.Attr["name"]; ok && nm.Text != "" {
+				names = append(names, nm.Text)
+			}
 		}
 	}
 	if info != nil {
 		s.mu.Lock()
-		s.mwCache[path] = mwCacheEntry{size: info.Size(), modTime: info.ModTime().UnixNano(), funcs: funcs}
+		s.mwCache[path] = mwCacheEntry{size: info.Size(), modTime: info.ModTime().UnixNano(), names: names}
 		s.mu.Unlock()
 	}
-	return funcs
-}
-
-// isMiddlewareShape recognizes func(http.Handler) http.Handler in source.
-func isMiddlewareShape(ft *ast.FuncType) bool {
-	count := func(fl *ast.FieldList) int {
-		if fl == nil {
-			return 0
-		}
-		n := 0
-		for _, f := range fl.List {
-			m := len(f.Names)
-			if m == 0 {
-				m = 1
-			}
-			n += m
-		}
-		return n
-	}
-	return count(ft.Params) == 1 && count(ft.Results) == 1 &&
-		types.ExprString(ft.Params.List[0].Type) == "http.Handler" &&
-		types.ExprString(ft.Results.List[0].Type) == "http.Handler"
+	return names
 }
 
 func directiveCompletions(directives []gen.Directive, partial string) []completionItem {

@@ -4,7 +4,7 @@ Typed application configuration for Go: YAML files, explicit per-field environme
 
 ## Why YAML-first
 
-YAML keeps configuration structured and reviewable. Environment variables are explicit overrides: only fields with an `env:` tag can read from the process environment.
+YAML carries structure. Environment overrides are opt-in through `env:` tags.
 
 ## Usage
 
@@ -53,7 +53,7 @@ cfg, err := config.Load[Config](
 	config.FileOptional("config.local.yaml"),  // dev overlay, applied if present
 )
 if err != nil {
-		return err
+	return err
 }
 
 addr := cfg.Server.Addr
@@ -107,6 +107,7 @@ config: 2 problems:
 
 A few behaviors worth knowing:
 
+- **A later layer overrides mappings field by field, but replaces lists wholesale.** A `config.local.yaml` that sets one key under `server:` leaves the base layer's sibling keys intact; a list value replaces the base layer's entire list - there is no element-level merge.
 - **An empty env value is treated as unset.** `FOO=` does not override a configured value; set an empty string in YAML.
 - **Unknown YAML keys are rejected.** A `default:` or `env:` value on an unsupported scalar type is a load error.
 - File-read and YAML-parse failures are returned directly, before field-level resolution.

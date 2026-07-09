@@ -226,3 +226,26 @@ func TestScalarTrimming(t *testing.T) {
 		t.Fatalf("Motto = %q, want string preserved verbatim", cfg.Motto)
 	}
 }
+
+func TestLayerMergeSemantics(t *testing.T) {
+	type Config struct {
+		Server struct {
+			Addr string `yaml:"addr"`
+			Name string `yaml:"name"`
+		} `yaml:"server"`
+		Tags []string `yaml:"tags"`
+	}
+	cfg, err := config.Load[Config](
+		config.Bytes("base", []byte("server:\n  addr: \":8080\"\n  name: base\ntags: [a, b]\n")),
+		config.Bytes("overlay", []byte("server:\n  name: top\ntags: [c]\n")),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.Addr != ":8080" || cfg.Server.Name != "top" {
+		t.Fatalf("server = %+v, want addr kept from base and name overridden", cfg.Server)
+	}
+	if len(cfg.Tags) != 1 || cfg.Tags[0] != "c" {
+		t.Fatalf("tags = %v, want wholesale replacement [c]", cfg.Tags)
+	}
+}

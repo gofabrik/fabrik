@@ -17,13 +17,14 @@ package shared
 
 import "net/http"
 
+//fabrik:http:middleware name=auth
 func RequireAuth(next http.Handler) http.Handler { return next }
 -- web/web.go --
 package web
 
 import "net/http"
 
-//fabrik:http:group /api middleware=shared.RequireAuth
+//fabrik:http:group /api middleware=auth
 type API struct{}
 
 //fabrik:http GET /users
@@ -32,9 +33,10 @@ func (a *API) Users(w http.ResponseWriter, r *http.Request) {}
 //fabrik:http GET /{$}
 func (a *API) Root(w http.ResponseWriter, r *http.Request) {}
 
+//fabrik:http:middleware name=nocache
 func NoCache(next http.Handler) http.Handler { return next }
 
-//fabrik:http GET /fresh middleware=NoCache
+//fabrik:http GET /fresh middleware=nocache
 func (a *API) Fresh(w http.ResponseWriter, r *http.Request) {}
 
 //fabrik:http:group /unused
@@ -75,5 +77,5 @@ func run() error {
 	return http.ListenAndServe(addr, r)
 }
 -- want/diags --
-warning: web/web.go:19:1: group on Nothing has no routes
+warning: web/web.go:20:1: group on Nothing has no routes
   help: routes are methods of the struct annotated with //fabrik:http

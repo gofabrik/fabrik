@@ -50,28 +50,6 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 	res := &Result{Root: dir}
 	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].PkgPath < pkgs[j].PkgPath })
 
-	byName := map[string][]*packages.Package{}
-	for _, pkg := range pkgs {
-		if pkg.Name != "main" && pkg.Types != nil {
-			byName[pkg.Name] = append(byName[pkg.Name], pkg)
-		}
-	}
-	lookup := func(pkgName, name string) (types.Object, []string) {
-		list := byName[pkgName]
-		switch len(list) {
-		case 0:
-			return nil, nil
-		case 1:
-			return list[0].Types.Scope().Lookup(name), nil
-		default:
-			paths := make([]string, len(list))
-			for i, p := range list {
-				paths[i] = p.PkgPath
-			}
-			return nil, paths
-		}
-	}
-
 	var mains []*packages.Package
 	for _, pkg := range pkgs {
 		if res.ModulePath == "" && pkg.Module != nil {
@@ -80,10 +58,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 		if pkg.Name == "main" {
 			mains = append(mains, pkg)
-			// package main may not type-check until main.gen.go is current,
-			// and errors inside main.gen.go itself never block wire: the file
-			// is about to be regenerated anyway. Parse errors in hand-written
-			// files are real and must surface.
+			// main.gen.go may be stale; handwritten parse errors still block wiring.
 			var parseErrs []packages.Error
 			for _, e := range pkg.Errors {
 				if e.Kind == packages.ParseError && filepath.Base(errorPosition(e).Filename) != "main.gen.go" {
@@ -95,7 +70,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 			continue
 		}
 		reportPkgErrors(pkg.Errors, &res.Diags)
-		scanPackage(pkg, res, lookup)
+		scanPackage(pkg, res)
 	}
 
 	mainDir, err := selectMain(mains)
@@ -115,7 +90,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 	return res, nil
 }
 
-func scanPackage(pkg *packages.Package, res *Result, lookup func(string, string) (types.Object, []string)) {
+func scanPackage(pkg *packages.Package, res *Result) {
 	for _, file := range pkg.Syntax {
 		anns, ds := ScanFile(pkg.Fset, file)
 		res.Diags = append(res.Diags, ds...)
@@ -136,7 +111,6 @@ func scanPackage(pkg *packages.Package, res *Result, lookup func(string, string)
 				Typed: gen.Typed{
 					Target: target,
 					Fset:   pkg.Fset,
-					Lookup: lookup,
 				},
 			})
 		}
@@ -195,9 +169,7 @@ func ScanFile(fset *token.FileSet, file *ast.File) ([]gen.Annotation, diag.Diagn
 			}
 		}
 	}
-	// Directives in comment groups that are not doc comments of a scanned
-	// declaration (blank line in between, or on an unsupported declaration)
-	// would otherwise vanish silently.
+	// Detached directives are ignored by Go doc attribution, so report them.
 	for _, cg := range file.Comments {
 		if consumed[cg] {
 			continue

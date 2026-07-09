@@ -53,6 +53,7 @@ func (*Config) Meta() gen.Meta {
 		Pos: []gen.PosSpec{
 			{Name: "SECTION", Kind: gen.KindFreeform, Optional: true},
 		},
+		Tier: gen.TierBind,
 	}
 }
 
@@ -184,8 +185,8 @@ func (c *Config) NodeFor(t types.Type) *Node {
 	return c.byType[types.TypeString(types.Unalias(t), nil)]
 }
 
-// Finish warns about unused config structs.
-func (c *Config) Finish(*gen.Gen) diag.Diagnostics {
+// Validate warns about unused config structs.
+func (c *Config) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, nd := range c.nodes {
 		if nd.named != nil && !nd.built && !nd.referenced {
@@ -202,14 +203,15 @@ func (c *Config) IsConfig(t types.Type) bool {
 	return ok
 }
 
-// IsConfigValue reports config values passed where pointers are required.
-func (c *Config) IsConfigValue(t types.Type) bool {
+// MissingHint explains config structs passed by value and marks them referenced.
+func (c *Config) MissingHint(t types.Type) (string, bool) {
 	nd := c.NodeFor(types.NewPointer(types.Unalias(t)))
 	if nd == nil {
-		return false
+		return "", false
 	}
 	nd.referenced = true
-	return true
+	name := types.TypeString(types.Unalias(t), func(p *types.Package) string { return p.Name() })
+	return "config structs are injected as pointers; take *" + name, true
 }
 
 // Key is a resolved config field.

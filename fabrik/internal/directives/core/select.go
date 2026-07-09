@@ -12,11 +12,7 @@ import (
 	"github.com/gofabrik/fabrik/gen"
 )
 
-// Select is the //fabrik:provider:select directive: declared on an
-// interface with a config key, it wires the implementation the
-// configuration names. Implementations are providers with case=<kind>,
-// matched to the interface by their return type - directives never name
-// code.
+// Select wires the implementation named by a config key.
 type Select struct {
 	providers *Provider
 	cfg       *cfgdir.Config
@@ -45,6 +41,7 @@ func (*Select) Meta() gen.Meta {
 		Pos: []gen.PosSpec{
 			{Name: "CONFIG-KEY", Kind: gen.KindFreeform},
 		},
+		Tier: gen.TierBind,
 	}
 }
 
@@ -101,7 +98,7 @@ func (sel *Select) Check(n any, t gen.Typed) diag.Diagnostics {
 	return ds
 }
 
-// Emit registers the group's interface binding once.
+// Emit registers the selected interface binding.
 func (sel *Select) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*selectNode)
 	if nd.grp != nil {
@@ -156,9 +153,7 @@ func (p *Provider) registerGroup(grp *selGroup, g *gen.Gen) {
 	})
 }
 
-// buildGroup emits the typed config read and the implementation switch.
-// Case arms load their own configuration, so only the selected
-// implementation costs anything at startup.
+// buildGroup emits the config read and implementation switch.
 func (p *Provider) buildGroup(grp *selGroup, g *gen.Gen) (string, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	grp.built = true
@@ -188,7 +183,7 @@ func (p *Provider) buildGroup(grp *selGroup, g *gen.Gen) (string, diag.Diagnosti
 	fmt.Fprintf(&b, "switch %s {\n", kindVar)
 	emitted := map[string]bool{}
 	for _, impl := range impls {
-		if emitted[impl.caseVal] { // duplicate, diagnosed by validateSelection
+		if emitted[impl.caseVal] {
 			continue
 		}
 		emitted[impl.caseVal] = true
@@ -210,10 +205,7 @@ func (p *Provider) buildGroup(grp *selGroup, g *gen.Gen) (string, diag.Diagnosti
 	return v, ds
 }
 
-// validateSelection checks a group's static contract - the key resolves
-// to a string-kinded field, case values are unique, and the default
-// names a known case - so emission and finish share one invariant. A nil
-// cfgNode means the key is unusable.
+// validateSelection checks the static contract for one selection group.
 func (p *Provider) validateSelection(grp *selGroup) (*cfgdir.Node, cfgdir.Key, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	cfgNode, kf, ok := p.cfg.ResolveKey(grp.sel.key)
@@ -241,16 +233,13 @@ func (p *Provider) validateSelection(grp *selGroup) (*cfgdir.Node, cfgdir.Key, d
 	return cfgNode, kf, ds
 }
 
-// isStringKind reports whether t's underlying type is string, including
-// defined kinds like `type Kind string` - the switch compares against
-// untyped string constants, which convert either way.
+// isStringKind accepts string and defined string kinds.
 func isStringKind(t types.Type) bool {
 	b, ok := types.Unalias(t).Underlying().(*types.Basic)
 	return ok && b.Info()&types.IsString != 0
 }
 
-// checkDefaultCase rejects a default: tag naming no case= implementation:
-// the fallback would fail at startup, and both sides are static source.
+// checkDefaultCase rejects a default that names no case implementation.
 func checkDefaultCase(grp *selGroup, kf cfgdir.Key, impls []*node) diag.Diagnostics {
 	var ds diag.Diagnostics
 	if kf.Default == "" {
@@ -270,36 +259,25 @@ func checkDefaultCase(grp *selGroup, kf cfgdir.Key, impls []*node) diag.Diagnost
 	return ds
 }
 
-// resolveCaseParams resolves a case provider's parameters: configuration
-// and context only. A config struct other than the selector's own loads
-// inside the case arm, so unselected implementations cost nothing at
-// startup. Anything heavier belongs inside the constructor.
+// resolveCaseParams accepts only context and config parameters.
 func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node, keyVar string, body *strings.Builder) ([]string, diag.Diagnostics) {
-	var ds diag.Diagnostics
-	args := make([]string, 0, len(nd.params))
-	for _, pr := range nd.params {
-		if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
-			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
-			continue
-		}
-		if cn := p.cfg.NodeFor(pr.t); cn != nil {
+	return resolveArgs(g, p.cfg, nd.params,
+		func(pr param) (string, diag.Diagnostics, bool) {
+			cn := p.cfg.NodeFor(pr.t)
+			if cn == nil {
+				return "", nil, false
+			}
 			if cn == keyNode {
-				args = append(args, keyVar)
-				continue
+				return keyVar, nil, true
 			}
 			v, stmt := p.cfg.LoadStmt(cn, g)
 			fmt.Fprintf(body, "%s\n", stmt)
-			args = append(args, v)
-			continue
-		}
-		help := "construct other dependencies inside the provider, so unselected implementations cost nothing"
-		if p.cfg.IsConfigValue(pr.t) {
-			help = fmt.Sprintf("config structs are injected as pointers; take *%s", g.TypeExpr(pr.t))
-		}
-		ds.Error(pr.pos, "case provider parameters must be //fabrik:config structs or context.Context", help)
-		args = append(args, "nil")
-	}
-	return args, ds
+			return v, nil, true
+		},
+		func(param) (string, string) {
+			return "case provider parameters must be //fabrik:config structs or context.Context",
+				"construct other dependencies inside the provider, so unselected implementations cost nothing"
+		})
 }
 
 // finishGroups validates selection completeness after emission.
@@ -325,15 +303,11 @@ func (p *Provider) finishGroups(ds *diag.Diagnostics) {
 			*ds = append(*ds, vds...)
 			for _, impl := range impls {
 				for _, pr := range impl.params {
-					if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" || p.cfg.IsConfig(pr.t) {
+					if gen.IsContext(pr.t) || p.cfg.IsConfig(pr.t) {
 						continue
 					}
-					help := "construct other dependencies inside the provider, so unselected implementations cost nothing"
-					if p.cfg.IsConfigValue(pr.t) {
-						name := types.TypeString(types.Unalias(pr.t), func(tp *types.Package) string { return tp.Name() })
-						help = fmt.Sprintf("config structs are injected as pointers; take *%s", name)
-					}
-					ds.Error(pr.pos, "case provider parameters must be //fabrik:config structs or context.Context", help)
+					ds.Error(pr.pos, "case provider parameters must be //fabrik:config structs or context.Context",
+						missingHelp(p.cfg, pr.t, "construct other dependencies inside the provider, so unselected implementations cost nothing"))
 				}
 			}
 		}
