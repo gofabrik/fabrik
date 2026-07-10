@@ -50,6 +50,7 @@ type Gen struct {
 	idents     map[string]bool   // taken identifiers: aliases and vars
 	binds      typeutil.Map      // types.Type -> map[string]string (name -> expr)
 	lazy       typeutil.Map      // types.Type -> map[string]*lazyBind
+	lazyByPath map[string]*lazyBind
 	singletons map[string]string // singleton key -> var name
 	nodes      []Node
 	current    string // active directive
@@ -64,6 +65,7 @@ func New() *Gen {
 	return &Gen{
 		imports:    map[string]string{},
 		idents:     map[string]bool{},
+		lazyByPath: map[string]*lazyBind{},
 		singletons: map[string]string{},
 	}
 }
@@ -145,6 +147,17 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 	m[name] = &lazyBind{build: build, owner: g.current}
 }
 
+// BindLazyPath registers a lazy binding matched by the type's printed
+// form (e.g. "*example.com/lib.Set"), for directives that bind a
+// library type they hold no types.Type for. The consumer's parameter or
+// field supplies the concrete type at resolution.
+func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics)) {
+	if _, dup := g.lazyByPath[path]; dup {
+		panic(fmt.Sprintf("gen: duplicate lazy bind for path %s", path))
+	}
+	g.lazyByPath[path] = &lazyBind{build: build, owner: g.current}
+}
+
 // Instance resolves the wired expression for (t, name).
 // Failed resolutions with diagnostics are complete diagnostics.
 func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, bool) {
@@ -154,27 +167,36 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 			return expr, nil, true
 		}
 	}
+	if lb, ok := g.lazyByPath[types.TypeString(t, nil)]; ok && name == "" {
+		return g.materialize(t, name, lb)
+	}
 	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
 		if lb, ok := m[name]; ok {
-			// Short name for cycle reporting, without TypeExpr's import
-			// registration: a name-only key must not add imports to the
-			// generated file.
-			key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
-			if lb.running {
-				return "", diag.Diagnostics{g.cycleDiag(key)}, false
-			}
-			lb.running = true
-			g.materializing = append(g.materializing, key)
-			prev := g.current
-			g.current = lb.owner
-			expr, ds := lb.build()
-			g.current = prev
-			g.materializing = g.materializing[:len(g.materializing)-1]
-			g.Bind(t, name, expr)
-			return expr, ds, true
+			return g.materialize(t, name, lb)
 		}
 	}
 	return "", nil, false
+}
+
+// materialize runs a lazy binding once, with cycle detection and the
+// owner's provenance active during the build.
+func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag.Diagnostics, bool) {
+	// Short name for cycle reporting, without TypeExpr's import
+	// registration: a name-only key must not add imports to the
+	// generated file.
+	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
+	if lb.running {
+		return "", diag.Diagnostics{g.cycleDiag(key)}, false
+	}
+	lb.running = true
+	g.materializing = append(g.materializing, key)
+	prev := g.current
+	g.current = lb.owner
+	expr, ds := lb.build()
+	g.current = prev
+	g.materializing = g.materializing[:len(g.materializing)-1]
+	g.Bind(t, name, expr)
+	return expr, ds, true
 }
 
 // cycleDiag reports the active provider cycle ending at key.
@@ -222,6 +244,9 @@ func (g *Gen) HasBinding(t types.Type, name string) bool {
 		if _, ok := m[name]; ok {
 			return true
 		}
+	}
+	if _, ok := g.lazyByPath[types.TypeString(t, nil)]; ok && name == "" {
+		return true
 	}
 	return false
 }

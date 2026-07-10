@@ -11,7 +11,10 @@ import (
 	"text/template"
 )
 
-//go:embed templates
+// all: is required - the starter carries the app's own _layout.html
+// and _-prefixed template partials, which a plain pattern would drop.
+//
+//go:embed all:templates
 var templatesFS embed.FS
 
 const starterRoot = "templates/starter"
@@ -57,11 +60,20 @@ func newCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		tmpl, err := template.New(rel).Parse(string(content))
-		if err != nil {
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		// Only .tmpl files are templates of the scaffold; everything else
+		// (assets, the app's own HTML templates) copies verbatim.
+		if !strings.HasSuffix(path, ".tmpl") {
+			if err := os.WriteFile(outPath, content, 0o644); err != nil {
+				return err
+			}
+			fmt.Printf("  created  %s\n", outPath)
+			return nil
+		}
+		tmpl, err := template.New(rel).Parse(string(content))
+		if err != nil {
 			return err
 		}
 		out, err := os.Create(outPath)

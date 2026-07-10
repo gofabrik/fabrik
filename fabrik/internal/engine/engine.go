@@ -3,6 +3,7 @@ package engine
 
 import (
 	"fmt"
+	"io/fs"
 	"sort"
 	"strings"
 
@@ -43,6 +44,15 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	}
 
 	directives := New()
+	if len(overlay) > 0 {
+		// Directives that validate non-Go files must see overlay
+		// contents the way package loading does.
+		for _, d := range directives {
+			if t, ok := d.(interface{ SetTreeFS(func(string) fs.FS) }); ok {
+				t.SetTreeFS(func(dir string) fs.FS { return overlayDirFS{dir: dir, overlay: overlay} })
+			}
+		}
+	}
 	byName, names := registryIndex(directives)
 
 	diags := res.Diags

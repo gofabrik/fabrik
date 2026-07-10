@@ -1,0 +1,50 @@
+Wire-time template validation: a template referencing an unknown
+function fails the generation run, not app startup.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/templates v0.0.0
+
+replace github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/templates.go --
+package web
+
+import "embed"
+
+//fabrik:templates
+//go:embed all:templates
+var Templates embed.FS
+-- web/templates/_default/_layout.html --
+<html>{{ block "content" . }}{{ end }}</html>
+-- web/templates/_default/home.html --
+{{ define "content" }}{{ nosuchfunc .Title }}{{ end }}
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"github.com/gofabrik/fabrik/templates"
+)
+
+type Handlers struct {
+	Templates *templates.Set
+}
+
+//fabrik:http GET /
+func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
+	h.Templates.Render(w, "home", nil)
+}
+-- want/diags --
+error: web/templates.go:5:1: templates.Load: parse templates/_default/home.html: template: home.html:1: function "nosuchfunc" not defined
+  help: the templates are loaded and parsed at generation time; fix the tree and rerun

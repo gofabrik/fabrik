@@ -1,0 +1,26 @@
+A template helper without any template set is a contradiction.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:templates:func
+func Shout(s string) string { return s }
+
+//fabrik:http GET /
+func Home(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:5:1: //fabrik:templates:func without any //fabrik:templates declaration
+  help: declare a template set the helper can be parsed into

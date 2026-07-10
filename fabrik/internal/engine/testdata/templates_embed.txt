@@ -1,0 +1,47 @@
+Embed validation: a pattern without all: drops layouts, a pattern not
+covering dir= loads an empty tree, and a missing go:embed leaves the FS
+empty - all rejected at generation time.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/templates v0.0.0
+
+replace github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/templates.go --
+package web
+
+import "embed"
+
+//fabrik:templates
+//go:embed templates
+var Templates embed.FS
+
+//fabrik:templates dir=views
+//go:embed all:templates
+var Views embed.FS
+
+//fabrik:templates
+var Empty embed.FS
+-- web/templates/note.txt --
+placeholder so the plain pattern embeds something
+-- web/templates/_default/_layout.html --
+<html>{{ block "content" . }}{{ end }}</html>
+-- web/templates/_default/home.html --
+{{ define "content" }}ok{{ end }}
+-- want/diags --
+error: web/templates.go:5:1: the go:embed pattern does not cover all:templates
+  help: use //go:embed all:templates - plain patterns drop _-prefixed files, other directories load an empty tree
+error: web/templates.go:9:1: the go:embed pattern does not cover all:views
+  help: use //go:embed all:views - plain patterns drop _-prefixed files, other directories load an empty tree
+error: web/templates.go:13:1: //fabrik:templates variable has no //go:embed
+  help: add //go:embed all:templates above the variable
