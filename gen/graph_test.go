@@ -2,6 +2,7 @@ package gen
 
 import (
 	"bytes"
+	"go/token"
 	"go/types"
 	"reflect"
 	"testing"
@@ -99,5 +100,124 @@ func TestLazyBindOwnerProvenance(t *testing.T) {
 	}
 	if g.current != "init" {
 		t.Fatalf("current directive = %q, want restored %q", g.current, "init")
+	}
+}
+
+func TestPathBindingAPIs(t *testing.T) {
+	g := New()
+	g.SetDirective("templates")
+	g.BindLazyPath("*x.Set", func() (string, diag.Diagnostics) {
+		g.Stmt(PhaseWire, "s := load()")
+		return "s", nil
+	})
+	if !g.HasBindingPath("*x.Set") || g.HasBindingPath("*x.Other") {
+		t.Fatal("HasBindingPath wrong")
+	}
+	expr, ds, ok := g.InstancePath("*x.Set")
+	if !ok || len(ds) != 0 || expr != "s" {
+		t.Fatalf("InstancePath = %q %v %v", expr, ds, ok)
+	}
+	n := len(g.nodes)
+	if expr, _, ok := g.InstancePath("*x.Set"); !ok || expr != "s" || len(g.nodes) != n {
+		t.Fatal("InstancePath did not cache")
+	}
+	if _, _, ok := g.InstancePath("*x.Other"); ok {
+		t.Fatal("unknown path resolved")
+	}
+}
+
+func TestPathThenTypeResolutionSharesOneMaterialization(t *testing.T) {
+	g := New()
+	g.SetDirective("templates")
+	builds := 0
+	g.BindLazyPath("string", func() (string, diag.Diagnostics) { // path == TypeString(types.Typ[types.String])
+		builds++
+		g.Stmt(PhaseWire, "s := load()")
+		return "s", nil
+	})
+	if expr, _, ok := g.InstancePath("string"); !ok || expr != "s" {
+		t.Fatal("InstancePath failed")
+	}
+	expr, ds, ok := g.Instance(types.Typ[types.String], "")
+	if !ok || len(ds) != 0 || expr != "s" {
+		t.Fatalf("Instance after InstancePath = %q %v %v", expr, ds, ok)
+	}
+	if builds != 1 {
+		t.Fatalf("build ran %d times, want one shared materialization", builds)
+	}
+	if expr, _, ok := g.Instance(types.Typ[types.String], ""); !ok || expr != "s" {
+		t.Fatal("type binding not recorded")
+	}
+}
+
+func TestInstancePathDiagnosedBuildIsNotACycle(t *testing.T) {
+	g := New()
+	builds := 0
+	g.BindLazyPath("*x.Broken", func() (string, diag.Diagnostics) {
+		builds++
+		var ds diag.Diagnostics
+		ds.Error(token.Position{}, "broken", "")
+		return "", ds
+	})
+	if _, ds, ok := g.InstancePath("*x.Broken"); !ok || len(ds) != 1 || ds[0].Message != "broken" {
+		t.Fatalf("first = %v %v", ds, ok)
+	}
+	// Diagnosed path builds are retryable.
+	_, ds, ok := g.InstancePath("*x.Broken")
+	if !ok || len(ds) != 1 || ds[0].Message != "broken" {
+		t.Fatalf("second = %v %v, want the original diagnostic", ds, ok)
+	}
+	if builds != 2 {
+		t.Fatalf("builds = %d", builds)
+	}
+}
+
+func TestPanickingBuildLeavesStateClean(t *testing.T) {
+	g := New()
+	g.SetDirective("outer")
+	first := true
+	g.BindLazyPath("*x.Panicky", func() (string, diag.Diagnostics) {
+		if first {
+			first = false
+			panic("boom")
+		}
+		return "v", nil
+	})
+	func() {
+		defer func() { recover() }() // the engine's guard does this
+		g.InstancePath("*x.Panicky")
+	}()
+	if g.current != "outer" {
+		t.Fatalf("current = %q, provenance dirty after panic", g.current)
+	}
+	if len(g.materializing) != 0 {
+		t.Fatalf("materializing = %v, cycle stack dirty after panic", g.materializing)
+	}
+	expr, ds, ok := g.InstancePath("*x.Panicky")
+	if !ok || len(ds) != 0 || expr != "v" {
+		t.Fatalf("retry = %q %v %v", expr, ds, ok)
+	}
+}
+
+func TestDiagnosedTypeBuildReportsOnceAcrossConsumers(t *testing.T) {
+	g := New()
+	builds := 0
+	g.BindLazy(types.Typ[types.Int], "", func() (string, diag.Diagnostics) {
+		builds++
+		var ds diag.Diagnostics
+		ds.Error(token.Position{}, "cycle-ish", "")
+		return "nil", ds
+	})
+	_, ds1, ok := g.Instance(types.Typ[types.Int], "")
+	if !ok || len(ds1) != 1 {
+		t.Fatalf("first = %v %v", ds1, ok)
+	}
+	// Diagnosed type builds dedupe shared dependency errors.
+	expr, ds2, ok := g.Instance(types.Typ[types.Int], "")
+	if !ok || len(ds2) != 0 || expr != "nil" {
+		t.Fatalf("second = %q %v %v, want deduped reuse", expr, ds2, ok)
+	}
+	if builds != 1 {
+		t.Fatalf("builds = %d", builds)
 	}
 }

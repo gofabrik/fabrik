@@ -8,6 +8,7 @@ require (
 	github.com/gofabrik/fabrik/gen v0.0.0
 	github.com/gofabrik/fabrik/router/directive v0.0.0
 	github.com/gofabrik/fabrik/templates/directive v0.0.0
+	github.com/gofabrik/fabrik/web/directive v0.0.0
 	golang.org/x/tools v0.47.0
 )
 
@@ -24,4 +25,6 @@ replace (
 	github.com/gofabrik/fabrik/router/directive => ../router/directive
 	github.com/gofabrik/fabrik/templates => ../templates
 	github.com/gofabrik/fabrik/templates/directive => ../templates/directive
+	github.com/gofabrik/fabrik/web => ../web
+	github.com/gofabrik/fabrik/web/directive => ../web/directive
 )

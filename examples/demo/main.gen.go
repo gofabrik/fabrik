@@ -11,6 +11,7 @@ import (
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
+	web2 "github.com/gofabrik/fabrik/web"
 
 	"demo/shared"
 	"demo/web"
@@ -64,6 +65,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webConfig.Kind {
@@ -74,15 +80,11 @@ func run() error {
 	default:
 		return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
 	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
 	webHandlers := &web.Handlers{
-		Greeter:   webGreeter,
-		Templates: appTemplates,
+		Greeter: webGreeter,
 	}
 
 	// embedded Assets, served under /assets
@@ -110,7 +112,7 @@ func run() error {
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/routes", webDocs.List)
 	r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))
-	r.Method("GET", "/{$}", webHandlers.Index)
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 
 	// Serve
 	return sharedServer.Serve(r)

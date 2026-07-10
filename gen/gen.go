@@ -51,6 +51,7 @@ type Gen struct {
 	binds      typeutil.Map      // types.Type -> map[string]string (name -> expr)
 	lazy       typeutil.Map      // types.Type -> map[string]*lazyBind
 	lazyByPath map[string]*lazyBind
+	pathExprs  map[string]string // materialized path bindings, for InstancePath
 	singletons map[string]string // singleton key -> var name
 	nodes      []Node
 	current    string // active directive
@@ -66,6 +67,7 @@ func New() *Gen {
 		imports:    map[string]string{},
 		idents:     map[string]bool{},
 		lazyByPath: map[string]*lazyBind{},
+		pathExprs:  map[string]string{},
 		singletons: map[string]string{},
 	}
 }
@@ -147,10 +149,7 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 	m[name] = &lazyBind{build: build, owner: g.current}
 }
 
-// BindLazyPath registers a lazy binding matched by the type's printed
-// form (e.g. "*example.com/lib.Set"), for directives that bind a
-// library type they hold no types.Type for. The consumer's parameter or
-// field supplies the concrete type at resolution.
+// BindLazyPath registers a lazy binding matched by a printed type path.
 func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics)) {
 	if _, dup := g.lazyByPath[path]; dup {
 		panic(fmt.Sprintf("gen: duplicate lazy bind for path %s", path))
@@ -159,7 +158,6 @@ func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics))
 }
 
 // Instance resolves the wired expression for (t, name).
-// Failed resolutions with diagnostics are complete diagnostics.
 func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, bool) {
 	t = types.Unalias(t)
 	if m, _ := g.binds.At(t).(map[string]string); m != nil {
@@ -167,8 +165,19 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 			return expr, nil, true
 		}
 	}
-	if lb, ok := g.lazyByPath[types.TypeString(t, nil)]; ok && name == "" {
-		return g.materialize(t, name, lb)
+	if path := types.TypeString(t, nil); name == "" {
+		if expr, ok := g.pathExprs[path]; ok {
+			// Bind the concrete type on first type-keyed lookup.
+			g.Bind(t, name, expr)
+			return expr, nil, true
+		}
+		if lb, ok := g.lazyByPath[path]; ok {
+			expr, ds, ok := g.materialize(t, name, lb)
+			if ok && len(ds) == 0 {
+				g.pathExprs[path] = expr
+			}
+			return expr, ds, ok
+		}
 	}
 	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
 		if lb, ok := m[name]; ok {
@@ -178,12 +187,50 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 	return "", nil, false
 }
 
-// materialize runs a lazy binding once, with cycle detection and the
-// owner's provenance active during the build.
+// HasBindingPath reports whether a path-keyed binding exists, lazy or
+// already materialized.
+func (g *Gen) HasBindingPath(path string) bool {
+	if _, ok := g.pathExprs[path]; ok {
+		return true
+	}
+	_, ok := g.lazyByPath[path]
+	return ok
+}
+
+// InstancePath resolves a path-keyed lazy binding.
+//
+// Diagnosed path builds are not cached.
+func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
+	if expr, ok := g.pathExprs[path]; ok {
+		return expr, nil, true
+	}
+	lb, ok := g.lazyByPath[path]
+	if !ok {
+		return "", nil, false
+	}
+	if lb.running {
+		return "", diag.Diagnostics{g.cycleDiag(path)}, false
+	}
+	lb.running = true
+	g.materializing = append(g.materializing, path)
+	prev := g.current
+	g.current = lb.owner
+	// Engine recovery expects generation state to be restored after panics.
+	defer func() {
+		g.current = prev
+		g.materializing = g.materializing[:len(g.materializing)-1]
+		lb.running = false
+	}()
+	expr, ds := lb.build()
+	if len(ds) == 0 {
+		g.pathExprs[path] = expr
+	}
+	return expr, ds, true
+}
+
+// materialize runs a type-keyed lazy binding once.
 func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag.Diagnostics, bool) {
-	// Short name for cycle reporting, without TypeExpr's import
-	// registration: a name-only key must not add imports to the
-	// generated file.
+	// Avoid adding imports while formatting cycle diagnostics.
 	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
 	if lb.running {
 		return "", diag.Diagnostics{g.cycleDiag(key)}, false
@@ -192,9 +239,14 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 	g.materializing = append(g.materializing, key)
 	prev := g.current
 	g.current = lb.owner
+	// Engine recovery expects generation state to be restored after panics.
+	defer func() {
+		g.current = prev
+		g.materializing = g.materializing[:len(g.materializing)-1]
+		lb.running = false
+	}()
 	expr, ds := lb.build()
-	g.current = prev
-	g.materializing = g.materializing[:len(g.materializing)-1]
+	// Cache diagnosed type builds to avoid repeating shared dependency errors.
 	g.Bind(t, name, expr)
 	return expr, ds, true
 }
