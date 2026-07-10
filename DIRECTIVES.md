@@ -226,3 +226,23 @@ func HumanizeAge(t time.Time) string { ... }
 Options:
 
 - `name=`
+
+## fabrik:web
+
+**`//fabrik:web METHOD /path [middleware=name,name2]`**
+
+Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:templates` is declared, `web.View` responses render through the app's template set.
+
+```go
+//fabrik:web POST /login
+func (h *Handlers) Login(req *web.Request) (web.Response, error) { ... }
+```
+
+Positional arguments:
+
+- `METHOD` - e.g. GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS
+- `PATH`
+
+Options:
+
+- `middleware=`

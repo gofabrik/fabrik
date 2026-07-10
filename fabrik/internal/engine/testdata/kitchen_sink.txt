@@ -1,8 +1,8 @@
 Kitchen sink: every node kind and rendering policy in one app - wrapped
 config loads in declaration order, init calls, selection with
 branch-local config, provider and struct clusters, packed middleware and
-routes, static assets, hooks, templates with a helper, and the serve
-handoff. The golden is
+routes, static assets, hooks, templates with a helper, typed web
+handlers, and the serve handoff. The golden is
 the review artifact for rendering changes.
 -- go.mod --
 module app
@@ -12,11 +12,13 @@ go 1.26
 require (
 	github.com/gofabrik/fabrik/config v0.0.0
 	github.com/gofabrik/fabrik/templates v0.0.0
+	github.com/gofabrik/fabrik/web v0.0.0
 )
 
 replace (
 	github.com/gofabrik/fabrik/config => CONFIGDIR
 	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+	github.com/gofabrik/fabrik/web => WEBDIR
 )
 -- main.go --
 package main
@@ -139,6 +141,7 @@ import (
 	"app/store"
 
 	"github.com/gofabrik/fabrik/templates"
+	weblib "github.com/gofabrik/fabrik/web"
 )
 
 //fabrik:http:group /api middleware=auth
@@ -157,6 +160,11 @@ func (a *API) Create(w http.ResponseWriter, r *http.Request) {}
 //fabrik:http:handle /metrics
 func Metrics() http.Handler { return http.NotFoundHandler() }
 
+//fabrik:web GET /api/items.json
+func (a *API) ItemsJSON(req *weblib.Request) (weblib.Response, error) {
+	return weblib.JSON{Value: []string{"a"}}, nil
+}
+
 //fabrik:http:notfound
 func Missing(w http.ResponseWriter, r *http.Request) {}
 -- want/main.gen.go --
@@ -174,6 +182,7 @@ import (
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
+	web2 "github.com/gofabrik/fabrik/web"
 
 	"app/shared"
 	"app/store"
@@ -258,6 +267,7 @@ func run() error {
 		Pool:      storePool,
 		Templates: webTemplates,
 	}
+	adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
 
 	// embedded Assets, served under /assets
 	webAssets, err := fs.Sub(web.Assets, "assets")
@@ -279,6 +289,7 @@ func run() error {
 	r.Method("GET", "/api/items/{id}", webAPI.Item, shared.RequireAuth)
 	r.Method("POST", "/api/items", webAPI.Create, shared.RequireAuth)
 	r.Handle("/metrics", web.Metrics())
+	r.Method("GET", "/api/api/items.json", adapter.Wrap(webAPI.ItemsJSON), shared.RequireAuth)
 	r.NotFound(web.Missing)
 
 	// Serve

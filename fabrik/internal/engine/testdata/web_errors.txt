@@ -1,0 +1,46 @@
+Typed-handler misuse: wrong signatures, plain-handler shape, generics.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/web v0.0.0
+
+replace github.com/gofabrik/fabrik/web => WEBDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"github.com/gofabrik/fabrik/web"
+)
+
+//fabrik:web GET /a
+func PlainShape(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:web GET /b
+func NoError(req *web.Request) web.Response { return nil }
+
+//fabrik:web GET /c
+func WrongParam(s string) (web.Response, error) { return nil, nil }
+
+//fabrik:web GET /d
+func Generic[T any](req *web.Request) (web.Response, error) { return nil, nil }
+-- want/diags --
+error: web/web.go:9:1: handler PlainShape has the wrong signature
+  help: want func(req *web.Request) (web.Response, error)
+error: web/web.go:12:1: handler NoError has the wrong signature
+  help: want func(req *web.Request) (web.Response, error)
+error: web/web.go:15:1: handler WrongParam has the wrong signature
+  help: want func(req *web.Request) (web.Response, error)
+error: web/web.go:18:1: handler Generic cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete handler

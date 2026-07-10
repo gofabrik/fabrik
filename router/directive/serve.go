@@ -155,8 +155,7 @@ func (s *Serve) Finish(g *gen.Gen) diag.Diagnostics {
 	for _, p := range nd.params {
 		switch p {
 		case paramRouter:
-			// Created on demand: a serve function without a router/handler
-			// parameter must not leave an unused r behind.
+			// Create the router only when the serve function accepts it.
 			args = append(args, g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"))
 		case paramCtx:
 			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))

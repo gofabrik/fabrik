@@ -17,14 +17,12 @@ var httpMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPT
 
 // HTTP is the //fabrik:http directive.
 type HTTP struct {
-	groups *Group
-	routes *routeTable
-	mw     *Middleware
+	host *Host
 }
 
 // NewHTTP returns an HTTP directive for one run.
-func NewHTTP(groups *Group, routes *routeTable, mw *Middleware) *HTTP {
-	return &HTTP{groups: groups, routes: routes, mw: mw}
+func NewHTTP(host *Host) *HTTP {
+	return &HTTP{host: host}
 }
 
 func (*HTTP) Name() string { return "http" }
@@ -59,9 +57,8 @@ type mwRef struct {
 }
 
 type node struct {
-	method, path string
-	pos          token.Position
-	refs         []mwRef
+	args RouteArgs
+	pos  token.Position
 
 	fn      string
 	pkg     *types.Package
@@ -71,37 +68,14 @@ type node struct {
 }
 
 func (h *HTTP) Parse(a gen.Annotation) (any, diag.Diagnostics) {
-	args, ds := gen.ParseArgs(a, h.Meta())
-	if len(args.Pos) < 2 {
+	args, ds := h.host.ParseRoute(a, h.Meta())
+	if args.Method == "" && args.Path == "" {
 		return nil, ds
-	}
-	method, path := args.Pos[0], args.Pos[1]
-	if !validMethod(method.Text) {
-		ds.Error(a.ArgPos(method.Col), fmt.Sprintf("invalid HTTP method %q", method.Text),
-			"any HTTP method token works: GET, POST, ..., and extensions like PURGE")
-	} else if upper := strings.ToUpper(method.Text); method.Text != upper {
-		// Routing is case-sensitive: a lowercase method registers a route no
-		// real request would ever match.
-		ds.Error(a.ArgPos(method.Col), fmt.Sprintf("HTTP method %q must be uppercase (methods are case-sensitive)", method.Text),
-			"use "+upper)
-	}
-	if !strings.HasPrefix(path.Text, "/") {
-		ds.Error(a.ArgPos(path.Col), fmt.Sprintf("route path must start with %q (got %q)", "/", path.Text),
-			"example: //fabrik:http GET /login")
-	} else if pe := patternError(path.Text); pe != "" {
-		ds.Error(a.ArgPos(path.Col), "invalid route pattern: "+pe,
-			"wildcards: /{name}, /{name...} (rest of path, last), /{$} (exact match, last)")
-	}
-	nd := &node{method: method.Text, path: path.Text, pos: a.Pos}
-	if mw, ok := args.Attr["middleware"]; ok {
-		refs, rds := parseMWRefs(a, mw)
-		ds = append(ds, rds...)
-		nd.refs = refs
 	}
 	if ds.HasFatal() {
 		return nil, ds
 	}
-	return nd, ds
+	return &node{args: args, pos: a.Pos}, ds
 }
 
 // parseMWRefs splits middleware= into positioned declared-name references.
@@ -169,7 +143,8 @@ func (h *HTTP) Check(n any, t gen.Typed) diag.Diagnostics {
 			return ds
 		}
 		nd.recv = recv.Type()
-		nd.recvObj = namedOf(recv.Type()).Obj()
+		obj, _ := h.host.ReceiverInfo(recv.Type())
+		nd.recvObj = obj
 	}
 
 	nd.fn = fn.Name()
@@ -180,37 +155,9 @@ func (h *HTTP) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (h *HTTP) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*node)
-	var ds diag.Diagnostics
-
-	pattern, refs := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.refs)
-
-	// Duplicate routes still validate middleware references.
-	mws, mds := h.mw.resolve(refs)
-	ds = append(ds, mds...)
-
-	key := nd.method + " " + pattern
-	if d, ok := h.routes.add(key, nd.pos); !ok {
-		return append(ds, d)
-	}
-
-	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
-
-	handler, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
-	ds = append(ds, hds...)
-	chain := make([]string, 0, len(mws))
-	for _, mw := range mws {
-		chain = append(chain, g.ImportPkg(mw.pkg)+"."+mw.fn)
-	}
-	g.Node(&gen.Route{
-		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
-		Router:  r,
-		Kind:    gen.RouteMethod,
-		Method:  nd.method,
-		Pattern: pattern,
-		Handler: handler,
-		Chain:   chain,
+	return h.host.EmitRoute(g, nd.args, nd.recvObj, nd.pos, func() (string, diag.Diagnostics) {
+		return h.host.HandlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 	})
-	return ds
 }
 
 // validMethod reports whether m is a non-empty HTTP method token.

@@ -95,7 +95,7 @@ sc, err := config.Load[StoreConfig](
 
 ## Resolution order
 
-`default:` tags → YAML layers (in option order, later wins) → `env:` overrides → `Validate()`.
+Resolution runs in this order: `default:` tags, YAML layers in option order, `env:` overrides, then `Validate()`.
 
 Field-level problems from defaults, env overrides, and validation are collected into one `*LoadError`:
 

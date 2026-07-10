@@ -52,6 +52,10 @@ func runFixture(t *testing.T, fixture string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	webDir, err := filepath.Abs("../../../web")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wantGen, wantDiags []byte
 	hasGen, hasDiags := false, false
 	for _, f := range ar.Files {
@@ -71,6 +75,7 @@ func runFixture(t *testing.T, fixture string) {
 		data := bytes.ReplaceAll(f.Data, []byte("ROUTERDIR"), []byte(routerDir))
 		data = bytes.ReplaceAll(data, []byte("CONFIGDIR"), []byte(configDir))
 		data = bytes.ReplaceAll(data, []byte("TEMPLATEDIR"), []byte(templateDir))
+		data = bytes.ReplaceAll(data, []byte("WEBDIR"), []byte(webDir))
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}

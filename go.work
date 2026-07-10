@@ -9,6 +9,8 @@ use (
 	./gen
 	./router
 	./templates
+	./web
+	./web/directive
 	./templates/directive
 	./router/directive
 )

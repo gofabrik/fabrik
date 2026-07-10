@@ -2,31 +2,31 @@ package web
 
 import (
 	"log/slog"
-	"net/http"
 	"time"
 
-	"github.com/gofabrik/fabrik/templates"
+	"github.com/gofabrik/fabrik/web"
 )
 
 var started = time.Now()
 
-type Handlers struct {
-	Greeter   Greeter
-	Templates *templates.Set
+// HomePage is the landing page view model.
+type HomePage struct {
+	Greeting string
+	Started  time.Time
 }
 
-//fabrik:http GET /{$}
-func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
+func (HomePage) Template() string { return "web/home" }
+
+type Handlers struct {
+	Greeter Greeter
+}
+
+//fabrik:web GET /{$} middleware=nocache
+func (h *Handlers) Index(req *web.Request) (web.Response, error) {
+	name := req.Query("name")
 	if name == "" {
 		name = "world"
 	}
-	slog.InfoContext(r.Context(), "greeting", "name", name)
-	if err := h.Templates.Render(w, "web/home", map[string]any{
-		"Greeting": h.Greeter.Greet(name),
-		"Started":  started,
-	}); err != nil {
-		slog.ErrorContext(r.Context(), "render", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-	}
+	slog.InfoContext(req.Context(), "greeting", "name", name)
+	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started}), nil
 }
