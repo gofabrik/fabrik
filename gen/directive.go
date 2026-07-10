@@ -67,14 +67,14 @@ type EmitTier int
 const (
 	TierMain EmitTier = iota // resolve dependencies and emit (the default)
 	TierBind                 // registration only: bind values, resolve nothing
-	TierInit                 // startup calls: bindings exist, nothing resolved yet
+	TierHook                 // lifecycle hooks: bindings exist, nothing resolved yet
 )
 
 // Meta describes directive syntax, docs, completions, and lifecycle.
 type Meta struct {
 	Synopsis string     // one line, shown as completion detail
 	Doc      string     // markdown, shown on hover
-	Example  string     // canonical usage, shown in diagnostics help
+	Example  string     // usage shown in diagnostics help
 	Pos      []PosSpec  // required positional arguments, in order
 	Attrs    []AttrSpec // key=value options
 	Tier     EmitTier   // when Emit runs relative to other directives

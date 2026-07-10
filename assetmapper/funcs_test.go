@@ -138,8 +138,7 @@ func TestFuncMap_ModulePreloadLinksEmitsTags(t *testing.T) {
 // --- end-to-end ---
 
 func TestFuncMap_EndToEndPage(t *testing.T) {
-	// One template using all three helpers in their canonical
-	// positions. Demonstrates the dev/prod-agnostic usage pattern.
+	// One template uses all helper families together.
 	src := fstest.MapFS{
 		"app.js":          {Data: []byte(`import u from "./util.js";`)},
 		"util.js":         {Data: []byte(`export default {}`)},

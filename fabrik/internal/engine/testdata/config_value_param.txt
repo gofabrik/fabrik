@@ -24,7 +24,7 @@ type Config struct {
 	Kind string `yaml:"kind" default:"memory"`
 }
 
-//fabrik:init
+//fabrik:hook setup
 func Setup(c Config) error { return nil }
 
 type DB struct{}
@@ -48,7 +48,7 @@ type Handlers struct {
 //fabrik:http GET /
 func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
-error: store/store.go:9:12: init parameters must be context.Context or //fabrik:config structs (inits run before providers)
+error: store/store.go:9:12: setup hooks run before providers; parameters must be context.Context or //fabrik:config structs
   help: config structs are injected as pointers; take *store.Config
 error: store/store.go:14:11: no provider for store.Config
   help: config structs are injected as pointers; take *store.Config

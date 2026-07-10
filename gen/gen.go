@@ -18,20 +18,23 @@ type Phase int
 
 const (
 	PhaseConfig     Phase = iota // configuration loading, before all else
-	PhaseInit                    // setup calls that run before wiring
+	PhaseSetup                   // setup hooks: config exists, providers do not
 	PhaseWire                    // construct app and runtime values
+	PhaseStart                   // start hooks: everything built, nothing serving
 	PhaseMiddleware              // global middleware registration
 	PhaseRegister                // register generated behavior
 	PhaseServe                   // start serving; must end with a return
 )
 
+// phaseLabels renders run() section headers in lifecycle order.
 var phaseLabels = []struct {
 	phase Phase
 	label string
 }{
 	{PhaseConfig, "Config"},
-	{PhaseInit, "Init"},
+	{PhaseSetup, "Setup: after config, before providers"},
 	{PhaseWire, "Providers"},
+	{PhaseStart, "Start: after providers, before middleware and routes"},
 	{PhaseMiddleware, "Middleware"},
 	{PhaseRegister, "Routes"},
 	{PhaseServe, "Serve"},
@@ -54,6 +57,9 @@ type Gen struct {
 	pathExprs  map[string]string // materialized path bindings, for InstancePath
 	singletons map[string]string // singleton key -> var name
 	nodes      []Node
+	ctxNeeded  bool   // context.Background assignment is needed
+	ctxPkg     string // context import alias, registered at request time
+	ctxVar     string // reserved context identifier, usually "ctx"
 	current    string // active directive
 	module     string // module path of the generated app
 	hints      []func(types.Type) (string, bool)
@@ -215,7 +221,7 @@ func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
 	g.materializing = append(g.materializing, path)
 	prev := g.current
 	g.current = lb.owner
-	// Engine recovery expects generation state to be restored after panics.
+	// Restore generation state after panics.
 	defer func() {
 		g.current = prev
 		g.materializing = g.materializing[:len(g.materializing)-1]
@@ -239,14 +245,14 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 	g.materializing = append(g.materializing, key)
 	prev := g.current
 	g.current = lb.owner
-	// Engine recovery expects generation state to be restored after panics.
+	// Restore generation state after panics.
 	defer func() {
 		g.current = prev
 		g.materializing = g.materializing[:len(g.materializing)-1]
 		lb.running = false
 	}()
 	expr, ds := lb.build()
-	// Cache diagnosed type builds to avoid repeating shared dependency errors.
+	// Diagnosed type builds are cached to report shared dependency errors once.
 	g.Bind(t, name, expr)
 	return expr, ds, true
 }
@@ -325,6 +331,11 @@ func (g *Gen) Render() ([]byte, error) {
 	b.WriteString("func run() error {\n")
 	served := false
 	first := true
+	if g.ctxNeeded {
+		// Context is emitted before sections so every phase can use it.
+		b.WriteString(g.ctxVar + " := " + g.ctxPkg + ".Background()\n")
+		first = false
+	}
 	for _, pl := range phaseLabels {
 		var nodes []phaseNode
 		for i, n := range g.nodes {

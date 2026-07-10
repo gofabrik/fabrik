@@ -11,7 +11,7 @@ import "net/http"
 //fabrik:http GET /main
 func InMain(w http.ResponseWriter, r *http.Request) {}
 
-//fabrick:init
+//fabrick:hook setup
 func TypoInMain() {}
 
 //fabrik:http:group /main
@@ -65,7 +65,7 @@ func run() error {
 warning: main.go:5:1: //fabrik:http in package main is ignored
   help: move it to a subpackage
 warning: main.go:8:1: suspicious directive prefix "fabrick:" (did you mean "fabrik:"?)
-  help: example: //fabrik:init
+  help: example: //fabrik:hook setup
 warning: main.go:11:1: //fabrik:http:group in package main is ignored
   help: move it to a subpackage
 warning: main.go:14:1: //fabrik:http:static in package main is ignored

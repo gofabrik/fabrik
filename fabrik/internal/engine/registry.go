@@ -28,7 +28,7 @@ func New() []gen.Directive {
 	return []gen.Directive{
 		provider,
 		core.NewSelect(provider, cfg),
-		core.NewInit(cfg),
+		core.NewHook(cfg),
 		routerdir.NewHTTP(host),
 		routerdir.NewHandle(group, routes, mw),
 		routerdir.NewStatic(routes),

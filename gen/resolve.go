@@ -9,9 +9,15 @@ func IsContext(t types.Type) bool {
 	return types.TypeString(types.Unalias(t), nil) == "context.Context"
 }
 
-// Context returns the shared background context singleton.
+// Context marks the lifecycle context as needed and returns its
+// variable; Render emits the assignment as run()'s first statement.
 func (g *Gen) Context() string {
-	return g.SingletonIn(PhaseInit, "context", "ctx", g.Import("context")+".Background()")
+	if !g.ctxNeeded {
+		g.ctxNeeded = true
+		g.ctxPkg = g.Import("context")
+		g.ctxVar = g.takeIdent("ctx")
+	}
+	return g.ctxVar
 }
 
 // Hinter improves missing-binding diagnostics with domain-specific help.
