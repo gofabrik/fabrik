@@ -3,7 +3,7 @@
 {{ define "content" }}
   {{ template "_nav.html" . }}
   <h1>{{ .Greeting }}</h1>
-  <p>Served at {{ humanizeAge .Started }} of uptime.</p>
+  <p>Served at {{ humanizeAge .Started }} of uptime; visit #{{ .Visits }}.</p>
   <button hx-get="/routes" hx-target="#routes">Show routes</button>
   <pre id="routes"></pre>
 {{ end }}

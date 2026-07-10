@@ -4,10 +4,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
+	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
@@ -17,12 +19,24 @@ import (
 )
 
 func run() error {
+	ctx := context.Background()
+
 	// Config
 	sharedConfig, err := config.Load[shared.Config](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("greeter", "http", "log"),
+		config.KnownSections("database", "greeter", "http", "log"),
 		config.Section("http"),
+	)
+	if err != nil {
+		return err
+	}
+
+	sharedDatabase, err := config.Load[shared.Database](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("database", "greeter", "http", "log"),
+		config.Section("database"),
 	)
 	if err != nil {
 		return err
@@ -31,7 +45,7 @@ func run() error {
 	sharedLog, err := config.Load[shared.Log](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("greeter", "http", "log"),
+		config.KnownSections("database", "greeter", "http", "log"),
 		config.Section("log"),
 	)
 	if err != nil {
@@ -41,7 +55,7 @@ func run() error {
 	webConfig, err := config.Load[web.Config](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("greeter", "http", "log"),
+		config.KnownSections("database", "greeter", "http", "log"),
 		config.Section("greeter"),
 	)
 	if err != nil {
@@ -76,6 +90,10 @@ func run() error {
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 
+	sharedDB, err := shared.NewDB(sharedDatabase)
+	if err != nil {
+		return err
+	}
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webConfig.Kind {
@@ -91,6 +109,12 @@ func run() error {
 	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
+		DB:      sharedDB,
+	}
+
+	sharedDialect := shared.NewDialect()
+	migrationSources := migrations.Sources{
+		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
 	}
 
 	r := router.New()
@@ -100,6 +124,11 @@ func run() error {
 
 	sharedServer := &shared.Server{
 		Config: sharedConfig,
+	}
+
+	// Start: after providers, before middleware and routes
+	if err := shared.MigrateDB(ctx, sharedDB, sharedDialect, migrationSources); err != nil {
+		return err
 	}
 
 	// Middleware

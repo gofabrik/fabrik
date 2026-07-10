@@ -1,8 +1,12 @@
 package shared
 
 import (
+	"context"
+	"database/sql"
 	"log/slog"
 	"os"
+
+	"github.com/gofabrik/fabrik/migrations"
 )
 
 //fabrik:config log
@@ -18,4 +22,9 @@ func InitLogger(l *Log) error {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	return nil
+}
+
+//fabrik:hook start
+func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
+	return src.Migrate(ctx, db, d)
 }

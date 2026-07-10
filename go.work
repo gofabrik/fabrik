@@ -9,6 +9,9 @@ use (
 	./examples/demo
 	./fabrik
 	./gen
+	./migrations
+	./migrations/dbtest
+	./migrations/directive
 	./router
 	./templates
 	./web

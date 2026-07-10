@@ -284,7 +284,7 @@ func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node,
 }
 
 // finishGroups validates selection completeness after emission.
-func (p *Provider) finishGroups(ds *diag.Diagnostics) {
+func (p *Provider) finishGroups(g *gen.Gen, ds *diag.Diagnostics) {
 	keys := make([]string, 0, len(p.groups))
 	for key := range p.groups {
 		keys = append(keys, key)
@@ -310,7 +310,7 @@ func (p *Provider) finishGroups(ds *diag.Diagnostics) {
 						continue
 					}
 					ds.Error(pr.pos, "case provider parameters must be //fabrik:config structs or context.Context",
-						missingHelp(p.cfg, pr.t, "construct other dependencies inside the provider, so unselected implementations cost nothing"))
+						missingHelp(g, p.cfg, pr.t, "construct other dependencies inside the provider, so unselected implementations cost nothing"))
 				}
 			}
 		}

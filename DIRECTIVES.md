@@ -192,6 +192,23 @@ Options:
 
 - `dir=`
 
+## fabrik:migrations
+
+**`//fabrik:migrations [dir=migrations] [module=NAME]`**
+
+Declared on an exported `embed.FS` variable: the tree's `NNNN_name.sql` files become one migration stream, bound with every other declared stream into an injectable `migrations.Sources`. Nothing runs automatically - call `Sources.Migrate` from a `//fabrik:hook start` function, a handler, or a command. Versions order within a stream. Streams are independent, so tables that reference each other belong in one stream. `module=` names the stream; explicit names are stable across package moves. The default derives from the package directory. Use `all:<dir>` so embedded files match the validated tree.
+
+```go
+//fabrik:migrations module=auth
+//go:embed all:migrations
+var Migrations embed.FS
+```
+
+Options:
+
+- `dir=`
+- `module=`
+
 ## fabrik:provider
 
 **`//fabrik:provider [case=kind]`**

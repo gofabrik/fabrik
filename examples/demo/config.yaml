@@ -1,8 +1,11 @@
 # Demo configuration. Environment overrides: DEMO_HTTP_ADDR,
-# DEMO_LOG_LEVEL, DEMO_GREETER_KIND.
+# DEMO_LOG_LEVEL, DEMO_GREETER_KIND, DEMO_DATABASE_PATH.
 http:
   addr: ":8080"
 log:
   level: info
 greeter:
   kind: hello
+
+database:
+  path: demo.db
