@@ -1,7 +1,7 @@
 Kitchen sink: every node kind and rendering policy in one app - wrapped
 config loads in declaration order, init calls, selection with
 branch-local config, provider and struct clusters, packed middleware and
-routes, static assets, hooks, templates with a helper, typed web
+routes, static files, compiled assets, hooks, templates with a helper, typed web
 handlers, and the serve handoff. The golden is
 the review artifact for rendering changes.
 -- go.mod --
@@ -10,12 +10,14 @@ module app
 go 1.26
 
 require (
+	github.com/gofabrik/fabrik/assetmapper v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
 	github.com/gofabrik/fabrik/templates v0.0.0
 	github.com/gofabrik/fabrik/web v0.0.0
 )
 
 replace (
+	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
 	github.com/gofabrik/fabrik/config => CONFIGDIR
 	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
 	github.com/gofabrik/fabrik/web => WEBDIR
@@ -109,11 +111,19 @@ package web
 
 import "embed"
 
-//fabrik:http:static /assets dir=assets
-//go:embed assets
+//fabrik:http:static /static dir=static
+//go:embed static
+var Static embed.FS
+
+//fabrik:assets
+//go:embed all:assets
 var Assets embed.FS
+-- web/static/robots.txt --
+User-agent: *
 -- web/assets/style.css --
-body {}
+body { background: url("./logo.png"); }
+-- web/assets/logo.png --
+not-a-real-png
 -- web/templates.go --
 package web
 
@@ -129,7 +139,7 @@ var Templates embed.FS
 //fabrik:templates:func
 func Shout(s string) string { return strings.ToUpper(s) }
 -- web/templates/_default/_layout.html --
-<html>{{ block "content" . }}{{ end }}</html>
+<html><head><link rel="stylesheet" href="{{ asset "style.css" }}"></head>{{ block "content" . }}{{ end }}</html>
 -- web/templates/_default/home.html --
 {{ define "content" }}{{ shout "hi" }}{{ end }}
 -- web/web.go --
@@ -179,6 +189,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
@@ -256,7 +267,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	webTemplates, err := templates.Load(web.Templates, "templates", templates.FuncMap{
+	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+		{FS: web.Assets, Dir: "assets"},
+	}, nil)
+	if err != nil {
+		return err
+	}
+	webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
 		"shout": web.Shout,
 	})
 	if err != nil {
@@ -269,8 +286,8 @@ func run() error {
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
 
-	// embedded Assets, served under /assets
-	webAssets, err := fs.Sub(web.Assets, "assets")
+	// embedded Static, served under /static
+	webStatic, err := fs.Sub(web.Static, "static")
 	if err != nil {
 		return err
 	}
@@ -285,7 +302,8 @@ func run() error {
 	r.Use(shared.Recovered)
 
 	// Routes
-	r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))
+	r.Handle("/static/", http.StripPrefix("/static", http.FileServerFS(webStatic)))
+	r.Handle("/assets/", assetCompiled.Handler())
 	r.Method("GET", "/api/items/{id}", webAPI.Item, shared.RequireAuth)
 	r.Method("POST", "/api/items", webAPI.Create, shared.RequireAuth)
 	r.Handle("/metrics", web.Metrics())

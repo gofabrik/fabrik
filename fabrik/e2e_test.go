@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,10 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assetsDir, err := filepath.Abs("../assetmapper")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tmp := t.TempDir()
 	if r, err := filepath.EvalSymlinks(tmp); err == nil {
@@ -55,8 +60,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod = append(mod, []byte(fmt.Sprintf(
-		"\nrequire (\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/templates v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/templates => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
-		configDir, routerDir, templateDir, webDir))...)
+		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assetmapper v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/templates v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assetmapper => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/templates => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
+		assetsDir, configDir, routerDir, templateDir, webDir))...)
 	if err := os.WriteFile(gomod, mod, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -110,12 +115,35 @@ func TestEndToEnd(t *testing.T) {
 			if !strings.Contains(got, "<h1>Hello, e2e!</h1>") || !strings.Contains(got, "<title>HELLO, E2E!</title>") {
 				t.Fatalf("GET %s = %q, want rendered greeting page", url, got)
 			}
+			checkAsset(t, port, got)
 			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("server did not answer: %v", err)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// checkAsset verifies the asset pipeline end to end: the page links a
+// content-hashed stylesheet URL, and fetching it serves the CSS with
+// the immutable cache header.
+func checkAsset(t *testing.T, port, page string) {
+	t.Helper()
+	m := regexp.MustCompile(`/assets/style-[0-9a-f]{8}\.css`).FindString(page)
+	if m == "" {
+		t.Fatalf("page carries no hashed asset URL:\n%s", page)
+	}
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%s%s", port, m))
+	if err != nil {
+		t.Fatalf("GET %s: %v", m, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d", m, resp.StatusCode)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("GET %s: Cache-Control = %q", m, got)
 	}
 }
 

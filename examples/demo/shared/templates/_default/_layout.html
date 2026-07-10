@@ -2,7 +2,8 @@
 <html>
 <head>
   <title>{{ block "title" . }}demo{{ end }}</title>
-  <link rel="stylesheet" href="/assets/style.css">
+  <link rel="stylesheet" href="{{ asset "style.css" }}">
+  {{ importmap "app" }}
 </head>
 <body>
   {{ block "content" . }}{{ end }}

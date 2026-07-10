@@ -1,0 +1,42 @@
+Two packages providing the same logical asset path is a positioned
+error naming both declarations; inside fabrik accidental override is
+a bug, not a feature.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/assetmapper v0.0.0
+
+replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/assets.go --
+package shared
+
+import "embed"
+
+//fabrik:assets
+//go:embed all:assets
+var Assets embed.FS
+-- shared/assets/style.css --
+body {}
+-- web/assets.go --
+package web
+
+import "embed"
+
+//fabrik:assets
+//go:embed all:assets
+var Assets embed.FS
+-- web/assets/style.css --
+p {}
+-- want/diags --
+error: web/assets.go:5:1: asset "style.css" is already provided by the tree at $WORK/shared/assets.go:5:1
+  help: each asset path belongs to exactly one tree

@@ -66,6 +66,8 @@ standard library only.
 | `fabrik build` | Generate `main.gen.go`, then `go build`. |
 | `fabrik wire` | Generate `main.gen.go` from directives. |
 | `fabrik wire -check` | Verify `main.gen.go` is up to date (for CI). |
+| `fabrik assets require <pkg>[@version]` | Vendor a JS package (and its dependencies) into the asset tree. |
+| `fabrik assets remove <pkg>`, `fabrik assets prune` | Remove a vendored package; delete orphaned files. |
 | `fabrik directives` | Print the directive reference. |
 
 Commit `main.gen.go` so plain `go build` works without fabrik installed.

@@ -5,9 +5,8 @@ package main
 
 import (
 	"fmt"
-	"io/fs"
-	"net/http"
 
+	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
@@ -55,10 +54,17 @@ func run() error {
 	}
 
 	// Providers
+	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+		{FS: shared.Assets, Dir: "assets"},
+		{FS: web.Assets, Dir: "assets"},
+	}, nil)
+	if err != nil {
+		return err
+	}
 	appTemplates, err := templates.LoadSources([]templates.Source{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, templates.FuncMap{
+	}, assetCompiled.FuncMap(), templates.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})
@@ -87,12 +93,6 @@ func run() error {
 		Greeter: webGreeter,
 	}
 
-	// embedded Assets, served under /assets
-	webAssets, err := fs.Sub(web.Assets, "assets")
-	if err != nil {
-		return err
-	}
-
 	r := router.New()
 	webDocs := &web.Docs{
 		Router: r,
@@ -107,11 +107,11 @@ func run() error {
 	r.Use(shared.Recovered)
 
 	// Routes
+	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/routes", webDocs.List)
-	r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 
 	// Serve

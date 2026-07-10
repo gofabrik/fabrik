@@ -78,6 +78,26 @@ func (h *Host) HandlerExpr(g *gen.Gen, recv types.Type, pkg *types.Package, fn s
 	return handlerExpr(g, recv, pkg, fn, fset)
 }
 
+// EmitHandle validates conflicts and emits a pattern route for a
+// directive-provided handler.
+func (h *Host) EmitHandle(g *gen.Gen, pattern string, pos token.Position, handler func() (string, diag.Diagnostics)) diag.Diagnostics {
+	var ds diag.Diagnostics
+	if d, ok := h.routes.add(pattern, pos); !ok {
+		return append(ds, d)
+	}
+	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+	hexpr, hds := handler()
+	ds = append(ds, hds...)
+	g.Node(&gen.Route{
+		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: pos}},
+		Router:  r,
+		Kind:    gen.RouteHandle,
+		Pattern: pattern,
+		Handler: hexpr,
+	})
+	return ds
+}
+
 // EmitRoute applies groups, resolves middleware, validates conflicts, and emits a method route.
 func (h *Host) EmitRoute(g *gen.Gen, args RouteArgs, recvObj *types.TypeName, pos token.Position, handler func() (string, diag.Diagnostics)) diag.Diagnostics {
 	var ds diag.Diagnostics

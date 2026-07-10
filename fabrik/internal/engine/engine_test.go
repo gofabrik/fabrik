@@ -56,6 +56,10 @@ func runFixture(t *testing.T, fixture string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assetsDir, err := filepath.Abs("../../../assetmapper")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wantGen, wantDiags []byte
 	hasGen, hasDiags := false, false
 	for _, f := range ar.Files {
@@ -76,6 +80,7 @@ func runFixture(t *testing.T, fixture string) {
 		data = bytes.ReplaceAll(data, []byte("CONFIGDIR"), []byte(configDir))
 		data = bytes.ReplaceAll(data, []byte("TEMPLATEDIR"), []byte(templateDir))
 		data = bytes.ReplaceAll(data, []byte("WEBDIR"), []byte(webDir))
+		data = bytes.ReplaceAll(data, []byte("ASSETSDIR"), []byte(assetsDir))
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}

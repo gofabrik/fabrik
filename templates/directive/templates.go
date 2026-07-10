@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
@@ -23,11 +22,19 @@ const setPath = "*" + templatePath + ".Set"
 
 // Templates implements //fabrik:templates.
 type Templates struct {
-	decls      []*tplNode
-	registered bool
-	helpers    []*helperNode
-	byName     map[string]*helperNode
-	treeFS     func(dir string) fs.FS
+	decls       []*tplNode
+	registered  bool
+	helpers     []*helperNode
+	byName      map[string]*helperNode
+	contributed []contribution
+	treeFS      func(dir string) fs.FS
+}
+
+// contribution is a FuncMap expression another directive family adds
+// to the generated Load call.
+type contribution struct {
+	names []string
+	build func(g *gen.Gen) (string, diag.Diagnostics)
 }
 
 func NewTemplates() *Templates {
@@ -39,6 +46,15 @@ func NewTemplates() *Templates {
 
 // SetTreeFS lets validation read non-Go files through the engine overlay.
 func (t *Templates) SetTreeFS(f func(dir string) fs.FS) { t.treeFS = f }
+
+// ContributeFuncs registers a named FuncMap expression another
+// directive family appends to the generated Load call. Contributed
+// maps come before app helpers, so an app helper reusing a
+// contributed name wins (and draws a warning). build returns the
+// expression; an empty string contributes nothing.
+func (t *Templates) ContributeFuncs(names []string, build func(g *gen.Gen) (string, diag.Diagnostics)) {
+	t.contributed = append(t.contributed, contribution{names: names, build: build})
+}
 
 func (*Templates) Name() string { return "templates" }
 
@@ -88,53 +104,13 @@ func (t *Templates) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	return nd, ds
 }
 
-// embedPatterns splits a go:embed argument list, including quoted patterns.
-func embedPatterns(rest string) []string {
-	var out []string
-	for i := 0; i < len(rest); {
-		switch rest[i] {
-		case ' ', '\t':
-			i++
-		case '"', '`':
-			quote := rest[i]
-			end := strings.IndexByte(rest[i+1:], quote)
-			if end < 0 {
-				return out
-			}
-			raw := rest[i : i+end+2]
-			if p, err := strconv.Unquote(raw); err == nil {
-				out = append(out, p)
-			}
-			i += end + 2
-		default:
-			end := strings.IndexAny(rest[i:], " \t")
-			if end < 0 {
-				out = append(out, rest[i:])
-				return out
-			}
-			out = append(out, rest[i:i+end])
-			i += end
-		}
-	}
-	return out
-}
-
 // checkEmbedPattern requires all:<dir>; plain embeds skip layouts and partials.
 func checkEmbedPattern(a gen.Annotation, dir string, ds *diag.Diagnostics) {
-	embedded := false
-	for _, line := range a.Doc {
-		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "//go:embed ")
-		if !ok {
-			continue
-		}
-		embedded = true
-		for _, pattern := range embedPatterns(rest) {
-			if pattern == "all:"+dir {
-				return
-			}
-		}
+	found, covered := gen.EmbedCovers(a, "all:"+dir)
+	if covered {
+		return
 	}
-	if !embedded {
+	if !found {
 		ds.Error(a.Pos, "//fabrik:templates variable has no //go:embed",
 			fmt.Sprintf("add //go:embed all:%s above the variable", dir))
 		return
@@ -198,6 +174,16 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			b.WriteString("}")
 			args = []string{b.String()}
 		}
+		// Contributed maps first, app helpers last: later maps win in
+		// Load, so app names override contributed ones.
+		var ds diag.Diagnostics
+		for _, c := range t.contributed {
+			expr, cds := c.build(g)
+			ds = append(ds, cds...)
+			if expr != "" && !cds.HasFatal() {
+				args = append(args, expr)
+			}
+		}
 		if fm := t.funcMapExpr(g, tplPkg); fm != "" {
 			args = append(args, fm)
 		}
@@ -213,7 +199,7 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			Args: args,
 			Err:  gen.ErrReturn,
 		})
-		return v, nil
+		return v, ds
 	})
 	return nil
 }
@@ -276,8 +262,22 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 		}
 	}
 
+	for _, c := range t.contributed {
+		for _, name := range c.names {
+			if h, ok := t.byName[name]; ok {
+				ds.Warn(h.pos, fmt.Sprintf("template function %q overrides a function contributed by another directive", name),
+					"the app helper wins; rename it to keep the contributed behavior")
+			}
+		}
+	}
+
 	if !collided {
 		stubs := templates.FuncMap{}
+		for _, c := range t.contributed {
+			for _, name := range c.names {
+				stubs[name] = func(...any) any { return nil }
+			}
+		}
 		for _, h := range t.helpers {
 			stubs[h.name] = func(...any) any { return nil }
 		}

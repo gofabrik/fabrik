@@ -7,6 +7,22 @@ Positional arguments come first, `key=value` options after; values may be
 double-quoted to contain spaces. Unknown option keys are errors, which is what
 makes new keys backwards-compatible additions.
 
+## fabrik:assets
+
+**`//fabrik:assets [dir=assets]`**
+
+Declared on an exported `embed.FS` variable: the sources compile in memory at startup - content-hashed URLs, JS / CSS references rewritten to hashed names, importmap rendering - and serve under `/assets/`. Template sets gain the `asset` and `importmap` helpers automatically. `dir=` names the subdirectory inside the FS. Use `all:<dir>`: plain patterns silently drop `_`-prefixed and dot-prefixed files. Several packages may declare trees; they union into one namespace, and a path provided twice is an error. An `importmap.json` at the top of one tree maps bare module specifiers; edits to assets or the importmap never require a rewire. Every tree is compile-checked at generation time.
+
+```go
+//fabrik:assets
+//go:embed all:assets
+var Assets embed.FS
+```
+
+Options:
+
+- `dir=`
+
 ## fabrik:config
 
 **`//fabrik:config [section]`**

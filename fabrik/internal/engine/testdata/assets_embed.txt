@@ -1,0 +1,36 @@
+The go:embed pattern must be all:<dir>: plain patterns silently drop
+underscore- and dot-prefixed files. A missing embed is its own error.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/assetmapper v0.0.0
+
+replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/assets.go --
+package web
+
+import "embed"
+
+//fabrik:assets
+//go:embed assets
+var Assets embed.FS
+
+//fabrik:assets dir=files
+var Files embed.FS
+-- web/assets/style.css --
+body {}
+-- want/diags --
+error: web/assets.go:5:1: the go:embed pattern does not cover all:assets
+  help: use //go:embed all:assets - plain patterns silently drop _-prefixed files (like _variables.css) and dot-prefixed files (like .well-known/), and a missing asset is a runtime 404
+error: web/assets.go:9:1: //fabrik:assets variable has no //go:embed
+  help: add //go:embed all:files above the variable
