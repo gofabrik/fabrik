@@ -181,7 +181,7 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 // Validate checks group completeness and unused provider parameters.
 func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
-	p.finishGroups(&ds)
+	p.finishGroups(g, &ds)
 	for _, nd := range p.nodes {
 		if nd.built || nd.caseVal != "" {
 			continue
@@ -192,7 +192,7 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 			}
 			if !g.HasBinding(pr.t, "") {
 				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-					missingHelp(p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
+					missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
 			}
 		}
 	}

@@ -29,15 +29,19 @@ func resolveArgs(g *gen.Gen, cfg *cfgdir.Config, params []param,
 		}
 		if len(eds) == 0 {
 			msg, help := reject(pr)
-			ds.Error(pr.pos, msg, missingHelp(cfg, pr.t, help))
+			ds.Error(pr.pos, msg, missingHelp(g, cfg, pr.t, help))
 		}
 		args = append(args, "nil")
 	}
 	return args, ds
 }
 
-// missingHelp returns a config-specific hint when one applies.
-func missingHelp(cfg *cfgdir.Config, t types.Type, def string) string {
+// missingHelp returns a domain hint when one applies: directive-owned
+// hints registered on the generator first, config's own second.
+func missingHelp(g *gen.Gen, cfg *cfgdir.Config, t types.Type, def string) string {
+	if h, ok := g.MissingHint(t); ok {
+		return h
+	}
 	if h, ok := cfg.MissingHint(t); ok {
 		return h
 	}

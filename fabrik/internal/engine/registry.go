@@ -9,6 +9,7 @@ import (
 	configdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
 	"github.com/gofabrik/fabrik/gen"
+	migdir "github.com/gofabrik/fabrik/migrations/directive"
 	routerdir "github.com/gofabrik/fabrik/router/directive"
 	tpldir "github.com/gofabrik/fabrik/templates/directive"
 	webdir "github.com/gofabrik/fabrik/web/directive"
@@ -41,6 +42,7 @@ func New() []gen.Directive {
 		tpl,
 		tpldir.NewFuncs(tpl),
 		assetsdir.NewAssets(host, tpl),
+		migdir.NewMigrations(),
 		cfg,
 	}
 }

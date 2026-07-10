@@ -1,0 +1,61 @@
+Migration trees are validated at generation time: bad filenames and
+duplicate versions inside a stream are positioned wire errors, and the
+embed pattern must cover the tree.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/migrations v0.0.0
+
+replace github.com/gofabrik/fabrik/migrations => MIGRATIONSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- auth/migrations.go --
+package auth
+
+import "embed"
+
+//fabrik:migrations
+//go:embed all:migrations
+var Migrations embed.FS
+-- auth/migrations/not-a-migration.sql --
+SELECT 1;
+-- billing/migrations.go --
+package billing
+
+import "embed"
+
+//fabrik:migrations
+//go:embed all:migrations
+var Migrations embed.FS
+-- billing/migrations/0001_a.sql --
+SELECT 1;
+-- billing/migrations/0001_b.sql --
+SELECT 1;
+-- web/migrations.go --
+package web
+
+import "embed"
+
+//fabrik:migrations
+//go:embed migrations
+var Plain embed.FS
+
+//fabrik:migrations dir=files module=bad//name
+var NoEmbed embed.FS
+-- web/migrations/0001_ok.sql --
+SELECT 1;
+-- want/diags --
+error: web/migrations.go:5:1: the go:embed pattern does not cover all:migrations
+  help: use //go:embed all:migrations - a plain pattern can silently omit migration files, and a migration that never ships never runs
+error: web/migrations.go:9:1: //fabrik:migrations variable has no //go:embed
+  help: add //go:embed all:files above the variable
+error: web/migrations.go:9:38: invalid module name: "bad//name" has a "" segment
+  help: use clean slash-separated segments: module=auth, module=internal/billing
