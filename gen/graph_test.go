@@ -91,15 +91,15 @@ func TestLazyBindOwnerProvenance(t *testing.T) {
 		g.Stmt(PhaseConfig, "x := load()")
 		return "x", nil
 	})
-	g.SetDirective("init") // the consumer materializes the binding
+	g.SetDirective("hook") // the consumer materializes the binding
 	if _, _, ok := g.Instance(types.Typ[types.String], "cfg"); !ok {
 		t.Fatal("instance failed")
 	}
 	if got := g.nodes[0].base().Origin.Directive; got != "config" {
 		t.Fatalf("lazy node directive = %q, want owner %q", got, "config")
 	}
-	if g.current != "init" {
-		t.Fatalf("current directive = %q, want restored %q", g.current, "init")
+	if g.current != "hook" {
+		t.Fatalf("current directive = %q, want restored %q", g.current, "hook")
 	}
 }
 

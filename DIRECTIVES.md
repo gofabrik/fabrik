@@ -27,7 +27,7 @@ Options:
 
 **`//fabrik:config [section]`**
 
-Marks a struct as configuration: generated code loads it in the Config phase (before inits and providers) with `config.Load` and binds the pointer into DI. Both conventional files (config.yaml, config.local.yaml) are optional: a missing file means defaults and env overrides apply. `yaml:` tags name keys, `default:` tags set fallbacks, `env:"NAME"` opts a field into environment override. The optional section scopes a domain package to its subtree of config.yaml (`store` -> keys under `store:`); the name is a single key, no dots. Structs sharing the file must each declare a section; a single sectionless struct owns the whole file and cannot be combined with sectioned ones. When every struct is sectioned, generated Load calls validate the file's top-level keys against the declared sections, so a typo'd section fails startup.
+Marks a struct as configuration: generated code loads it in the Config phase (before setup hooks and providers) with `config.Load` and binds the pointer into DI. Both conventional files (config.yaml, config.local.yaml) are optional: a missing file means defaults and env overrides apply. `yaml:` tags name keys, `default:` tags set fallbacks, `env:"NAME"` opts a field into environment override. The optional section scopes a domain package to its subtree of config.yaml (`store` -> keys under `store:`); the name is a single key, no dots. Structs sharing the file must each declare a section; a single sectionless struct owns the whole file and cannot be combined with sectioned ones. When every struct is sectioned, generated Load calls validate the file's top-level keys against the declared sections, so a typo'd section fails startup.
 
 ```go
 //fabrik:config store
@@ -39,6 +39,29 @@ type Config struct {
 Positional arguments:
 
 - `SECTION`
+
+## fabrik:hook
+
+**`//fabrik:hook PHASE`**
+
+Marks a function the generated `run()` calls at a named point of the app lifecycle: `config -> setup -> providers -> start -> middleware -> routes -> serve`. Hookable phases, in order:
+
+- `setup` - after config, before providers. Process-level setup (logger, runtime tuning); parameters may be a leading `context.Context` and pointers to //fabrik:config structs.
+- `start` - after providers, before middleware and routes. Work on built resources (migrations, cache warming); parameters resolve against everything providers and libraries bind.
+
+Hooks of one phase run in source order and must be independent. A returned `error` aborts startup.
+
+```go
+//fabrik:hook setup
+func InitLogger(cfg *Log) error {
+	slog.SetDefault(...)
+	return nil
+}
+```
+
+Positional arguments:
+
+- `PHASE` - one of setup, start
 
 ## fabrik:http
 
@@ -168,19 +191,6 @@ Positional arguments:
 Options:
 
 - `dir=`
-
-## fabrik:init
-
-**`//fabrik:init`**
-
-Marks a setup function that the generated `run()` calls early, in source order. Use it for process-level setup like installing the default `slog` logger. It may take a `context.Context` and pointers to //fabrik:config structs, which load first; a returned `error` aborts startup.
-
-```go
-//fabrik:init
-func InitLogger() {
-	slog.SetDefault(...)
-}
-```
 
 ## fabrik:provider
 

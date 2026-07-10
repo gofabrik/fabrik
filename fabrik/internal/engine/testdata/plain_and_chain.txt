@@ -64,7 +64,6 @@ import (
 )
 
 func run() error {
-	// Init
 	ctx := context.Background()
 
 	// Providers

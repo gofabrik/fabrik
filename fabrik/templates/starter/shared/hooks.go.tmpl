@@ -7,10 +7,10 @@ import (
 
 //fabrik:config log
 type Log struct {
-	Level string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
+	Level string `yaml:"level" env:"{{.EnvPrefix}}_LOG_LEVEL" default:"info"`
 }
 
-//fabrik:init
+//fabrik:hook setup
 func InitLogger(l *Log) error {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(l.Level)); err != nil {

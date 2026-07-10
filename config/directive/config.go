@@ -35,7 +35,7 @@ func (*Config) Meta() gen.Meta {
 		Synopsis: "Configuration struct: [section]",
 		Doc: "**`//fabrik:config [section]`**\n\n" +
 			"Marks a struct as configuration: generated code loads it in the " +
-			"Config phase (before inits and providers) with `config.Load` and " +
+			"Config phase (before setup hooks and providers) with `config.Load` and " +
 			"binds the pointer into DI. Both conventional files (config.yaml, " +
 			"config.local.yaml) are optional: a missing file means defaults " +
 			"and env overrides apply. `yaml:` tags name keys, `default:` " +
@@ -195,7 +195,7 @@ func (c *Config) Validate(*gen.Gen) diag.Diagnostics {
 	for _, nd := range c.nodes {
 		if nd.named != nil && !nd.built && !nd.referenced {
 			ds.Warn(nd.pos, fmt.Sprintf("config struct %s is never used", nd.named.Obj().Name()),
-				"inject it into a provider, init, or handler struct, or remove the directive")
+				"inject it into a provider, hook, or handler struct, or remove the directive")
 		}
 	}
 	return ds

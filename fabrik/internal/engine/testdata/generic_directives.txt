@@ -24,7 +24,7 @@ type Config[T any] struct {
 	Kind string `yaml:"kind"`
 }
 
-//fabrik:init
+//fabrik:hook setup
 func Setup[T any]() error { return nil }
 
 type DB struct{}
@@ -48,8 +48,8 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
 error: store/store.go:3:1: //fabrik:config cannot be on a generic type (Config has type parameters)
   help: configuration is loaded by reflection at startup; declare a concrete struct
-error: store/store.go:8:1: init Setup cannot be generic (generated code cannot infer type arguments)
-  help: declare a concrete setup function
+error: store/store.go:8:1: hook Setup cannot be generic (generated code cannot infer type arguments)
+  help: declare a concrete hook function
 error: store/store.go:13:1: provider Open cannot be generic (generated code cannot infer type arguments)
   help: declare a concrete constructor
 error: store/store.go:16:1: //fabrik:provider:select cannot be on a generic interface (Store has type parameters)

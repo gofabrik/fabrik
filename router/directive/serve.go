@@ -158,7 +158,7 @@ func (s *Serve) Finish(g *gen.Gen) diag.Diagnostics {
 			// Create the router only when the serve function accepts it.
 			args = append(args, g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"))
 		case paramCtx:
-			args = append(args, g.SingletonIn(gen.PhaseInit, "context", "ctx", g.Import("context")+".Background()"))
+			args = append(args, g.Context())
 		}
 	}
 	g.Node(&gen.Serve{

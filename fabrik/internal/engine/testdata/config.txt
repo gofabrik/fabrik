@@ -1,5 +1,5 @@
 Config structs load via config.Load in the Config phase and inject
-anywhere: inits, providers, handler structs. Unused config warns.
+anywhere: hooks, providers, handler structs. Unused config warns.
 -- go.mod --
 module app
 
@@ -24,7 +24,7 @@ type Config struct {
 	Addr string `yaml:"addr" env:"APP_HTTP_ADDR" default:":8080"`
 }
 
-//fabrik:init
+//fabrik:hook setup
 func InitLogger(c *Config) error {
 	_ = c.Addr
 	return nil
@@ -103,7 +103,7 @@ func run() error {
 		return err
 	}
 
-	// Init
+	// Setup: after config, before providers
 	if err := shared.InitLogger(sharedConfig); err != nil {
 		return err
 	}
@@ -129,4 +129,4 @@ func run() error {
 }
 -- want/diags --
 warning: shared/config.go:14:1: config struct Unused is never used
-  help: inject it into a provider, init, or handler struct, or remove the directive
+  help: inject it into a provider, hook, or handler struct, or remove the directive

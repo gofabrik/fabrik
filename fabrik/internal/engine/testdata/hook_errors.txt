@@ -1,0 +1,46 @@
+Hook misuse: methods, bad returns, unknown phase, missing phase,
+non-leading context.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "context"
+
+type T struct{}
+
+//fabrik:hook setup
+func (t *T) Setup() {}
+
+//fabrik:hook setup
+func Bad() int { return 0 }
+
+//fabrik:hook verbose
+func UnknownPhase() {}
+
+//fabrik:hook
+func MissingPhase() {}
+
+//fabrik:hook setup
+func TrailingCtx(name string, ctx context.Context) {}
+-- want/diags --
+error: web/web.go:7:1: //fabrik:hook must be on a package-level function (func Setup is a method)
+  help: move the hook out of the method set
+error: web/web.go:10:1: hook Bad must return nothing or error
+  help: example: func MigrateDB(ctx context.Context) error
+error: web/web.go:13:15: unknown lifecycle phase "verbose"
+  help: hookable phases in order: setup (after config, before providers), start (after providers, before middleware and routes)
+error: web/web.go:16:1: //fabrik:hook requires PHASE
+  help: example: //fabrik:hook setup
+error: web/web.go:20:31: hook TrailingCtx takes context.Context after other parameters
+  help: a hook's context must be the first parameter

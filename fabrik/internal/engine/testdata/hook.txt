@@ -1,4 +1,4 @@
-Init functions run first in source order; wired params and error returns.
+Setup hooks run after config in source order; wired params and error returns.
 -- go.mod --
 module app
 
@@ -16,10 +16,10 @@ package setup
 
 import "context"
 
-//fabrik:init
+//fabrik:hook setup
 func Logging() {}
 
-//fabrik:init
+//fabrik:hook setup
 func Tracing(ctx context.Context) error { return nil }
 -- web/web.go --
 package web
@@ -55,10 +55,11 @@ import (
 )
 
 func run() error {
-	// Init
+	ctx := context.Background()
+
+	// Setup: after config, before providers
 	setup.Logging()
 
-	ctx := context.Background()
 	if err := setup.Tracing(ctx); err != nil {
 		return err
 	}

@@ -174,7 +174,24 @@ func Index(w http.ResponseWriter, r *http.Request) {}
 		t.Fatalf("hover = %s (err %v), want fabrik:http doc", raw, err)
 	}
 
-	c.request(5, "shutdown", nil)
+	// Lifecycle phases complete from the hook directive's enum.
+	withHook := fixed + "\n//fabrik:hook \nfunc Warm() {}\n"
+	c.notifyServer("textDocument/didChange", didChangeParams{
+		TextDocument:   versionedTextDocumentIdentifier{URI: uri, Version: 3},
+		ContentChanges: []textDocumentContentChangeEvent{{Text: withHook}},
+	})
+	c.diagnostics(uri)
+	items = completionResult(t, c.request(5, "textDocument/completion", completionParams{
+		TextDocument: struct {
+			URI string `json:"uri"`
+		}{uri},
+		Position: lspPosition{Line: 7, Character: len("//fabrik:hook ")},
+	}))
+	if !hasLabel(items, "setup") || !hasLabel(items, "start") {
+		t.Fatalf("phase completions = %+v, want setup and start", items)
+	}
+
+	c.request(6, "shutdown", nil)
 	c.notifyServer("exit", nil)
 }
 

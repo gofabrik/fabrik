@@ -289,9 +289,7 @@ func TestCompile_RemovesStaleTempFilesFromPriorCrashedRun(t *testing.T) {
 }
 
 func TestCompile_StaleTempCleanupIsNarrow(t *testing.T) {
-	// A user file in publicDir that happens to share the .assetmapper-
-	// prefix but NOT the distinctive .assetmapper-tmp- segment must
-	// survive the GC. Guards against an overly-broad glob.
+	// Only assetmapper temp files are removed.
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

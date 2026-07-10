@@ -1,9 +1,7 @@
-Kitchen sink: every node kind and rendering policy in one app - wrapped
-config loads in declaration order, init calls, selection with
-branch-local config, provider and struct clusters, packed middleware and
-routes, static files, compiled assets, hooks, templates with a helper, typed web
-handlers, and the serve handoff. The golden is
-the review artifact for rendering changes.
+Kitchen sink: exercises every node kind and rendering policy in one app:
+config loads, lifecycle hooks, selection with branch-local config,
+providers, middleware, routes, static files, assets, templates, web
+handlers, and the serve handoff.
 -- go.mod --
 module app
 
@@ -43,7 +41,7 @@ type Log struct {
 	Level string `yaml:"level" default:"info"`
 }
 
-//fabrik:init
+//fabrik:hook setup
 func InitLogger(l *Log) error { return nil }
 -- shared/http.go --
 package shared
@@ -106,6 +104,9 @@ type Pool struct{}
 
 //fabrik:provider
 func NewPool(ctx context.Context) (*Pool, error) { return &Pool{}, nil }
+
+//fabrik:hook start
+func WarmCache(ctx context.Context, p *Pool) error { return nil }
 -- web/assets.go --
 package web
 
@@ -201,6 +202,8 @@ import (
 )
 
 func run() error {
+	ctx := context.Background()
+
 	// Config
 	sharedConfig, err := config.Load[shared.Config](
 		config.FileOptional("config.yaml"),
@@ -232,12 +235,10 @@ func run() error {
 		return err
 	}
 
-	// Init
+	// Setup: after config, before providers
 	if err := shared.InitLogger(sharedLog); err != nil {
 		return err
 	}
-
-	ctx := context.Background()
 
 	// Providers
 	// store.Store, selected by store.kind
@@ -296,6 +297,11 @@ func run() error {
 
 	sharedServer := &shared.Server{
 		Config: sharedConfig,
+	}
+
+	// Start: after providers, before middleware and routes
+	if err := store.WarmCache(ctx, storePool); err != nil {
+		return err
 	}
 
 	// Middleware

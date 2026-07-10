@@ -48,7 +48,7 @@ func run() error {
 		return err
 	}
 
-	// Init
+	// Setup: after config, before providers
 	if err := shared.InitLogger(sharedLog); err != nil {
 		return err
 	}

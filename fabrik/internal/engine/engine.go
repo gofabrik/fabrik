@@ -123,7 +123,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 			return nil, err
 		}
 	}
-	for _, tier := range []gen.EmitTier{gen.TierInit, gen.TierMain} {
+	for _, tier := range []gen.EmitTier{gen.TierHook, gen.TierMain} {
 		if err := emitTierNodes(tier); err != nil {
 			return nil, err
 		}
