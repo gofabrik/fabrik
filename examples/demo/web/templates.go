@@ -1,0 +1,7 @@
+package web
+
+import "embed"
+
+//fabrik:templates
+//go:embed all:templates
+var Templates embed.FS

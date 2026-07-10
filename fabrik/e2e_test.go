@@ -26,6 +26,10 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	templateDir, err := filepath.Abs("../templates")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tmp := t.TempDir()
 	if r, err := filepath.EvalSymlinks(tmp); err == nil {
@@ -47,8 +51,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod = append(mod, []byte(fmt.Sprintf(
-		"\nrequire (\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n)\n",
-		configDir, routerDir))...)
+		"\nrequire (\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/templates v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/templates => %s\n)\n",
+		configDir, routerDir, templateDir))...)
 	if err := os.WriteFile(gomod, mod, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +100,11 @@ func TestEndToEnd(t *testing.T) {
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			if got, want := string(body), "Hello, e2e!"; got != want {
-				t.Fatalf("GET %s = %q, want %q", url, got, want)
+			got := string(body)
+			// The scaffold renders through the template set: the page
+			// carries the greeting and the shout helper's title.
+			if !strings.Contains(got, "<h1>Hello, e2e!</h1>") || !strings.Contains(got, "<title>HELLO, E2E!</title>") {
+				t.Fatalf("GET %s = %q, want rendered greeting page", url, got)
 			}
 			return
 		}

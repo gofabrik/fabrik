@@ -48,6 +48,10 @@ func runFixture(t *testing.T, fixture string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	templateDir, err := filepath.Abs("../../../templates")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wantGen, wantDiags []byte
 	hasGen, hasDiags := false, false
 	for _, f := range ar.Files {
@@ -66,6 +70,7 @@ func runFixture(t *testing.T, fixture string) {
 		// Fixtures resolve local module checkouts; only generated output imports config.
 		data := bytes.ReplaceAll(f.Data, []byte("ROUTERDIR"), []byte(routerDir))
 		data = bytes.ReplaceAll(data, []byte("CONFIGDIR"), []byte(configDir))
+		data = bytes.ReplaceAll(data, []byte("TEMPLATEDIR"), []byte(templateDir))
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}

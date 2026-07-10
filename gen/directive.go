@@ -15,6 +15,7 @@ type Annotation struct {
 	Pos     token.Position // position of the directive comment
 	ArgsCol int            // column where Args starts on the directive line
 	Decl    ast.Node       // annotated declaration: *ast.FuncDecl or *ast.TypeSpec
+	Doc     []string       // every line of the enclosing comment group, verbatim
 }
 
 // ArgPos returns the source position for an offset within Args.

@@ -9,6 +9,7 @@ import (
 	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
 	"github.com/gofabrik/fabrik/gen"
 	routerdir "github.com/gofabrik/fabrik/router/directive"
+	tpldir "github.com/gofabrik/fabrik/templates/directive"
 )
 
 // New returns directive instances for one generation run.
@@ -16,6 +17,7 @@ func New() []gen.Directive {
 	group := routerdir.NewGroup()
 	routes := routerdir.NewRouteTable()
 	mw := routerdir.NewMiddleware()
+	tpl := tpldir.NewTemplates()
 	// Conventional config layers are optional; custom sources belong in providers.
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
@@ -32,6 +34,8 @@ func New() []gen.Directive {
 		routerdir.NewNotFound(),
 		routerdir.NewMethodNotAllowed(),
 		routerdir.NewServe(),
+		tpl,
+		tpldir.NewFuncs(tpl),
 		cfg,
 	}
 }

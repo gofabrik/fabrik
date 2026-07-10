@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
+	"github.com/gofabrik/fabrik/templates"
 
 	"demo/shared"
 	"demo/web"
@@ -53,6 +54,16 @@ func run() error {
 	}
 
 	// Providers
+	appTemplates, err := templates.LoadSources([]templates.Source{
+		{FS: shared.Templates, Dir: "templates"},
+		{FS: web.Templates, Dir: "templates"},
+	}, templates.FuncMap{
+		"humanizeAge": shared.HumanizeAge,
+		"shout":       shared.Shout,
+	})
+	if err != nil {
+		return err
+	}
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webConfig.Kind {
@@ -63,11 +74,15 @@ func run() error {
 	default:
 		return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
 	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
 	webHandlers := &web.Handlers{
-		Greeter: webGreeter,
+		Greeter:   webGreeter,
+		Templates: appTemplates,
 	}
 
 	// embedded Assets, served under /assets
@@ -90,6 +105,8 @@ func run() error {
 	r.Use(shared.Recovered)
 
 	// Routes
+	r.NotFound(sharedErrorPages.NotFound)
+	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/routes", webDocs.List)
 	r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))

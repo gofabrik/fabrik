@@ -124,6 +124,10 @@ func ScanFile(fset *token.FileSet, file *ast.File) ([]gen.Annotation, diag.Diagn
 	consumed := map[*ast.CommentGroup]bool{}
 	scan := func(doc *ast.CommentGroup, target ast.Node) {
 		consumed[doc] = true
+		docLines := make([]string, 0, len(doc.List))
+		for _, c := range doc.List {
+			docLines = append(docLines, c.Text)
+		}
 		for _, c := range doc.List {
 			text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
 			if !strings.HasPrefix(text, "fabrik:") {
@@ -138,6 +142,7 @@ func ScanFile(fset *token.FileSet, file *ast.File) ([]gen.Annotation, diag.Diagn
 				Pos:     pos,
 				ArgsCol: pos.Column + argsOffset(c.Text, name, args),
 				Decl:    target,
+				Doc:     docLines,
 			})
 		}
 	}

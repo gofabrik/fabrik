@@ -1,16 +1,23 @@
 Kitchen sink: every node kind and rendering policy in one app - wrapped
 config loads in declaration order, init calls, selection with
 branch-local config, provider and struct clusters, packed middleware and
-routes, static assets, hooks, and the serve handoff. The golden is
+routes, static assets, hooks, templates with a helper, and the serve
+handoff. The golden is
 the review artifact for rendering changes.
 -- go.mod --
 module app
 
 go 1.26
 
-require github.com/gofabrik/fabrik/config v0.0.0
+require (
+	github.com/gofabrik/fabrik/config v0.0.0
+	github.com/gofabrik/fabrik/templates v0.0.0
+)
 
-replace github.com/gofabrik/fabrik/config => CONFIGDIR
+replace (
+	github.com/gofabrik/fabrik/config => CONFIGDIR
+	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+)
 -- main.go --
 package main
 
@@ -105,6 +112,24 @@ import "embed"
 var Assets embed.FS
 -- web/assets/style.css --
 body {}
+-- web/templates.go --
+package web
+
+import (
+	"embed"
+	"strings"
+)
+
+//fabrik:templates
+//go:embed all:templates
+var Templates embed.FS
+
+//fabrik:templates:func
+func Shout(s string) string { return strings.ToUpper(s) }
+-- web/templates/_default/_layout.html --
+<html>{{ block "content" . }}{{ end }}</html>
+-- web/templates/_default/home.html --
+{{ define "content" }}{{ shout "hi" }}{{ end }}
 -- web/web.go --
 package web
 
@@ -112,12 +137,15 @@ import (
 	"net/http"
 
 	"app/store"
+
+	"github.com/gofabrik/fabrik/templates"
 )
 
 //fabrik:http:group /api middleware=auth
 type API struct {
-	Store store.Store
-	Pool  *store.Pool
+	Store     store.Store
+	Pool      *store.Pool
+	Templates *templates.Set
 }
 
 //fabrik:http GET /items/{id}
@@ -145,6 +173,7 @@ import (
 
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
+	"github.com/gofabrik/fabrik/templates"
 
 	"app/shared"
 	"app/store"
@@ -218,9 +247,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	webTemplates, err := templates.Load(web.Templates, "templates", templates.FuncMap{
+		"shout": web.Shout,
+	})
+	if err != nil {
+		return err
+	}
 	webAPI := &web.API{
-		Store: storeStore,
-		Pool:  storePool,
+		Store:     storeStore,
+		Pool:      storePool,
+		Templates: webTemplates,
 	}
 
 	// embedded Assets, served under /assets

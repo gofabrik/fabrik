@@ -3,10 +3,16 @@ package web
 import (
 	"log/slog"
 	"net/http"
+	"time"
+
+	"github.com/gofabrik/fabrik/templates"
 )
 
+var started = time.Now()
+
 type Handlers struct {
-	Greeter Greeter
+	Greeter   Greeter
+	Templates *templates.Set
 }
 
 //fabrik:http GET /{$}
@@ -16,5 +22,11 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {
 		name = "world"
 	}
 	slog.InfoContext(r.Context(), "greeting", "name", name)
-	w.Write([]byte(h.Greeter.Greet(name)))
+	if err := h.Templates.Render(w, "web/home", map[string]any{
+		"Greeting": h.Greeter.Greet(name),
+		"Started":  started,
+	}); err != nil {
+		slog.ErrorContext(r.Context(), "render", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }

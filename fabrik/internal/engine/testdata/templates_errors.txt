@@ -1,0 +1,74 @@
+Templates misuse: mistyped and unexported targets, duplicate
+declarations, illegal helpers.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/templates v0.0.0
+
+replace github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/templates.go --
+package web
+
+import (
+	"embed"
+	"strings"
+)
+
+//fabrik:templates
+var notEmbed string
+
+//fabrik:templates
+var NotFS string
+
+//fabrik:templates
+//go:embed all:templates
+var Templates embed.FS
+
+type T struct{}
+
+//fabrik:templates:func
+func (t *T) Method(s string) string { return s }
+
+//fabrik:templates:func
+func NoResults(s string) {}
+
+//fabrik:templates:func name=upper
+func UpperCase(s string) string { return strings.ToUpper(s) }
+
+//fabrik:templates:func name=upper
+func AlsoUpper(s string) string { return strings.ToUpper(s) }
+
+//fabrik:templates:func name=bad.name
+func Dotted(s string) string { return s }
+
+//fabrik:templates:func
+func shout(s string) string { return s }
+-- web/templates/_default/_layout.html --
+<html>{{ block "content" . }}{{ end }}</html>
+-- web/templates/_default/home.html --
+{{ define "content" }}ok{{ end }}
+-- want/diags --
+error: web/templates.go:8:1: //fabrik:templates variable has no //go:embed
+  help: add //go:embed all:templates above the variable
+error: web/templates.go:11:1: //fabrik:templates variable has no //go:embed
+  help: add //go:embed all:templates above the variable
+error: web/templates.go:20:1: //fabrik:templates:func must be on a package-level function (func Method is a method)
+  help: move the helper out of the method set
+error: web/templates.go:23:1: template function NoResults has an illegal signature
+  help: html/template functions return one value, or two with the second an error
+error: web/templates.go:29:1: duplicate template function name "upper"
+  help: first declared at $WORK/web/templates.go:26:1
+error: web/templates.go:32:30: invalid template function name "bad.name"
+  help: use a short identifier: name=humanize
+error: web/templates.go:35:1: template function shout is unexported
+  help: generated code lives in package main; export the function

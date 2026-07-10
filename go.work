@@ -8,5 +8,7 @@ use (
 	./fabrik
 	./gen
 	./router
+	./templates
+	./templates/directive
 	./router/directive
 )
