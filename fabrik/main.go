@@ -23,6 +23,8 @@ func main() {
 		err = newCmd(args)
 	case "wire":
 		err = wireCmd(args)
+	case "assets":
+		err = assetsCmd(args)
 	case "run":
 		err = runCmd(args)
 	case "build":
@@ -56,6 +58,8 @@ Usage:
 Commands:
   new    <project>       Scaffold a new project
   wire   [-check] [dir]  Generate main.gen.go from directives
+  assets <require|remove|prune>
+                         Manage vendored JS packages in the asset tree
   run    [dir] [args]    Generate main.gen.go, then go run
   build  [dir] [-o out]  Generate main.gen.go, then go build
   directives             Print the directive reference (DIRECTIVES.md)

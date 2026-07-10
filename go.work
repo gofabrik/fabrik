@@ -1,6 +1,8 @@
 go 1.26
 
 use (
+	./assetmapper
+	./assetmapper/directive
 	./config
 	./config/directive
 	./diag

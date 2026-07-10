@@ -1,0 +1,33 @@
+Compile failures are wire diagnostics: a dependency cycle among
+modules surfaces with the library's message at the declaration.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/assetmapper v0.0.0
+
+replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/assets.go --
+package web
+
+import "embed"
+
+//fabrik:assets
+//go:embed all:assets
+var Assets embed.FS
+-- web/assets/a.js --
+import "./b.js";
+-- web/assets/b.js --
+import "./a.js";
+-- want/diags --
+error: web/assets.go:5:1: assetmapper: dependency cycle among assets: a.js, b.js
+  help: assets are compiled and checked at generation time; fix the tree and rerun

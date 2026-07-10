@@ -1,0 +1,35 @@
+Importmap failures boot would hit are wire diagnostics: an entry
+naming a missing asset fails generation, not the first page render.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/assetmapper v0.0.0
+
+replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/assets.go --
+package web
+
+import "embed"
+
+//fabrik:assets
+//go:embed all:assets
+var Assets embed.FS
+-- web/assets/app.js --
+export {}
+-- web/assets/importmap.json --
+{
+  "app": {"path": "gone.js", "entrypoint": true}
+}
+-- want/diags --
+error: web/assets.go:5:1: assetmapper.Check: importmap entry "app" resolves to "gone.js", which is not a known asset
+  help: assets are compiled and checked at generation time; fix the tree and rerun

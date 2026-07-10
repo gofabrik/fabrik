@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	assetsdir "github.com/gofabrik/fabrik/assetmapper/directive"
 	configdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
 	"github.com/gofabrik/fabrik/gen"
@@ -39,6 +40,7 @@ func New() []gen.Directive {
 		routerdir.NewServe(),
 		tpl,
 		tpldir.NewFuncs(tpl),
+		assetsdir.NewAssets(host, tpl),
 		cfg,
 	}
 }

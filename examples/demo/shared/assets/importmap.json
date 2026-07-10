@@ -1,0 +1,10 @@
+{
+  "app": {
+    "path": "app.js",
+    "entrypoint": true
+  },
+  "htmx.org": {
+    "version": "2.0.10",
+    "type": "js"
+  }
+}
