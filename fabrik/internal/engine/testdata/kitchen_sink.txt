@@ -130,7 +130,7 @@ package store
 
 import "embed"
 
-//fabrik:migrations module=store
+//fabrik:migrations
 //go:embed all:migrations
 var Migrations embed.FS
 -- store/migrations/0001_items.sql --
@@ -320,12 +320,12 @@ func run() error {
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
 
-	storeDB, err := store.NewDB()
+	storeSqlDB, err := store.NewDB()
 	if err != nil {
 		return err
 	}
 
-	storeDialect := store.NewDialect()
+	storeMigrationsDialect := store.NewDialect()
 
 	// embedded Static, served under /static
 	webStatic, err := fs.Sub(web.Static, "static")
@@ -344,7 +344,7 @@ func run() error {
 		return err
 	}
 
-	if err := store.MigrateDB(ctx, storeDB, storeDialect, migrationSources); err != nil {
+	if err := store.MigrateDB(ctx, storeSqlDB, storeMigrationsDialect, migrationSources); err != nil {
 		return err
 	}
 

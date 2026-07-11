@@ -52,7 +52,7 @@ package todos
 
 import "embed"
 
-//fabrik:migrations module=todos
+//fabrik:migrations
 //go:embed all:migrations
 var Migrations embed.FS
 -- todos/migrations/0001_todos.sql --
@@ -87,12 +87,12 @@ func run() error {
 	ctx := context.Background()
 
 	// Providers
-	sharedDB, err := shared.NewDB()
+	sharedSqlDB, err := shared.NewDB()
 	if err != nil {
 		return err
 	}
 
-	sharedDialect := shared.NewDialect()
+	sharedMigrationsDialect := shared.NewDialect()
 	migrationSources := migrations.Sources{
 		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
 		{Module: "todos", FS: todos.Migrations, Dir: "migrations"},
@@ -100,7 +100,7 @@ func run() error {
 	r := router.New()
 
 	// Start: after providers, before middleware and routes
-	if err := shared.MigrateDB(ctx, sharedDB, sharedDialect, migrationSources); err != nil {
+	if err := shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources); err != nil {
 		return err
 	}
 

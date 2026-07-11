@@ -6,6 +6,7 @@ require (
 	github.com/gofabrik/fabrik/assetmapper v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
 	github.com/gofabrik/fabrik/migrations v0.0.0
+	github.com/gofabrik/fabrik/query v0.0.0
 	github.com/gofabrik/fabrik/router v0.0.0
 	github.com/gofabrik/fabrik/templates v0.0.0
 	github.com/gofabrik/fabrik/web v0.0.0
@@ -29,6 +30,7 @@ replace (
 	github.com/gofabrik/fabrik/assetmapper => ../../assetmapper
 	github.com/gofabrik/fabrik/config => ../../config
 	github.com/gofabrik/fabrik/migrations => ../../migrations
+	github.com/gofabrik/fabrik/query => ../../query
 	github.com/gofabrik/fabrik/router => ../../router
 	github.com/gofabrik/fabrik/templates => ../../templates
 	github.com/gofabrik/fabrik/web => ../../web

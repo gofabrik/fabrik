@@ -2,6 +2,6 @@ package shared
 
 import "embed"
 
-//fabrik:migrations module=shared
+//fabrik:migrations
 //go:embed all:migrations
 var Migrations embed.FS

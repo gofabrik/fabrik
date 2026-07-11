@@ -4,6 +4,10 @@
   {{ template "_nav.html" . }}
   <h1>{{ .Greeting }}</h1>
   <p>Served at {{ humanizeAge .Started }} of uptime; visit #{{ .Visits }}.</p>
+  <h2>Recent greetings</h2>
+  <ul>
+  {{ range .Recent }}<li class="greeting">{{ .Name }}</li>
+  {{ end }}</ul>
   <button hx-get="/routes" hx-target="#routes">Show routes</button>
   <pre id="routes"></pre>
 {{ end }}
