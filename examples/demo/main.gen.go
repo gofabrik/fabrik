@@ -90,10 +90,11 @@ func run() error {
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 
-	sharedDB, err := shared.NewDB(sharedDatabase)
+	sharedSqlDB, err := shared.NewDB(sharedDatabase)
 	if err != nil {
 		return err
 	}
+	sharedQueryDialect := shared.NewQueryDialect()
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webConfig.Kind {
@@ -109,10 +110,11 @@ func run() error {
 	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
-		DB:      sharedDB,
+		DB:      sharedSqlDB,
+		Dialect: sharedQueryDialect,
 	}
 
-	sharedDialect := shared.NewDialect()
+	sharedMigrationsDialect := shared.NewDialect()
 	migrationSources := migrations.Sources{
 		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
 	}
@@ -127,7 +129,7 @@ func run() error {
 	}
 
 	// Start: after providers, before middleware and routes
-	if err := shared.MigrateDB(ctx, sharedDB, sharedDialect, migrationSources); err != nil {
+	if err := shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources); err != nil {
 		return err
 	}
 

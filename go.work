@@ -12,6 +12,8 @@ use (
 	./migrations
 	./migrations/dbtest
 	./migrations/directive
+	./query
+	./query/dbtest
 	./router
 	./templates
 	./web

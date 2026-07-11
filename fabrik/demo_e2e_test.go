@@ -47,24 +47,33 @@ func TestDemoEndToEnd(t *testing.T) {
 	defer server.Process.Kill()
 
 	visitRE := regexp.MustCompile(`visit #(\d+)`)
-	get := func() string {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/", port))
+	get := func(name string) (visit, body string) {
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/?name=%s", port, name))
 		if err != nil {
-			return ""
+			return "", ""
 		}
-		body, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return visitRE.FindString(string(body))
+		return visitRE.FindString(string(b)), string(b)
 	}
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if first := get(); first != "" {
+		if first, body := get("one"); first != "" {
 			if !strings.HasSuffix(first, "#1") {
 				t.Fatalf("first visit = %q, want visit #1 on a fresh database", first)
 			}
-			if second := get(); second != "visit #2" {
+			if !strings.Contains(body, `<li class="greeting">one</li>`) {
+				t.Fatalf("first response should list its own greeting:\n%s", body)
+			}
+			second, body := get("two")
+			if second != "visit #2" {
 				t.Fatalf("second visit = %q, want visit #2", second)
+			}
+			// The greeting written by the first request round-trips
+			// through the database into the second response.
+			if !strings.Contains(body, `<li class="greeting">two</li>`) || !strings.Contains(body, `<li class="greeting">one</li>`) {
+				t.Fatalf("second response should list both greetings:\n%s", body)
 			}
 			return
 		}

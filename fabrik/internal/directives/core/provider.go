@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"strings"
 
 	cfgdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/diag"
@@ -222,16 +223,27 @@ func anchor(ds diag.Diagnostics, pos token.Position) diag.Diagnostics {
 	return ds
 }
 
-// varBase derives the generated variable name for a provided value.
+// varBase names a provided value: declaring package + type name,
+// with the type's own package between them when the two differ
+// (shared providing query.Dialect -> sharedQueryDialect). The
+// qualification is unconditional, not collision-triggered: name
+// policy must not depend on emission order, and a lone
+// sharedDialect would be exactly as vague as a colliding one.
 func varBase(pkg *types.Package, t types.Type) string {
 	t = types.Unalias(t)
 	if ptr, ok := t.(*types.Pointer); ok {
 		t = types.Unalias(ptr.Elem())
 	}
-	if named, ok := t.(*types.Named); ok {
-		return pkg.Name() + named.Obj().Name()
+	named, ok := t.(*types.Named)
+	if !ok {
+		return pkg.Name() + "Value"
 	}
-	return pkg.Name() + "Value"
+	name := named.Obj().Name()
+	if tp := named.Obj().Pkg(); tp != nil && tp != pkg && tp.Name() != "" {
+		q := tp.Name()
+		return pkg.Name() + strings.ToUpper(q[:1]) + q[1:] + name
+	}
+	return pkg.Name() + name
 }
 
 func isErrorType(t types.Type) bool {

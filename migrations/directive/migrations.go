@@ -49,11 +49,13 @@ func (*Migrations) Meta() gen.Meta {
 			"`Sources.Migrate` from a `//fabrik:hook start` function, a " +
 			"handler, or a command. Versions order within a stream. " +
 			"Streams are independent, so tables that reference each other " +
-			"belong in one stream. `module=` names the stream; explicit " +
-			"names are stable across package moves. The default derives " +
-			"from the package directory. Use `all:<dir>` so embedded " +
-			"files match the validated tree.\n\n" +
-			"```go\n//fabrik:migrations module=auth\n//go:embed all:migrations\nvar Migrations embed.FS\n```",
+			"belong in one stream. The stream name derives from the " +
+			"package directory - the location already chosen; `module=` " +
+			"exists for the exceptions: moving a package (pin the old " +
+			"name to keep its history) and packages at the module root. " +
+			"Use `all:<dir>` so embedded files match the validated " +
+			"tree.\n\n" +
+			"```go\n//fabrik:migrations\n//go:embed all:migrations\nvar Migrations embed.FS\n```",
 		Example: "//fabrik:migrations",
 		Attrs: []gen.AttrSpec{
 			{Key: "dir", Kind: gen.KindFreeform},

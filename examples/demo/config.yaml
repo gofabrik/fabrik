@@ -5,7 +5,7 @@ http:
 log:
   level: info
 greeter:
-  kind: hello
+  kind: goodbye
 
 database:
   path: demo.db

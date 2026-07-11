@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"github.com/gofabrik/fabrik/migrations"
+	"github.com/gofabrik/fabrik/query"
 	_ "modernc.org/sqlite"
 )
 
@@ -19,3 +20,6 @@ func NewDB(cfg *Database) (*sql.DB, error) {
 
 //fabrik:provider
 func NewDialect() migrations.Dialect { return migrations.DialectSQLite }
+
+//fabrik:provider
+func NewQueryDialect() query.Dialect { return query.DialectSQLite }
