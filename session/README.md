@@ -31,7 +31,7 @@ One value carries everything:
 | | |
 |---|---|
 | Data | `Get`, `Has`, `Save`, `Update`, `Clear` - all in terms of your struct |
-| Lifecycle | `Promote` (login), `Destroy` (logout), `Renew`, `SID`, `UserID` |
+| Session-level | `Promote` (login), `Destroy` (logout), `Renew`, `SID`, `UserID` |
 | Out-of-band | `Load`, `UpdateSID`, `ClearSID`, `DestroySID`, `ListForUser`, `RevokeAllForUser` |
 
 ## Semantics worth knowing

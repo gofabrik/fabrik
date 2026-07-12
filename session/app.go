@@ -58,6 +58,14 @@ func (m *Manager[T]) registry() *core {
 	return m.c
 }
 
+// lifecycle seals [Lifecycle] the same way.
+func (m *Manager[T]) lifecycle() *core {
+	if m == nil {
+		return nil
+	}
+	return m.c
+}
+
 // Middleware attaches request session state and commits it at
 // response start.
 func (m *Manager[T]) Middleware(next http.Handler) http.Handler { return m.c.Middleware(next) }

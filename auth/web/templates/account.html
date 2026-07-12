@@ -1,0 +1,7 @@
+{{ define "account" -}}
+<!doctype html>
+<title>Account</title>
+<h1>Your account</h1>
+<p>Signed in as <strong>{{ .Email }}</strong>.</p>
+<form method="post" action="{{ .Prefix }}/logout"><button type="submit">Log out</button></form>
+{{- end }}

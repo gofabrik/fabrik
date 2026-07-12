@@ -49,7 +49,7 @@ type Handlers struct {
 	Flash   *flash.Flash
 }
 
-//fabrik:web GET /{$} middleware=nocache
+//fabrik:web GET /{$} middleware=nocache,optauth
 func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	ctx := req.Context()
 

@@ -3,6 +3,11 @@ go 1.26
 use (
 	./assetmapper
 	./assetmapper/directive
+	./auth
+	./auth/password
+	./auth/session
+	./auth/store/sqlite
+	./auth/web
 	./config
 	./config/directive
 	./diag

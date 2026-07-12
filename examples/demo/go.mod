@@ -4,6 +4,10 @@ go 1.26
 
 require (
 	github.com/gofabrik/fabrik/assetmapper v0.0.0
+	github.com/gofabrik/fabrik/auth v0.0.0
+	github.com/gofabrik/fabrik/auth/session v0.0.0
+	github.com/gofabrik/fabrik/auth/store/sqlite v0.0.0
+	github.com/gofabrik/fabrik/auth/web v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
 	github.com/gofabrik/fabrik/flash v0.0.0
 	github.com/gofabrik/fabrik/migrations v0.0.0
@@ -17,10 +21,12 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/gofabrik/fabrik/auth/password v0.0.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.73.4 // indirect
@@ -30,6 +36,11 @@ require (
 
 replace (
 	github.com/gofabrik/fabrik/assetmapper => ../../assetmapper
+	github.com/gofabrik/fabrik/auth => ../../auth
+	github.com/gofabrik/fabrik/auth/password => ../../auth/password
+	github.com/gofabrik/fabrik/auth/session => ../../auth/session
+	github.com/gofabrik/fabrik/auth/store/sqlite => ../../auth/store/sqlite
+	github.com/gofabrik/fabrik/auth/web => ../../auth/web
 	github.com/gofabrik/fabrik/config => ../../config
 	github.com/gofabrik/fabrik/flash => ../../flash
 	github.com/gofabrik/fabrik/migrations => ../../migrations

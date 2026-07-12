@@ -1,0 +1,12 @@
+{{ define "login" -}}
+<!doctype html>
+<title>Log in</title>
+<h1>Log in</h1>
+{{ if .Error }}<p class="error">{{ .Error }}</p>{{ end }}
+<form method="post" action="{{ .Prefix }}/login">
+  <label>Email <input type="email" name="email" value="{{ .Email }}" required></label>
+  <label>Password <input type="password" name="password" required></label>
+  <button type="submit">Log in</button>
+</form>
+{{ if .Register }}<p>No account? <a href="{{ .Prefix }}/register">Register</a>.</p>{{ end }}
+{{- end }}

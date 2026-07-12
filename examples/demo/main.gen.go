@@ -14,6 +14,7 @@ import (
 	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
 
+	"demo/auth"
 	"demo/shared"
 	"demo/web"
 )
@@ -68,6 +69,56 @@ func run() error {
 	}
 
 	// Providers
+	sharedSqlDB, err := shared.NewDB(sharedDatabase)
+	if err != nil {
+		return err
+	}
+	authSqliteStore, err := auth.NewUsers(sharedSqlDB)
+	if err != nil {
+		return err
+	}
+	sharedQueryDialect := shared.NewQueryDialect()
+	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
+	if err != nil {
+		return err
+	}
+	authAuthsessionAuthenticator, err := auth.NewSessionAuth(sharedSessionManager)
+	if err != nil {
+		return err
+	}
+	authAuthAuthenticator := auth.NewAuthChain(authAuthsessionAuthenticator)
+	authWebUI, err := auth.NewAuthUI(authSqliteStore, authAuthsessionAuthenticator, authAuthAuthenticator)
+	if err != nil {
+		return err
+	}
+	sharedFlash, err := shared.NewFlash(sharedSessionManager)
+	if err != nil {
+		return err
+	}
+	// web.Greeter, selected by greeter.kind
+	var webGreeter web.Greeter
+	switch webConfig.Kind {
+	case "goodbye":
+		webGreeter = web.NewGoodbyeGreeter()
+	case "hello":
+		webGreeter = web.NewHelloGreeter()
+	default:
+		return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
+	}
+	authMount := &auth.Mount{
+		UI: authWebUI,
+	}
+	webHandlers := &web.Handlers{
+		Greeter: webGreeter,
+		DB:      sharedSqlDB,
+		Dialect: sharedQueryDialect,
+		Session: sharedSessionManager,
+		Flash:   sharedFlash,
+	}
+	webAPI := &web.API{
+		Greeter: webGreeter,
+	}
+
 	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
 		{FS: shared.Assets, Dir: "assets"},
 		{FS: web.Assets, Dir: "assets"},
@@ -93,41 +144,6 @@ func run() error {
 	migrationSources := migrations.Sources{
 		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
 	}
-
-	sharedSqlDB, err := shared.NewDB(sharedDatabase)
-	if err != nil {
-		return err
-	}
-	sharedQueryDialect := shared.NewQueryDialect()
-	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
-	if err != nil {
-		return err
-	}
-	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		return err
-	}
-	// web.Greeter, selected by greeter.kind
-	var webGreeter web.Greeter
-	switch webConfig.Kind {
-	case "goodbye":
-		webGreeter = web.NewGoodbyeGreeter()
-	case "hello":
-		webGreeter = web.NewHelloGreeter()
-	default:
-		return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
-	}
-	webHandlers := &web.Handlers{
-		Greeter: webGreeter,
-		DB:      sharedSqlDB,
-		Dialect: sharedQueryDialect,
-		Session: sharedSessionManager,
-		Flash:   sharedFlash,
-	}
-	webAPI := &web.API{
-		Greeter: webGreeter,
-	}
-
 	sharedMigrationsDialect := shared.NewDialect()
 
 	r := router.New()
@@ -145,16 +161,18 @@ func run() error {
 	}
 
 	// Middleware
+	optauthMW := auth.OptionalAuth(authAuthAuthenticator)
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
 
 	// Routes
+	r.Handle("/auth/", authMount.Handler())
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore, optauthMW)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/routes", webDocs.List)
 

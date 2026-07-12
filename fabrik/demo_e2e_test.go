@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,7 @@ func TestDemoEndToEnd(t *testing.T) {
 				t.Fatalf("second response should list both greetings:\n%s", body)
 			}
 			sessionFlow(t, port)
+			authFlow(t, port)
 			return
 		}
 		if time.Now().After(deadline) {
@@ -135,4 +137,74 @@ func sessionFlow(t *testing.T, port string) {
 	if body := get(http.DefaultClient, "/"); !strings.Contains(body, "Goodbye, world!") {
 		t.Fatalf("fresh visitor should get the default greeting:\n%s", body)
 	}
+}
+
+// authFlow drives register -> auto-login -> /account -> logout ->
+// 401, exercising password, the auth/session bridge, the session cell, and the
+// auth middleware together through one cookie jar.
+func authFlow(t *testing.T, port string) {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar} // follows redirects
+	base := "http://localhost:" + port
+	creds := url.Values{"email": {"alice@example.com"}, "password": {"password123"}}
+
+	form := func(path string, v url.Values) (int, string) {
+		resp, err := client.PostForm(base+path, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(b)
+	}
+
+	// The library ships the login page - a real form.
+	if code, body := get(t, client, base+"/auth/login"); code != http.StatusOK || !strings.Contains(body, "<form") {
+		t.Fatalf("GET /auth/login = %d, no form:\n%s", code, body)
+	}
+
+	// Register auto-logs-in and redirects (303) to the account page,
+	// which the library also ships - it shows the identity.
+	if code, body := form("/auth/register", creds); code != http.StatusOK || !strings.Contains(body, "alice@example.com") {
+		t.Fatalf("register landed at %d:\n%s", code, body)
+	}
+
+	// Logout redirects home; the account page is then 401.
+	if code, _ := form("/auth/logout", nil); code != http.StatusOK {
+		t.Fatalf("logout landed at %d", code)
+	}
+	if code, _ := get(t, client, base+"/auth/account"); code != http.StatusUnauthorized {
+		t.Fatalf("/auth/account after logout = %d, want 401", code)
+	}
+	if code, _ := get(t, http.DefaultClient, base+"/auth/account"); code != http.StatusUnauthorized {
+		t.Fatalf("/auth/account anonymous = %d, want 401", code)
+	}
+
+	// Login again lands on the account page.
+	if code, body := form("/auth/login", creds); code != http.StatusOK || !strings.Contains(body, "alice@example.com") {
+		t.Fatalf("login landed at %d:\n%s", code, body)
+	}
+
+	// A wrong password re-renders the login form inline with the
+	// library's default error, preserving the email.
+	bad := url.Values{"email": {"alice@example.com"}, "password": {"nope"}}
+	code, body := form("/auth/login", bad)
+	if code != http.StatusOK || !strings.Contains(body, "Invalid email or password.") {
+		t.Fatalf("bad login = %d, no inline error:\n%s", code, body)
+	}
+	if !strings.Contains(body, `value="alice@example.com"`) {
+		t.Fatalf("email not preserved on re-render:\n%s", body)
+	}
+}
+
+func get(t *testing.T, c *http.Client, url string) (int, string) {
+	t.Helper()
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp.StatusCode, string(b)
 }

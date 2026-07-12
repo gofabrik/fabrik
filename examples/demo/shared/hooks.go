@@ -9,11 +9,6 @@ import (
 	"github.com/gofabrik/fabrik/migrations"
 )
 
-//fabrik:config log
-type Log struct {
-	Level string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
-}
-
 //fabrik:hook setup
 func InitLogger(l *Log) error {
 	var level slog.Level

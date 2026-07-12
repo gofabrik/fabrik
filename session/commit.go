@@ -98,8 +98,24 @@ func (m *core) rotateAtCommit(ctx context.Context, st *state) error {
 	if err != nil {
 		return err
 	}
-	// Best-effort delete; a stale record expires on its own.
-	_ = m.cfg.Store.Delete(ctx, oldSID)
+	if err := m.cfg.Store.Delete(ctx, oldSID); err != nil {
+		if st.promote && st.record.UserID != "" {
+			// The old session was itself authenticated and we are
+			// rotating it (a re-login or privilege change): its SID
+			// must not silently outlive the rotation on a stolen
+			// token. The commit fails, no token is issued, and the
+			// residue is recoverable storage - the new row sits
+			// unreferenced (its SID never left the process) until it
+			// expires, while the client keeps the prior session and
+			// sees the error.
+			return err
+		}
+		// A fresh login promotes an anonymous session (old UserID
+		// empty), and renew carries the same identity: in both a
+		// surviving old row is harmless - it holds no authenticated
+		// identity that was just superseded, and expires on its own.
+		// Best-effort.
+	}
 	st.record = stored
 	if cells != nil {
 		st.cells = cells

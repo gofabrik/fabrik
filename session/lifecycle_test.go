@@ -937,3 +937,173 @@ func TestHijackRefusedAfterFailedCommit(t *testing.T) {
 		t.Fatal("connection handed over despite the shipped 500")
 	}
 }
+
+// Destroy on a cookie-less fresh visitor: sessionless is
+// sessionless, whatever the reason - idempotent success, nothing
+// deleted, no token instruction at all.
+func TestDestroyCookielessVisitor(t *testing.T) {
+	m := newTestManager(t)
+	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
+		if err := m.Destroy(r.Context()); err != nil {
+			t.Errorf("cookie-less Destroy = %v", err)
+		}
+	})
+	if _, ok := sessionCookie(t, rr); ok {
+		t.Error("cookie-less Destroy emitted a token instruction")
+	}
+}
+
+// Lifecycle is sealed to Manager values and composes with Registry
+// by embedding, the way a library declares exactly the capabilities
+// it exercises.
+func TestLifecycleSealedCapability(t *testing.T) {
+	m := newTestManager(t)
+	var l Lifecycle = m
+	if l.lifecycle() != m.c {
+		t.Fatal("Lifecycle view does not anchor the same engine")
+	}
+	var both interface {
+		Registry
+		Lifecycle
+	} = m
+	if both.registry() != both.lifecycle() {
+		t.Fatal("composed capability views diverge")
+	}
+}
+
+// A privilege change must not silently leave the previous
+// identity's SID alive: Promote's rotation delete failing fails the
+// commit - no token, request errors, prior session intact, and the
+// new row sits unreferenced until it expires.
+// Re-authenticating an already-authenticated session rotates a SID
+// that carried a real identity. If deleting that old SID fails, the
+// commit must fail: leaving it alive would keep the prior identity
+// reachable on a stolen token.
+func TestPromoteDeleteFailureFailsCommit(t *testing.T) {
+	mem := NewMemoryStore()
+	store := &hookStore{inner: mem}
+	m := newTestManager(t, func(c *Config) { c.Store = store })
+	h := m.app
+	sid0 := establish(t, m, h, "cart")
+
+	// First login: anonymous -> u1. Succeeds and rotates to sid1.
+	rr1 := serve(t, m, sid0, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := h.Get(r.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Promote(r.Context(), "u1"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first login = %d, want 200", rr1.Code)
+	}
+	sid1, ok := sessionCookie(t, rr1)
+	if !ok || sid1 == "" {
+		t.Fatalf("first login issued no token")
+	}
+
+	// Re-login on the now-authenticated session with the old-SID
+	// delete failing: sid1 held u1, so the commit must fail.
+	store.beforeDelete = func(string) error { return errors.New("store down") }
+	rr2 := serve(t, m, sid1, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := h.Get(r.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Promote(r.Context(), "u2"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if rr2.Code != http.StatusInternalServerError {
+		t.Fatalf("re-promote with failed delete = %d, want 500", rr2.Code)
+	}
+	if v, ok := sessionCookie(t, rr2); ok && v != "" {
+		t.Fatalf("failed privilege change still issued a token: %q", v)
+	}
+	// The prior authenticated session is intact under sid1.
+	rec, err := mem.Load(context.Background(), sid1)
+	if err != nil || rec.UserID != "u1" {
+		t.Fatalf("prior session damaged: %+v, %v", rec, err)
+	}
+	// The residue: one unreferenced row (the new sid2), expiring.
+	var orphans int
+	_ = mem.Scan(context.Background(), func(s string) bool {
+		if s != sid1 {
+			orphans++
+		}
+		return true
+	})
+	if orphans != 1 {
+		t.Fatalf("residue = %d orphaned rows, want 1", orphans)
+	}
+}
+
+// A fresh login promotes an anonymous session. If deleting that old
+// anonymous SID fails, the survivor holds no authenticated identity,
+// so the login still commits and issues its token - best-effort, like
+// renew.
+func TestPromoteFromAnonymousDeleteFailureStaysBestEffort(t *testing.T) {
+	mem := NewMemoryStore()
+	store := &hookStore{inner: mem}
+	m := newTestManager(t, func(c *Config) { c.Store = store })
+	h := m.app
+	sid := establish(t, m, h, "cart")
+
+	store.beforeDelete = func(string) error { return errors.New("store down") }
+	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := h.Get(r.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Promote(r.Context(), "u1"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fresh login with failed delete = %d, want 200", rr.Code)
+	}
+	newSID, ok := sessionCookie(t, rr)
+	if !ok || newSID == "" || newSID == sid {
+		t.Fatalf("login token = (%q, %v), want a fresh SID", newSID, ok)
+	}
+	// The old anonymous row survives, harmless.
+	rec, err := mem.Load(context.Background(), sid)
+	if err != nil || rec.UserID != "" {
+		t.Fatalf("stale anonymous row: %+v, %v", rec, err)
+	}
+	// The new row carries the authenticated identity.
+	nrec, err := mem.Load(context.Background(), newSID)
+	if err != nil || nrec.UserID != "u1" {
+		t.Fatalf("new session not authenticated: %+v, %v", nrec, err)
+	}
+}
+
+// Renew's delete stays best-effort: same identity, harmless stale
+// survivor - the rotation succeeds and the new token goes out.
+func TestRenewDeleteFailureStaysBestEffort(t *testing.T) {
+	mem := NewMemoryStore()
+	store := &hookStore{inner: mem}
+	m := newTestManager(t, func(c *Config) { c.Store = store })
+	h := m.app
+	sid := establish(t, m, h, "v")
+
+	store.beforeDelete = func(string) error { return errors.New("store down") }
+	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := h.Get(r.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Renew(r.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("renew with failed delete = %d, want 200", rr.Code)
+	}
+	newSID, ok := sessionCookie(t, rr)
+	if !ok || newSID == "" || newSID == sid {
+		t.Fatalf("renew token = (%q, %v), want a fresh SID", newSID, ok)
+	}
+	// The stale survivor is present and harmless.
+	if _, err := mem.Load(context.Background(), sid); err != nil {
+		t.Fatalf("stale row should survive best-effort delete: %v", err)
+	}
+}

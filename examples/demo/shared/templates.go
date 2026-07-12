@@ -1,15 +1,10 @@
 package shared
 
 import (
-	"embed"
 	"fmt"
 	"strings"
 	"time"
 )
-
-//fabrik:templates
-//go:embed all:templates
-var Templates embed.FS
 
 //fabrik:templates:func
 func Shout(s string) string { return strings.ToUpper(s) }

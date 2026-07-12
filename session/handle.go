@@ -17,6 +17,20 @@ type Registry interface {
 	registry() *core
 }
 
+// Lifecycle is the sealed capability for libraries that manage the
+// session's identity - the auth bridge is its first consumer. Like
+// [Registry] it is satisfied only by [Manager] (the unexported
+// method is the seal), which also means it can grow without
+// breaking anyone. Libraries compose the two by embedding:
+//
+//	func New(m interface { session.Registry; session.Lifecycle }) ...
+type Lifecycle interface {
+	Promote(ctx context.Context, userID string) error
+	Destroy(ctx context.Context) error
+	UserID(ctx context.Context) (string, error)
+	lifecycle() *core
+}
+
 // Use registers a typed library cell and returns its handle.
 //
 // The same [Key] value is idempotent; the same name with a different
