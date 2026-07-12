@@ -30,8 +30,7 @@ type Templates struct {
 	treeFS      func(dir string) fs.FS
 }
 
-// contribution is a FuncMap expression another directive family adds
-// to the generated Load call.
+// contribution is a FuncMap expression for the generated Load call.
 type contribution struct {
 	names []string
 	build func(g *gen.Gen) (string, diag.Diagnostics)
@@ -47,11 +46,7 @@ func NewTemplates() *Templates {
 // SetTreeFS lets validation read non-Go files through the engine overlay.
 func (t *Templates) SetTreeFS(f func(dir string) fs.FS) { t.treeFS = f }
 
-// ContributeFuncs registers a named FuncMap expression another
-// directive family appends to the generated Load call. Contributed
-// maps come before app helpers, so an app helper reusing a
-// contributed name wins (and draws a warning). build returns the
-// expression; an empty string contributes nothing.
+// ContributeFuncs registers a named FuncMap expression for Load.
 func (t *Templates) ContributeFuncs(names []string, build func(g *gen.Gen) (string, diag.Diagnostics)) {
 	t.contributed = append(t.contributed, contribution{names: names, build: build})
 }
@@ -104,7 +99,7 @@ func (t *Templates) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	return nd, ds
 }
 
-// checkEmbedPattern requires all:<dir>; plain embeds skip layouts and partials.
+// checkEmbedPattern requires all:<dir>.
 func checkEmbedPattern(a gen.Annotation, dir string, ds *diag.Diagnostics) {
 	found, covered := gen.EmbedCovers(a, "all:"+dir)
 	if covered {
@@ -174,8 +169,7 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			b.WriteString("}")
 			args = []string{b.String()}
 		}
-		// Contributed maps first, app helpers last: later maps win in
-		// Load, so app names override contributed ones.
+		// Later FuncMaps win; app helpers override contributed ones.
 		var ds diag.Diagnostics
 		for _, c := range t.contributed {
 			expr, cds := c.build(g)
@@ -389,7 +383,7 @@ func (f *Funcs) Check(n any, ty gen.Typed) diag.Diagnostics {
 		return ds
 	}
 	if nd.name == "" {
-		nd.name = lowerFirst(fn.Name())
+		nd.name = gen.LowerFirst(fn.Name())
 	}
 	if first, dup := f.templates.byName[nd.name]; dup {
 		ds.Error(nd.pos, fmt.Sprintf("duplicate template function name %q", nd.name),
@@ -426,14 +420,4 @@ func isFuncName(s string) bool {
 		return false
 	}
 	return s != ""
-}
-
-func lowerFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	if b := s[0]; b >= 'A' && b <= 'Z' {
-		return string(b+'a'-'A') + s[1:]
-	}
-	return s
 }

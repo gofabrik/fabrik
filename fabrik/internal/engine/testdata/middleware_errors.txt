@@ -1,4 +1,5 @@
-Middleware misuse: wrong signature, methods, bad names, code references.
+Middleware misuse: wrong signature, methods, bad names, code
+references, and the constructor near-miss.
 -- go.mod --
 module app
 
@@ -38,9 +39,21 @@ func A(w http.ResponseWriter, r *http.Request) {}
 
 //fabrik:http GET /b middleware=shared.RequireAuth
 func B(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http:middleware
+func NearMiss(next http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return next }
+}
+
+type MW func(http.Handler) http.Handler
+
+//fabrik:http:middleware
+func CustomType(t2 *T) MW {
+	return func(next http.Handler) http.Handler { return next }
+}
 -- want/diags --
 error: web/web.go:5:1: middleware Wrong has the wrong signature
-  help: want func(next http.Handler) http.Handler
+  help: want func(next http.Handler) http.Handler, or a constructor returning func(http.Handler) http.Handler or router.Middleware (optionally with error)
 error: web/web.go:10:1: //fabrik:http:middleware must be on a package-level function (func Method is a method)
   help: move the middleware out of the method set
 error: web/web.go:13:31: invalid middleware name "No.Cache"
@@ -51,3 +64,7 @@ error: web/web.go:22:33: invalid middleware name "bad-ref"
   help: use declared names, comma-separated: middleware=auth,audit
 error: web/web.go:25:33: middleware "shared.RequireAuth" references code; middleware= takes declared names
   help: declare //fabrik:http:middleware name=<name> on the function and reference the name
+error: web/web.go:28:1: middleware NearMiss is neither form: not a direct middleware (it does not return http.Handler itself), not a constructor (its http.Handler parameter cannot resolve from the binding surface)
+  help: direct: func(next http.Handler) http.Handler; constructor: binding-resolved parameters returning the middleware
+error: web/web.go:35:1: middleware CustomType has the wrong signature
+  help: want func(next http.Handler) http.Handler, or a constructor returning func(http.Handler) http.Handler or router.Middleware (optionally with error)

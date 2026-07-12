@@ -23,7 +23,7 @@ const (
 	PhaseStart                   // start hooks: everything built, nothing serving
 	PhaseMiddleware              // global middleware registration
 	PhaseRegister                // register generated behavior
-	PhaseServe                   // start serving; must end with a return
+	PhaseServe                   // start serving, ending with return
 )
 
 // phaseLabels renders run() section headers in lifecycle order.

@@ -23,15 +23,15 @@ func (*Middleware) Name() string { return "http:middleware" }
 
 func (*Middleware) Meta() gen.Meta {
 	return gen.Meta{
-		Synopsis: "Middleware: global, or named for middleware= chains [name=NAME]",
+		Synopsis: "Middleware: direct or constructor form, global or named [name=NAME]",
 		Doc: "**`//fabrik:http:middleware [name=NAME]`**\n\n" +
-			"On a `func(next http.Handler) http.Handler`. Bare, it registers " +
-			"a global middleware, applied to every request including " +
-			"404/405, in source order. With `name=`, it is not global: " +
-			"routes and groups opt in by listing the name in their " +
-			"`middleware=` chain - directives reference declared names, " +
-			"never code.\n\n" +
-			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n```",
+			"Direct form: `func(next http.Handler) http.Handler`, referenced in place. " +
+			"Constructor form: binding-resolved parameters returning " +
+			"`func(http.Handler) http.Handler` or `router.Middleware`, optionally with " +
+			"a trailing error; it is built once before route registration. Bare " +
+			"middleware is global, including 404/405. With `name=`, routes and groups " +
+			"opt in through their `middleware=` chain.\n\n" +
+			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n\n//fabrik:http:middleware\nfunc SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {\n\treturn m.Middleware\n}\n```",
 		Example: "//fabrik:http:middleware",
 		Attrs: []gen.AttrSpec{
 			{Key: "name", Kind: gen.KindFreeform},
@@ -46,6 +46,17 @@ type mwNode struct {
 	fn   string
 	pkg  *types.Package
 	used bool // referenced by at least one middleware= chain
+
+	ctor      bool // constructor form: built once, referenced by variable
+	errResult bool
+	params    []ctorParam
+	varName   string // set once the constructor is materialized
+}
+
+// ctorParam is one binding-resolved constructor parameter.
+type ctorParam struct {
+	t   types.Type
+	pos token.Position
 }
 
 func (m *Middleware) Parse(a gen.Annotation) (any, diag.Diagnostics) {
@@ -84,9 +95,23 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 			"declare a concrete middleware")
 		return ds
 	}
-	if !isMiddlewareSignature(sig) {
+	switch {
+	case isMiddlewareSignature(sig):
+	case isCtorSignature(sig):
+		nd.ctor = true
+		nd.errResult = sig.Results().Len() == 2
+		for j := 0; j < sig.Params().Len(); j++ {
+			v := sig.Params().At(j)
+			if types.TypeString(types.Unalias(v.Type()), nil) == "net/http.Handler" {
+				ds.Error(nd.pos, fmt.Sprintf("middleware %s is neither form: not a direct middleware (it does not return http.Handler itself), not a constructor (its http.Handler parameter cannot resolve from the binding surface)", fn.Name()),
+					"direct: func(next http.Handler) http.Handler; constructor: binding-resolved parameters returning the middleware")
+				return ds
+			}
+			nd.params = append(nd.params, ctorParam{t: v.Type(), pos: t.Fset.Position(v.Pos())})
+		}
+	default:
 		ds.Error(nd.pos, fmt.Sprintf("middleware %s has the wrong signature", fn.Name()),
-			"want func(next http.Handler) http.Handler")
+			"want func(next http.Handler) http.Handler, or a constructor returning func(http.Handler) http.Handler or router.Middleware (optionally with error)")
 		return ds
 	}
 	if nd.name != "" {
@@ -106,16 +131,59 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*mwNode)
 	if nd.name != "" {
-		// Named middleware applies only where a middleware= chain lists it.
+		// Named constructors build on first reference.
 		return nil
 	}
 	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+	expr, ds := m.expr(g, nd)
 	g.Node(&gen.Call{
 		Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
 		Fn:   r + ".Use",
-		Args: []string{g.ImportPkg(nd.pkg) + "." + nd.fn},
+		Args: []string{expr},
 	})
-	return nil
+	return ds
+}
+
+// expr renders one middleware reference and builds constructors once.
+func (m *Middleware) expr(g *gen.Gen, nd *mwNode) (string, diag.Diagnostics) {
+	if !nd.ctor {
+		return g.ImportPkg(nd.pkg) + "." + nd.fn, nil
+	}
+	if nd.varName != "" {
+		return nd.varName, nil
+	}
+	var ds diag.Diagnostics
+	args := make([]string, 0, len(nd.params))
+	for _, pr := range nd.params {
+		expr, ids, ok := g.Instance(pr.t, "")
+		ds = append(ds, ids...)
+		if !ok && len(ids) == 0 {
+			help := "declare a //fabrik:provider for it"
+			if h, hinted := g.MissingHint(pr.t); hinted {
+				help = h
+			}
+			ds.Error(pr.pos, "no provider or binding supplies this middleware constructor parameter", help)
+		}
+		args = append(args, expr)
+	}
+	base := nd.name
+	if base == "" {
+		base = gen.LowerFirst(nd.fn)
+	}
+	v := g.Var(base + "MW")
+	errStyle := gen.ErrNone
+	if nd.errResult {
+		errStyle = gen.ErrReturn
+	}
+	g.Node(&gen.Call{
+		Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
+		Var:  v,
+		Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
+		Args: args,
+		Err:  errStyle,
+	})
+	nd.varName = v
+	return v, ds
 }
 
 // Validate warns about unreferenced named middleware.
@@ -137,7 +205,7 @@ func (m *Middleware) resolve(refs []mwRef) ([]*mwNode, diag.Diagnostics) {
 	for _, ref := range refs {
 		nd := m.byName[ref.name]
 		if nd == nil {
-			help := "declare one: //fabrik:http:middleware name=" + ref.name + " on a func(next http.Handler) http.Handler"
+			help := "declare one: //fabrik:http:middleware name=" + ref.name + " on a middleware function or constructor"
 			if names := m.names(); len(names) > 0 {
 				help = "declared names: " + strings.Join(names, ", ")
 			}
@@ -162,6 +230,36 @@ func (m *Middleware) names() []string {
 
 // isMiddlewareSignature reports whether sig is func(http.Handler) http.Handler.
 func isMiddlewareSignature(sig *types.Signature) bool {
+	return sig.Params().Len() == 1 && sig.Results().Len() == 1 && !sig.Variadic() &&
+		types.TypeString(sig.Params().At(0).Type(), nil) == "net/http.Handler" &&
+		types.TypeString(sig.Results().At(0).Type(), nil) == "net/http.Handler"
+}
+
+// isCtorSignature reports whether sig is a middleware constructor:
+// binding-resolved parameters, returning a middleware-typed value,
+// optionally with a trailing error.
+func isCtorSignature(sig *types.Signature) bool {
+	n := sig.Results().Len()
+	if n < 1 || n > 2 || sig.Variadic() {
+		return false
+	}
+	if !isMiddlewareType(sig.Results().At(0).Type()) {
+		return false
+	}
+	return n == 1 || isErrorType(sig.Results().At(1).Type())
+}
+
+// isMiddlewareType accepts values usable as router.Middleware without
+// generated conversions.
+func isMiddlewareType(t types.Type) bool {
+	t = types.Unalias(t)
+	if types.TypeString(t, nil) == routerPath+".Middleware" {
+		return true
+	}
+	sig, ok := t.(*types.Signature)
+	if !ok {
+		return false
+	}
 	return sig.Params().Len() == 1 && sig.Results().Len() == 1 && !sig.Variadic() &&
 		types.TypeString(sig.Params().At(0).Type(), nil) == "net/http.Handler" &&
 		types.TypeString(sig.Results().At(0).Type(), nil) == "net/http.Handler"

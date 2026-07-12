@@ -1,0 +1,30 @@
+A constructor parameter no provider supplies fails at emission.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+type Widget struct{}
+
+//fabrik:http:middleware
+func Unresolvable(w *Widget) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return next }
+}
+
+//fabrik:http GET /
+func Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:8:19: no provider or binding supplies this middleware constructor parameter
+  help: declare a //fabrik:provider for it

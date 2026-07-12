@@ -106,7 +106,7 @@ Options:
 
 **`//fabrik:http:handle /path [middleware=name,name2]`**
 
-Registers a handler for every method of a pattern. Two shapes: a standard handler func, or a function without parameters returning `http.Handler`, called once at startup - the escape hatch for third-party handlers. `middleware=` wraps the route in a comma-separated chain of declared names, same as on `//fabrik:http`.
+Registers a handler for every method of a pattern. Two shapes: a standard handler func, or a function without parameters returning `http.Handler`, called once at startup. `middleware=` wraps the route in a comma-separated chain of declared names, same as on `//fabrik:http`.
 
 ```go
 //fabrik:http:handle /metrics
@@ -136,11 +136,16 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }
 
 **`//fabrik:http:middleware [name=NAME]`**
 
-On a `func(next http.Handler) http.Handler`. Bare, it registers a global middleware, applied to every request including 404/405, in source order. With `name=`, it is not global: routes and groups opt in by listing the name in their `middleware=` chain - directives reference declared names, never code.
+Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. Bare middleware is global, including 404/405. With `name=`, routes and groups opt in through their `middleware=` chain.
 
 ```go
 //fabrik:http:middleware name=auth
 func RequireAuth(next http.Handler) http.Handler { ... }
+
+//fabrik:http:middleware
+func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
+	return m.Middleware
+}
 ```
 
 Options:

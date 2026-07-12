@@ -240,6 +240,12 @@ func varBase(pkg *types.Package, t types.Type) string {
 	}
 	name := named.Obj().Name()
 	if tp := named.Obj().Pkg(); tp != nil && tp != pkg && tp.Name() != "" {
+		// A type named after its own package (flash.Flash) collapses
+		// to one word - sharedFlashFlash says nothing sharedFlash
+		// does not.
+		if strings.EqualFold(tp.Name(), name) {
+			return pkg.Name() + name
+		}
 		q := tp.Name()
 		return pkg.Name() + strings.ToUpper(q[:1]) + q[1:] + name
 	}

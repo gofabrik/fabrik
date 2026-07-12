@@ -30,8 +30,7 @@ func (*Handle) Meta() gen.Meta {
 		Doc: "**`//fabrik:http:handle /path [middleware=name,name2]`**\n\n" +
 			"Registers a handler for every method of a pattern. Two shapes: a " +
 			"standard handler func, or a function without parameters returning " +
-			"`http.Handler`, called once at startup - the escape hatch for " +
-			"third-party handlers. `middleware=` wraps the route in a " +
+			"`http.Handler`, called once at startup. `middleware=` wraps the route in a " +
 			"comma-separated chain of declared names, same as on `//fabrik:http`.\n\n" +
 			"```go\n//fabrik:http:handle /metrics\nfunc Metrics() http.Handler { return promhttp.Handler() }\n```",
 		Example: "//fabrik:http:handle /metrics",
@@ -157,7 +156,9 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	}
 	chain := make([]string, 0, len(mws))
 	for _, mw := range mws {
-		chain = append(chain, g.ImportPkg(mw.pkg)+"."+mw.fn)
+		expr, eds := h.mw.expr(g, mw)
+		ds = append(ds, eds...)
+		chain = append(chain, expr)
 	}
 	g.Node(&gen.Route{
 		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},

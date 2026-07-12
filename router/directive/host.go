@@ -118,7 +118,9 @@ func (h *Host) EmitRoute(g *gen.Gen, args RouteArgs, recvObj *types.TypeName, po
 	ds = append(ds, hds...)
 	chain := make([]string, 0, len(mws))
 	for _, mw := range mws {
-		chain = append(chain, g.ImportPkg(mw.pkg)+"."+mw.fn)
+		expr, eds := h.mw.expr(g, mw)
+		ds = append(ds, eds...)
+		chain = append(chain, expr)
 	}
 	g.Node(&gen.Route{
 		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: pos}},
