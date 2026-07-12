@@ -30,7 +30,6 @@ type Templates struct {
 	treeFS      func(dir string) fs.FS
 }
 
-// contribution is a FuncMap expression for the generated Load call.
 type contribution struct {
 	names []string
 	build func(g *gen.Gen) (string, diag.Diagnostics)
@@ -43,10 +42,10 @@ func NewTemplates() *Templates {
 	}
 }
 
-// SetTreeFS lets validation read non-Go files through the engine overlay.
+// SetTreeFS lets validation read files from an overlay.
 func (t *Templates) SetTreeFS(f func(dir string) fs.FS) { t.treeFS = f }
 
-// ContributeFuncs registers a named FuncMap expression for Load.
+// ContributeFuncs adds a FuncMap expression to the generated Load call.
 func (t *Templates) ContributeFuncs(names []string, build func(g *gen.Gen) (string, diag.Diagnostics)) {
 	t.contributed = append(t.contributed, contribution{names: names, build: build})
 }
@@ -99,7 +98,6 @@ func (t *Templates) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	return nd, ds
 }
 
-// checkEmbedPattern requires all:<dir>.
 func checkEmbedPattern(a gen.Annotation, dir string, ds *diag.Diagnostics) {
 	found, covered := gen.EmbedCovers(a, "all:"+dir)
 	if covered {
@@ -140,7 +138,7 @@ func (t *Templates) Check(n any, ty gen.Typed) diag.Diagnostics {
 	return ds
 }
 
-// Emit lazily binds one *templates.Set for all declared trees.
+// Emit binds one *templates.Set for all declared trees.
 func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*tplNode)
 	if nd.varName == "" || t.registered {
@@ -225,7 +223,7 @@ func (t *Templates) funcMapExpr(g *gen.Gen, tplPkg string) string {
 	return b.String()
 }
 
-// Validate loads templates during wiring, before generated startup code runs.
+// Validate parses templates during wiring.
 func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	if len(t.decls) == 0 {
@@ -237,7 +235,6 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	}
 	decls := t.sortedDecls()
 
-	// Keep section-collision diagnostics on the duplicated declaration.
 	owner := map[string]*tplNode{}
 	collided := false
 	for _, d := range decls {
@@ -294,7 +291,7 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	return ds
 }
 
-// MissingHint explains that template sets are injected by pointer.
+// MissingHint reports the pointer form used for template set injection.
 func (t *Templates) MissingHint(ty types.Type) (string, bool) {
 	if types.TypeString(types.Unalias(ty), nil) != templatePath+".Set" {
 		return "", false

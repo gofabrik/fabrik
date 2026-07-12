@@ -83,6 +83,32 @@ Every source has section directories inside. Each section belongs to exactly
 one source, including `_default`. Fallback works across sources: a page in one
 tree can render through another tree's `_default` layout and partials.
 
+## Layered overrides
+
+`LoadLayers` combines ordered layers. Within a layer, sections must still be
+disjoint, as in `LoadSources`. Across layers, a later layer's page, partial, or
+layout overrides the same-named file from an earlier layer. The union of all
+layers is the section.
+
+```go
+set, err := templates.LoadLayers([][]templates.Source{
+	{{FS: baseUI, Dir: "templates"}},
+	{{FS: app.Templates, Dir: "templates"}},
+})
+```
+
+The overlay can replace one `auth/login.html` while keeping the base's
+`auth/register.html`, or override `auth/_layout.html` to reskin the section
+without touching a page. Partials parse in layer order, so a later partial wins
+its `{{ define }}` even under a different filename. `Set.Overrides()` returns
+cross-layer shadows with section, file, kind, and source refs.
+
+Pick by intent:
+
+- `Load` - one tree.
+- `LoadSources` - several trees, strict: a section lives in one source.
+- `LoadLayers` - ordered layers, where a later layer overrides an earlier one.
+
 ## Errors
 
 Load fails loudly and completely: any template parse error, a reference
