@@ -8,6 +8,8 @@ import (
 	"go/types"
 	"strings"
 	"testing"
+
+	"github.com/gofabrik/fabrik/gen"
 )
 
 func pos(line int) token.Position {
@@ -119,5 +121,76 @@ func (*Box[T]) Get(w http.ResponseWriter, r *http.Request) {}
 	}
 	if !isGenericFunc(get.(*types.Func)) {
 		t.Error("method on generic receiver not flagged as generic")
+	}
+}
+
+func TestCtorSignatureChecks(t *testing.T) {
+	pkg := typecheck(t, `package web
+
+import "net/http"
+
+type MW func(http.Handler) http.Handler
+
+type Dep struct{}
+
+func Raw(d *Dep) func(http.Handler) http.Handler { return nil }
+
+func Defined(d *Dep) MW { return nil }
+
+func WithErr() (func(http.Handler) http.Handler, error) { return nil, nil }
+
+func NoDeps() MW { return nil }
+
+func WrongErr(d *Dep) (MW, string) { return nil, "" }
+
+func NoResult(d *Dep) {}
+
+func TwoMW() (MW, MW) { return nil, nil }
+
+func Direct(next http.Handler) http.Handler { return next }
+`)
+	fn := func(name string) *types.Signature {
+		obj := pkg.Scope().Lookup(name)
+		if obj == nil {
+			t.Fatalf("missing func %s", name)
+		}
+		return obj.(*types.Func).Signature()
+	}
+
+	for _, name := range []string{"Raw", "WithErr"} {
+		if !isCtorSignature(fn(name)) {
+			t.Errorf("%s not recognized as constructor", name)
+		}
+	}
+	// Defined func types other than router.Middleware are rejected:
+	// generated code could not pass them to r.Use or route chains.
+	for _, name := range []string{"Defined", "NoDeps", "WrongErr", "NoResult", "TwoMW"} {
+		if isCtorSignature(fn(name)) {
+			t.Errorf("%s accepted as constructor", name)
+		}
+	}
+
+	// The forms are disjoint: a direct middleware returns
+	// http.Handler, never a middleware-typed func.
+	if !isMiddlewareSignature(fn("Direct")) {
+		t.Error("Direct not recognized as direct middleware")
+	}
+	if isCtorSignature(fn("Direct")) {
+		t.Error("Direct accepted as constructor")
+	}
+
+	mw := pkg.Scope().Lookup("MW").Type()
+	if isMiddlewareType(mw) {
+		t.Error("custom defined func type accepted - it cannot be passed as router.Middleware")
+	}
+	if isMiddlewareType(pkg.Scope().Lookup("Dep").Type()) {
+		t.Error("struct accepted as middleware type")
+	}
+
+	if got := gen.LowerFirst("RequireAuth"); got != "requireAuth" {
+		t.Errorf("lowerFirst = %q", got)
+	}
+	if got := gen.LowerFirst(""); got != "" {
+		t.Errorf("lowerFirst empty = %q", got)
 	}
 }

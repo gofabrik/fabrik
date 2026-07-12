@@ -8,6 +8,7 @@ use (
 	./diag
 	./examples/demo
 	./fabrik
+	./flash
 	./gen
 	./migrations
 	./migrations/dbtest
@@ -15,9 +16,11 @@ use (
 	./query
 	./query/dbtest
 	./router
+	./router/directive
+	./session
+	./session/dbtest
 	./templates
+	./templates/directive
 	./web
 	./web/directive
-	./templates/directive
-	./router/directive
 )

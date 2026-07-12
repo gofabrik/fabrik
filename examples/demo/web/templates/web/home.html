@@ -2,7 +2,8 @@
 
 {{ define "content" }}
   {{ template "_nav.html" . }}
-  <h1>{{ .Greeting }}</h1>
+  {{ range .Flashes }}<p class="flash flash-{{ .Kind }}">{{ .Text }}</p>
+  {{ end }}<h1>{{ .Greeting }}</h1>
   <p>Served at {{ humanizeAge .Started }} of uptime; visit #{{ .Visits }}.</p>
   <h2>Recent greetings</h2>
   <ul>

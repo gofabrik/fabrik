@@ -51,7 +51,7 @@ type Finisher interface {
 	Finish(g *Gen) diag.Diagnostics
 }
 
-// Validator observes completed generation and must not emit.
+// Validator observes completed generation without emitting code.
 type Validator interface {
 	Validate(g *Gen) diag.Diagnostics
 }
@@ -80,8 +80,7 @@ type Meta struct {
 	Tier     EmitTier   // when Emit runs relative to other directives
 }
 
-// PosSpec describes one positional argument. Optional positionals must
-// trail the required ones.
+// PosSpec describes one positional argument.
 type PosSpec struct {
 	Name     string    // e.g. "METHOD"; used in messages and docs
 	Kind     ValueKind // completion hint; values are validated by Parse

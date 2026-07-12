@@ -90,11 +90,23 @@ func run() error {
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 
+	migrationSources := migrations.Sources{
+		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
+	}
+
 	sharedSqlDB, err := shared.NewDB(sharedDatabase)
 	if err != nil {
 		return err
 	}
 	sharedQueryDialect := shared.NewQueryDialect()
+	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
+	if err != nil {
+		return err
+	}
+	sharedFlash, err := shared.NewFlash(sharedSessionManager)
+	if err != nil {
+		return err
+	}
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webConfig.Kind {
@@ -105,19 +117,18 @@ func run() error {
 	default:
 		return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
 	}
-	webAPI := &web.API{
-		Greeter: webGreeter,
-	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		DB:      sharedSqlDB,
 		Dialect: sharedQueryDialect,
+		Session: sharedSessionManager,
+		Flash:   sharedFlash,
+	}
+	webAPI := &web.API{
+		Greeter: webGreeter,
 	}
 
 	sharedMigrationsDialect := shared.NewDialect()
-	migrationSources := migrations.Sources{
-		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
-	}
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -136,14 +147,16 @@ func run() error {
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
+	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
+	r.Use(sessionMiddlewareMW)
 
 	// Routes
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/routes", webDocs.List)
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 
 	// Serve
 	return sharedServer.Serve(r)

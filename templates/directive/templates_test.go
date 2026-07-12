@@ -48,8 +48,8 @@ func TestLowerFirst(t *testing.T) {
 		"upper":       "upper",
 		"":            "",
 	} {
-		if got := lowerFirst(in); got != want {
-			t.Errorf("lowerFirst(%q) = %q, want %q", in, got, want)
+		if got := gen.LowerFirst(in); got != want {
+			t.Errorf("LowerFirst(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
