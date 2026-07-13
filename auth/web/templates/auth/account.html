@@ -1,6 +1,5 @@
-{{ define "account" -}}
-<!doctype html>
-<title>Account</title>
+{{ define "title" }}Account{{ end }}
+{{ define "content" -}}
 <h1>Your account</h1>
 <p>Signed in as <strong>{{ .Email }}</strong>.</p>
 <form method="post" action="{{ .Prefix }}/logout"><button type="submit">Log out</button></form>

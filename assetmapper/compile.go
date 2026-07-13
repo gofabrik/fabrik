@@ -185,15 +185,16 @@ func checkCollision(context, logical, hashed string, assets map[string]*collecte
 
 // collectedAsset is an asset prepared for compile-time hashing.
 type collectedAsset struct {
-	root    Root
-	subPath string
-	kind    assetKind
-	content []byte // nil for non-JS/CSS (streamed instead)
+	root      Root
+	rootIndex int // position in the roots slice, for RootError provenance
+	subPath   string
+	kind      assetKind
+	content   []byte // nil for non-JS/CSS (streamed instead)
 }
 
 func collectAssets(roots []Root) (map[string]*collectedAsset, error) {
 	assets := make(map[string]*collectedAsset)
-	for _, root := range roots {
+	for i, root := range roots {
 		err := fs.WalkDir(root.FS, ".", func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -213,7 +214,7 @@ func collectAssets(roots []Root) (map[string]*collectedAsset, error) {
 				return nil
 			}
 			kind := kindOf(logical)
-			ca := &collectedAsset{root: root, subPath: p, kind: kind}
+			ca := &collectedAsset{root: root, rootIndex: i, subPath: p, kind: kind}
 			if kind == kindJS || kind == kindCSS {
 				content, err := fs.ReadFile(root.FS, p)
 				if err != nil {
@@ -225,7 +226,7 @@ func collectAssets(roots []Root) (map[string]*collectedAsset, error) {
 			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("walk: %w", err)
+			return nil, &RootError{Index: i, Err: fmt.Errorf("walk: %w", err)}
 		}
 	}
 	return assets, nil

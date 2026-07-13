@@ -14,6 +14,19 @@ import (
 	"strconv"
 )
 
+// RootError reports a failure attributable to one asset [Root]: a normalize
+// failure, importmap discovery, a walk or read while collecting, or a stream
+// hash. Index is the position in the roots slice passed to [Build] or [Check],
+// so a caller merging roots it did not author - an aggregator wiring several
+// packages - can map the failure back to one of them. Match it with errors.As.
+type RootError struct {
+	Index int
+	Err   error
+}
+
+func (e *RootError) Error() string { return fmt.Sprintf("Roots[%d]: %v", e.Index, e.Err) }
+func (e *RootError) Unwrap() error { return e.Err }
+
 // BuildOption configures [Build] and [Check].
 type BuildOption func(*buildConfig)
 
@@ -182,7 +195,8 @@ func build(context string, roots []Root, im *Importmap, opts []BuildOption) (*Co
 		a := assets[logical]
 		hash, size, err := streamHash(a.root.FS, a.subPath)
 		if err != nil {
-			return nil, fmt.Errorf("%s: hash %s: %w", context, logical, err)
+			return nil, fmt.Errorf("%s: %w", context,
+				&RootError{Index: a.rootIndex, Err: fmt.Errorf("hash %s: %w", logical, err)})
 		}
 		hashed := hashedName(logical, hash)
 		if cerr := checkCollision(context, logical, hashed, assets, outputOwner); cerr != nil {
@@ -273,7 +287,8 @@ func discoverImportmap(context string, roots []Root) (*Importmap, error) {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
-			return nil, fmt.Errorf("%s: Roots[%d]: open %s: %w", context, i, ImportmapFilename, err)
+			return nil, fmt.Errorf("%s: %w", context,
+				&RootError{Index: i, Err: fmt.Errorf("open %s: %w", ImportmapFilename, err)})
 		}
 		if found >= 0 {
 			_ = f.Close()
@@ -282,7 +297,7 @@ func discoverImportmap(context string, roots []Root) (*Importmap, error) {
 		im, err = ParseImportmap(f)
 		_ = f.Close()
 		if err != nil {
-			return nil, fmt.Errorf("%s: Roots[%d]: %w", context, i, err)
+			return nil, fmt.Errorf("%s: %w", context, &RootError{Index: i, Err: err})
 		}
 		found = i
 	}

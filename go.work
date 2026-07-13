@@ -8,6 +8,7 @@ use (
 	./auth/session
 	./auth/store/sqlite
 	./auth/web
+	./bundle
 	./config
 	./config/directive
 	./diag

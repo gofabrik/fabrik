@@ -31,21 +31,31 @@
 package web
 
 import (
-	"bytes"
 	"cmp"
 	"embed"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"strings"
 
 	fauth "github.com/gofabrik/fabrik/auth"
 	"github.com/gofabrik/fabrik/auth/password"
+	"github.com/gofabrik/fabrik/templates"
 )
 
-//go:embed templates
-var defaultTemplates embed.FS
+// all: keeps the _layout.html and any underscore partials that a plain
+// embed would drop.
+//
+//go:embed all:templates
+var templatesFS embed.FS
+
+// Source returns the embedded auth templates as a layer source: an "auth"
+// section with a layout and login/register/account pages. A bundle stacks
+// the app's trees on top of this base so [templates.LoadLayers] can
+// override an individual page or the whole layout.
+func Source() templates.Source {
+	return templates.Source{FS: templatesFS, Dir: "templates"}
+}
 
 // Options configures a [UI]. The zero value is valid: every field
 // has a working default.
@@ -83,17 +93,19 @@ type Options struct {
 	// uses [DefaultMessage].
 	Message func(error) string
 
-	// Templates overrides the embedded pages. It must define the
-	// "login", "register", and "account" templates. Nil uses the
-	// built-in defaults.
-	Templates *template.Template
+	// Templates renders the auth pages. It must provide the
+	// "auth/login", "auth/register", and "auth/account" page keys -
+	// typically an app-merged set carrying auth's own templates
+	// ([Source]) as the base layer. Nil builds a standalone set from the
+	// embedded defaults.
+	Templates *templates.Set
 }
 
 // UI is the server-rendered auth surface. Build it with [New] and
 // mount [UI.Handler].
 type UI struct {
 	provider *password.Provider
-	tmpl     *template.Template
+	set      *templates.Set
 
 	prefix      string
 	afterLogin  string
@@ -121,13 +133,13 @@ func New(store password.Store, sink password.Sink, opts Options) (*UI, error) {
 		ui.message = DefaultMessage
 	}
 
-	ui.tmpl = opts.Templates
-	if ui.tmpl == nil {
-		t, err := template.ParseFS(defaultTemplates, "templates/*.html")
+	ui.set = opts.Templates
+	if ui.set == nil {
+		set, err := templates.Load(templatesFS, "templates")
 		if err != nil {
-			return nil, fmt.Errorf("authweb.New: parse templates: %w", err)
+			return nil, fmt.Errorf("authweb.New: load templates: %w", err)
 		}
-		ui.tmpl = t
+		ui.set = set
 	}
 
 	p, err := password.New(store, sink, password.Options{
@@ -214,17 +226,15 @@ func (ui *UI) account(w http.ResponseWriter, r *http.Request) {
 	ui.render(w, "account", pageData{Prefix: ui.prefix, Email: id.Email})
 }
 
-func (ui *UI) render(w http.ResponseWriter, name string, data pageData) {
+func (ui *UI) render(w http.ResponseWriter, page string, data pageData) {
 	// The login page links to register only when registration is on,
 	// so disabling it never renders a link to a 404.
 	data.Register = !ui.disableReg
-	var buf bytes.Buffer
-	if err := ui.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+	// Set.Render buffers, so an error writes nothing and the 500 is clean.
+	if err := ui.set.Render(w, "auth/"+page, data); err != nil {
 		http.Error(w, "template error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = buf.WriteTo(w)
 }
 
 type pageData struct {

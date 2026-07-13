@@ -84,6 +84,31 @@ type Override struct {
 	Loser  Ref
 }
 
+// SourceError reports a load failure attributable to one source: a nil
+// filesystem, a read failure, or a file that fails to parse. Ref locates the
+// source within its layer, so a caller merging sources it did not author - an
+// aggregator wiring several packages into one Set - can map the failure back to
+// one of them. Match it with errors.As; Error and Unwrap delegate to Err, so
+// the human message is unchanged.
+type SourceError struct {
+	Ref Ref
+	Err error
+}
+
+func (e *SourceError) Error() string { return e.Err.Error() }
+func (e *SourceError) Unwrap() error { return e.Err }
+
+// CollisionError reports two sources clashing within a Set: the same section
+// contributed by two sources in a layer, or two sources producing the same page
+// key. A and B locate the two sources. Match it with errors.As.
+type CollisionError struct {
+	A, B Ref
+	Err  error
+}
+
+func (e *CollisionError) Error() string { return e.Err.Error() }
+func (e *CollisionError) Unwrap() error { return e.Err }
+
 // Load walks dir under fsys and parses every page it finds.
 //
 // Each dir/<section>/ directory is a section. [LayoutFile] is the section
@@ -173,18 +198,20 @@ func mergeLayer(caller string, multiLayer bool, layerIdx int, srcs []Source) (ma
 	secs := map[string]*section{}
 	origin := map[string]Ref{}
 	for si, src := range srcs {
+		r := Ref{Layer: layerIdx, Source: si, Dir: src.Dir}
 		if src.FS == nil {
-			return nil, fmt.Errorf("%s: %s has a nil filesystem", caller, locRef(multiLayer, Ref{Layer: layerIdx, Source: si, Dir: src.Dir}))
+			return nil, fmt.Errorf("%s: %w", caller,
+				&SourceError{Ref: r, Err: fmt.Errorf("%s has a nil filesystem", locRef(multiLayer, r))})
 		}
 		got, err := readSections(src.FS, src.Dir)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", caller, err)
+			return nil, fmt.Errorf("%s: %w", caller, &SourceError{Ref: r, Err: err})
 		}
 		for name, sec := range got {
-			r := Ref{Layer: layerIdx, Source: si, Dir: src.Dir}
 			if first, dup := origin[name]; dup {
-				return nil, fmt.Errorf("%s: section %q comes from %s and %s",
-					caller, name, locRef(multiLayer, first), locRef(multiLayer, r))
+				return nil, fmt.Errorf("%s: %w", caller,
+					&CollisionError{A: first, B: r, Err: fmt.Errorf("section %q comes from %s and %s",
+						name, locRef(multiLayer, first), locRef(multiLayer, r))})
 			}
 			origin[name] = r
 			stampOrigin(sec, r)
@@ -241,6 +268,7 @@ func mergeFiles(name string, kind Kind, contribs []*section, pick func(*section)
 func buildPages(caller string, sections map[string]*section, merged FuncMap) (*Set, error) {
 	defSection, hasDefault := sections[DefaultSection]
 	out := &Set{pages: map[string]*htmltpl.Template{}}
+	keyOrigin := map[string]Ref{} // page key -> source that first claimed it
 
 	names := make([]string, 0, len(sections))
 	for name := range sections {
@@ -283,14 +311,18 @@ func buildPages(caller string, sections map[string]*section, merged FuncMap) (*S
 			var err error
 			for _, f := range files {
 				if t, err = t.ParseFS(f.fsys, f.path); err != nil {
-					return nil, fmt.Errorf("%s: parse %s: %w", caller, page.path, err)
+					return nil, fmt.Errorf("%s: parse %s: %w", caller, f.path,
+						&SourceError{Ref: f.from, Err: err})
 				}
 			}
 			key := pageKey(name, page.path)
 			if _, exists := out.pages[key]; exists {
-				return nil, fmt.Errorf("%s: duplicate page key %q (last from %s)", caller, key, page.path)
+				return nil, fmt.Errorf("%s: %w", caller,
+					&CollisionError{A: keyOrigin[key], B: page.from,
+						Err: fmt.Errorf("duplicate page key %q (last from %s)", key, page.path)})
 			}
 			out.pages[key] = t
+			keyOrigin[key] = page.from
 		}
 	}
 

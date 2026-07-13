@@ -12,11 +12,9 @@
 //     through; any other error short-circuits.
 //
 // [Required] and [Optional] turn an Authenticator into middleware:
-// Required 401s on a miss, Optional passes anonymously, both fail
-// closed (500) on a non-sentinel error. Their wire behavior is
-// deliberately fixed - an app wanting redirect-to-login or JSON
-// errors writes its own middleware around Authenticate and
-// [FromContext], which are the real API.
+// Required returns 401 on a miss, Optional passes anonymously, and both fail
+// closed on non-sentinel errors. Apps that need redirects or JSON errors can
+// wrap Authenticate and [FromContext].
 //
 // The core depends only on the standard library. Backends that
 // persist identity own that coupling in their own packages.

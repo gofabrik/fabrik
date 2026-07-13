@@ -67,18 +67,18 @@ func normalizeRoots(context string, roots []Root) ([]Root, error) {
 	out := make([]Root, len(roots))
 	for i, r := range roots {
 		if r.FS == nil {
-			return nil, fmt.Errorf("%s: Roots[%d].FS is nil", context, i)
+			return nil, fmt.Errorf("%s: %w", context, &RootError{Index: i, Err: errors.New("FS is nil")})
 		}
 		if err := validateMount(r.Dir); err != nil {
-			return nil, fmt.Errorf("%s: Roots[%d].Dir: %w", context, i, err)
+			return nil, fmt.Errorf("%s: %w", context, &RootError{Index: i, Err: fmt.Errorf("Dir: %w", err)})
 		}
 		if err := validateMount(r.MountAt); err != nil {
-			return nil, fmt.Errorf("%s: Roots[%d].MountAt: %w", context, i, err)
+			return nil, fmt.Errorf("%s: %w", context, &RootError{Index: i, Err: fmt.Errorf("MountAt: %w", err)})
 		}
 		if r.Dir != "" {
 			sub, err := fs.Sub(r.FS, r.Dir)
 			if err != nil {
-				return nil, fmt.Errorf("%s: Roots[%d].Dir %q: %w", context, i, r.Dir, err)
+				return nil, fmt.Errorf("%s: %w", context, &RootError{Index: i, Err: fmt.Errorf("Dir %q: %w", r.Dir, err)})
 			}
 			r.FS = sub
 			r.Dir = ""

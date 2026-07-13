@@ -9,10 +9,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 
 	fauth "github.com/gofabrik/fabrik/auth"
 	"github.com/gofabrik/fabrik/auth/password"
 	authweb "github.com/gofabrik/fabrik/auth/web"
+	"github.com/gofabrik/fabrik/templates"
 )
 
 // memStore + recSink: minimal Store/Sink for exercising the UI.
@@ -71,6 +73,34 @@ func TestLoginPageRenders(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `action="/auth/login"`) {
 		t.Fatalf("form action missing prefix:\n%s", rr.Body.String())
+	}
+}
+
+func TestInjectedSetLayerOverridesPage(t *testing.T) {
+	// An app layer over auth's base [Source] replaces just auth/login.html.
+	appLayer := fstest.MapFS{
+		"t/auth/login.html": &fstest.MapFile{Data: []byte(
+			`{{ define "content" }}<form action="{{ .Prefix }}/login">CUSTOM LOGIN</form>{{ end }}`)},
+	}
+	set, err := templates.LoadLayers([][]templates.Source{
+		{authweb.Source()},
+		{{FS: appLayer, Dir: "t"}},
+	})
+	if err != nil {
+		t.Fatalf("LoadLayers: %v", err)
+	}
+	h, _ := newUI(t, authweb.Options{Templates: set})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/auth/login", nil))
+	body := rr.Body.String()
+	if rr.Code != http.StatusOK || !strings.Contains(body, "CUSTOM LOGIN") {
+		t.Fatalf("override not rendered = %d:\n%s", rr.Code, body)
+	}
+	// The register page still comes from auth's base layer.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/auth/register", nil))
+	if !strings.Contains(rr.Body.String(), "Create an account") {
+		t.Fatalf("base register page lost:\n%s", rr.Body.String())
 	}
 }
 

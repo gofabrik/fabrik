@@ -190,6 +190,49 @@ func TestMethodAgnosticHandle(t *testing.T) {
 	}
 }
 
+func TestTryHandleRegistersLikeHandle(t *testing.T) {
+	r := router.New()
+	if err := r.TryHandle("/auth/", text("auth")); err != nil {
+		t.Fatalf("TryHandle fresh pattern: %v", err)
+	}
+	if rr := do(t, r, "GET", "/auth/x"); rr.Code != 200 || body(t, rr) != "auth" {
+		t.Fatalf("/auth/x = %d %q", rr.Code, body(t, rr))
+	}
+}
+
+func TestTryHandleConflictReturnsError(t *testing.T) {
+	r := router.New()
+	r.Handle("/auth/", text("app")) // app-authored route, same pattern
+	err := r.TryHandle("/auth/", text("bundle"))
+	if err == nil {
+		t.Fatal("TryHandle same pattern: want error, got nil")
+	}
+	// The router stays usable: the first route still serves, entries consistent.
+	if rr := do(t, r, "GET", "/auth/x"); rr.Code != 200 || body(t, rr) != "app" {
+		t.Fatalf("after conflict, /auth/x = %d %q", rr.Code, body(t, rr))
+	}
+}
+
+func TestTryHandleAllowsMoreSpecific(t *testing.T) {
+	// ServeMux precedence still applies: a more specific pattern is not a conflict.
+	r := router.New()
+	r.Handle("/auth/", text("subtree"))
+	if err := r.TryHandle("/auth/login", text("login")); err != nil {
+		t.Fatalf("TryHandle more-specific pattern: %v", err)
+	}
+	if rr := do(t, r, "GET", "/auth/login"); body(t, rr) != "login" {
+		t.Fatalf("/auth/login = %q, want login", body(t, rr))
+	}
+	if rr := do(t, r, "GET", "/auth/other"); body(t, rr) != "subtree" {
+		t.Fatalf("/auth/other = %q, want subtree", body(t, rr))
+	}
+}
+
+func TestTryHandleNilHandlerPanics(t *testing.T) {
+	r := router.New()
+	mustPanic(t, "TryHandle nil handler", func() { r.TryHandle("/x", nil) })
+}
+
 func TestExtensionMethods(t *testing.T) {
 	// M-SEARCH pins valid method tokens with punctuation.
 	methods := []string{"CONNECT", "PURGE", "M-SEARCH"}

@@ -3,6 +3,7 @@
 package router
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -116,12 +117,34 @@ func (s *Scope) MethodHandle(method, pattern string, h http.Handler) {
 	s.register(method, pattern, h, nil)
 }
 
+// TryHandle registers a method-agnostic handler like Handle, but returns
+// pattern conflicts as errors. Other misuse still panics, as with Handle.
+func (s *Scope) TryHandle(pattern string, h http.Handler) error {
+	if isNilHandler(h) {
+		panic("router: nil handler for " + pattern)
+	}
+	return s.tryRegister("", pattern, h, nil)
+}
+
 func (s *Scope) register(method, pattern string, h http.Handler, mw []Middleware) {
 	if !strings.HasPrefix(pattern, "/") {
 		panic("router: pattern must start with \"/\": " + pattern)
 	}
 	checkMiddleware(mw)
 	s.add(entry{
+		method:  method,
+		pattern: joinPattern(s.prefix, pattern),
+		handler: h,
+		mws:     append(slices.Clone(s.inline), mw...),
+	})
+}
+
+func (s *Scope) tryRegister(method, pattern string, h http.Handler, mw []Middleware) error {
+	if !strings.HasPrefix(pattern, "/") {
+		panic("router: pattern must start with \"/\": " + pattern)
+	}
+	checkMiddleware(mw)
+	return s.tryAdd(entry{
 		method:  method,
 		pattern: joinPattern(s.prefix, pattern),
 		handler: h,
@@ -141,6 +164,27 @@ func (s *Scope) add(e entry) {
 	e.wrapped = chain(e.mws, e.handler)
 	s.state.mux.Handle(key, e.wrapped)
 	s.state.entries = append(s.state.entries, e)
+}
+
+// tryAdd is add's error-returning form for ServeMux pattern conflicts.
+// Registering after serving remains a caller bug and still panics.
+func (s *Scope) tryAdd(e entry) (err error) {
+	if s.st().sealed.Load() {
+		panic("router: cannot register routes after serving has started")
+	}
+	key := e.pattern
+	if e.method != "" {
+		key = e.method + " " + e.pattern
+	}
+	e.wrapped = chain(e.mws, e.handler)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("router: %v", r)
+		}
+	}()
+	s.state.mux.Handle(key, e.wrapped)
+	s.state.entries = append(s.state.entries, e)
+	return nil
 }
 
 // Use adds scoped middleware to routes registered afterward.
@@ -238,7 +282,10 @@ func (r *Router) Options(pattern string, h http.HandlerFunc) { r.scope.Options(p
 func (r *Router) Method(verb, pattern string, h http.HandlerFunc, mw ...Middleware) {
 	r.scope.Method(verb, pattern, h, mw...)
 }
-func (r *Router) Handle(pattern string, h http.Handler)         { r.scope.Handle(pattern, h) }
+func (r *Router) Handle(pattern string, h http.Handler) { r.scope.Handle(pattern, h) }
+func (r *Router) TryHandle(pattern string, h http.Handler) error {
+	return r.scope.TryHandle(pattern, h)
+}
 func (r *Router) HandleFunc(pattern string, h http.HandlerFunc) { r.scope.HandleFunc(pattern, h) }
 func (r *Router) MethodHandle(method, pattern string, h http.Handler) {
 	r.scope.MethodHandle(method, pattern, h)

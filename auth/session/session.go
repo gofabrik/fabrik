@@ -1,8 +1,4 @@
-// Package authsession is the one auth package that knows the core
-// session library exists. It is both the sink login backends write
-// identity through and the chain's single session-reading
-// authenticator, so reading identity out of a session happens in
-// exactly one place.
+// Package authsession bridges auth identity to the core session library.
 //
 // Identity storage follows the session library's one-source rule:
 // the session's UserID is the canonical auth key (provider + ":" +
@@ -62,12 +58,9 @@ type Authenticator struct {
 	cell     *session.Handle[cellData]
 }
 
-// New registers the identity cell on the manager and returns the
-// bridge. It rejects a nil or typed-nil Sessions, and surfaces the
-// cell registration error otherwise - those two are the whole error
-// return. Calling New twice on the same manager is valid: the cell
-// registration is idempotent for the same key, so the result is
-// independent bridges over one cell.
+// New registers the identity cell on the manager and returns the bridge.
+// Calling New twice on the same manager is valid: same-key registration is
+// idempotent.
 func New(m Sessions) (*Authenticator, error) {
 	if m == nil || isNilValue(m) {
 		return nil, errors.New("session.New: nil Sessions")
@@ -156,13 +149,8 @@ func (a *Authenticator) Authenticate(r *http.Request) (auth.Identity, error) {
 	if err != nil {
 		return auth.Identity{}, err // corrupt cell: fail closed
 	}
-	// Consistency check: the cell's composed key must equal the
-	// session's UserID. A mismatch (a rare re-login staging race, or
-	// store corruption) is treated as unauthenticated rather than a
-	// hard error - it still refuses to serve the divergent identity,
-	// but a 401/anonymous result lets a re-login or logout recover,
-	// where a 500 would lock the session out until the cookie
-	// expires.
+	// A divergent cell and UserID refuses the identity but leaves
+	// re-login or logout able to recover the session.
 	want, kerr := UserKey(data.Provider, data.Subject)
 	if kerr != nil || want != uid {
 		return auth.Identity{}, auth.ErrUnauthenticated
@@ -210,9 +198,7 @@ func normalizeClaims(c map[string]any) map[string]any {
 	return c
 }
 
-// isNilValue detects a typed-nil interface (var m *Manager[T] = nil
-// passed as Sessions), which is non-nil as an interface but panics on
-// use. Matches the session library's own typed-nil guard.
+// isNilValue detects a typed-nil Sessions value before first use.
 func isNilValue(m Sessions) bool {
 	rv := reflect.ValueOf(m)
 	return rv.Kind() == reflect.Pointer && rv.IsNil()

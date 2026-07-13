@@ -30,6 +30,31 @@ func get(t *testing.T, h http.Handler, url string) *httptest.ResponseRecorder {
 	return rec
 }
 
+func TestBuildRootErrorProvenance(t *testing.T) {
+	good := fstest.MapFS{"style.css": {Data: []byte(`body{}`)}}
+
+	// normalizeRoots: a nil FS at index 1 is attributable to that root.
+	_, err := assetmapper.Build([]assetmapper.Root{{FS: good}, {FS: nil}}, assetmapper.NewImportmap())
+	var re *assetmapper.RootError
+	if !errors.As(err, &re) {
+		t.Fatalf("nil FS: err = %v, want *RootError", err)
+	}
+	if re.Index != 1 {
+		t.Fatalf("nil FS: RootError.Index = %d, want 1", re.Index)
+	}
+
+	// discoverImportmap: a malformed importmap.json in root 1 (nil im triggers discovery).
+	bad := fstest.MapFS{"importmap.json": {Data: []byte(`{ not json`)}}
+	re = nil
+	_, err = assetmapper.Build([]assetmapper.Root{{FS: good}, {FS: bad}}, nil)
+	if !errors.As(err, &re) {
+		t.Fatalf("bad importmap: err = %v, want *RootError", err)
+	}
+	if re.Index != 1 {
+		t.Fatalf("bad importmap: RootError.Index = %d, want 1", re.Index)
+	}
+}
+
 func TestBuildResolvesAndServes(t *testing.T) {
 	imageBytes := []byte("PNG-NOT-REALLY")
 	shared := fstest.MapFS{

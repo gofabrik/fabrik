@@ -1,6 +1,7 @@
 package templates_test
 
 import (
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -116,6 +117,14 @@ func TestLoadLayers_WithinLayerCollision(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `section "web" comes from layer 0 source 0`) {
 		t.Fatalf("err = %v, want within-layer collision naming the layer", err)
 	}
+	var ce *templates.CollisionError
+	if !errors.As(err, &ce) {
+		t.Fatalf("err = %v, want a *CollisionError for provenance", err)
+	}
+	if ce.A != (templates.Ref{Layer: 0, Source: 0, Dir: "t"}) ||
+		ce.B != (templates.Ref{Layer: 0, Source: 1, Dir: "t"}) {
+		t.Fatalf("collision refs = %+v / %+v, want layer0 source0 and source1", ce.A, ce.B)
+	}
 }
 
 func TestLoadLayers_EmptyLayersIgnored(t *testing.T) {
@@ -147,6 +156,13 @@ func TestLoadLayers_NilSourceFS(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "nil filesystem") {
 		t.Fatalf("err = %v, want nil-filesystem error", err)
+	}
+	var se *templates.SourceError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want a *SourceError for provenance", err)
+	}
+	if se.Ref != (templates.Ref{Layer: 1, Source: 0, Dir: "t"}) {
+		t.Fatalf("source ref = %+v, want layer1 source0", se.Ref)
 	}
 }
 

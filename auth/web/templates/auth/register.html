@@ -1,6 +1,5 @@
-{{ define "register" -}}
-<!doctype html>
-<title>Register</title>
+{{ define "title" }}Register{{ end }}
+{{ define "content" -}}
 <h1>Create an account</h1>
 {{ if .Error }}<p class="error">{{ .Error }}</p>{{ end }}
 <form method="post" action="{{ .Prefix }}/register">
