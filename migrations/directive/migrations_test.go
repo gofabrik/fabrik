@@ -56,7 +56,7 @@ func TestResolveStreams(t *testing.T) {
 	mg.decls = []*migNode{
 		{pkg: types.NewPackage("app/shared", "shared"), pos: token.Position{Filename: "shared/m.go", Line: 1}},
 		{pkg: types.NewPackage("app/internal/billing", "billing"), pos: token.Position{Filename: "b/m.go", Line: 1}},
-		{module: "custom", pkg: types.NewPackage("app/x", "x"), pos: token.Position{Filename: "x/m.go", Line: 1}},
+		{stream: "custom", pkg: types.NewPackage("app/x", "x"), pos: token.Position{Filename: "x/m.go", Line: 1}},
 	}
 	if ds := mg.resolveStreams(g); len(ds) > 0 {
 		t.Fatalf("resolveStreams: %v", ds)

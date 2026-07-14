@@ -16,12 +16,12 @@ func (sqliteDriver) placeholder(int) string { return "?" }
 
 func (sqliteDriver) schemaSQL() string {
 	return `CREATE TABLE IF NOT EXISTS schema_migrations (
-    module     TEXT NOT NULL,
+    stream     TEXT NOT NULL,
     version    BIGINT NOT NULL,
     name       TEXT NOT NULL,
     checksum   TEXT NOT NULL,
     applied_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (module, version)
+    PRIMARY KEY (stream, version)
 )`
 }
 
@@ -69,7 +69,7 @@ func (s *sqliteSession) QueryContext(ctx context.Context, query string, args ...
 	return s.c.QueryContext(ctx, query, args...)
 }
 
-func (s *sqliteSession) apply(ctx context.Context, module string, m migration, insertSQL string) error {
+func (s *sqliteSession) apply(ctx context.Context, stream string, m migration, insertSQL string) error {
 	if _, err := s.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (s *sqliteSession) apply(ctx context.Context, module string, m migration, i
 		s.rollback()
 		return err
 	}
-	if _, err := s.ExecContext(ctx, insertSQL, module, m.version, m.name, m.checksum, time.Now().UTC()); err != nil {
+	if _, err := s.ExecContext(ctx, insertSQL, stream, m.version, m.name, m.checksum, time.Now().UTC()); err != nil {
 		s.rollback()
 		return err
 	}

@@ -23,12 +23,12 @@ func (pgDriver) placeholder(i int) string { return fmt.Sprintf("$%d", i) }
 
 func (pgDriver) schemaSQL() string {
 	return `CREATE TABLE IF NOT EXISTS schema_migrations (
-    module     TEXT NOT NULL,
+    stream     TEXT NOT NULL,
     version    BIGINT NOT NULL,
     name       TEXT NOT NULL,
     checksum   TEXT NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (module, version)
+    PRIMARY KEY (stream, version)
 )`
 }
 
@@ -73,7 +73,7 @@ func (s *pgSession) QueryContext(ctx context.Context, query string, args ...any)
 	return s.c.QueryContext(ctx, query, args...)
 }
 
-func (s *pgSession) apply(ctx context.Context, module string, m migration, insertSQL string) error {
+func (s *pgSession) apply(ctx context.Context, stream string, m migration, insertSQL string) error {
 	tx, err := s.c.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -83,7 +83,7 @@ func (s *pgSession) apply(ctx context.Context, module string, m migration, inser
 	if _, err := tx.ExecContext(ctx, m.body); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, insertSQL, module, m.version, m.name, m.checksum, time.Now().UTC()); err != nil {
+	if _, err := tx.ExecContext(ctx, insertSQL, stream, m.version, m.name, m.checksum, time.Now().UTC()); err != nil {
 		return err
 	}
 	return tx.Commit()

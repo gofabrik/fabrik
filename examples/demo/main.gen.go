@@ -91,7 +91,7 @@ func run() error {
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 
 	migrationSources := migrations.Sources{
-		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
+		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
 	}
 
 	sharedSqlDB, err := shared.NewDB(sharedDatabase)

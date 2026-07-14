@@ -21,7 +21,7 @@ package auth
 
 import "embed"
 
-//fabrik:migrations module=accounts
+//fabrik:migrations stream=accounts
 //go:embed all:migrations
 var Migrations embed.FS
 -- auth/migrations/0001_users.sql --
@@ -31,7 +31,7 @@ package users
 
 import "embed"
 
-//fabrik:migrations module=accounts
+//fabrik:migrations stream=accounts
 //go:embed all:migrations
 var Migrations embed.FS
 -- users/migrations/0001_profiles.sql --
@@ -41,7 +41,7 @@ warning: auth/migrations.go:5:1: migrations Migrations can never run: nothing in
   help: call them from a start hook: //fabrik:hook start
 func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error { return src.Migrate(ctx, db, d) }
 error: users/migrations.go:5:1: migration stream "accounts" is already declared at $WORK/auth/migrations.go:5:1
-  help: streams are bookkeeping identity; name one of them differently with module=
+  help: streams are bookkeeping identity; name one of them differently with stream=
 warning: users/migrations.go:5:1: migrations Migrations can never run: nothing injects migrations.Sources
   help: call them from a start hook: //fabrik:hook start
 func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error { return src.Migrate(ctx, db, d) }

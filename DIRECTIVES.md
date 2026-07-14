@@ -199,9 +199,9 @@ Options:
 
 ## fabrik:migrations
 
-**`//fabrik:migrations [dir=migrations] [module=NAME]`**
+**`//fabrik:migrations [dir=migrations] [stream=NAME]`**
 
-Declared on an exported `embed.FS` variable: the tree's `NNNN_name.sql` files become one migration stream, bound with every other declared stream into an injectable `migrations.Sources`. Nothing runs automatically - call `Sources.Migrate` from a `//fabrik:hook start` function, a handler, or a command. Versions order within a stream. Streams are independent, so tables that reference each other belong in one stream. The stream name derives from the package directory - the location already chosen; `module=` exists for the exceptions: moving a package (pin the old name to keep its history) and packages at the module root. Use `all:<dir>` so embedded files match the validated tree.
+Declared on an exported `embed.FS` variable: the tree's `NNNN_name.sql` files become one migration stream, bound with every other declared stream into an injectable `migrations.Sources`. Nothing runs automatically - call `Sources.Migrate` from a `//fabrik:hook start` function, a handler, or a command. Versions order within a stream. Streams are independent, so tables that reference each other belong in one stream. The default stream name is the package path relative to the module. Use `stream=` to pin identity when moving a package or declaring migrations at module root. Use `all:<dir>` so embedded files match the validated tree.
 
 ```go
 //fabrik:migrations
@@ -212,7 +212,7 @@ var Migrations embed.FS
 Options:
 
 - `dir=`
-- `module=`
+- `stream=`
 
 ## fabrik:provider
 

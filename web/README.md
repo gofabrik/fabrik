@@ -28,7 +28,7 @@ func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 
 - The compiler enforces one outcome per path. A handler cannot
   half-respond.
-- `return nil, err` is the whole error story: logging and the 500 live
+- `return nil, err` is handled by the configured error handler: logging and the 500 live
   in one configured place.
 - Handlers test as plain functions. Comparable responses compare
   directly (`resp == web.Redirect("/account")`), the rest assert by
@@ -93,7 +93,7 @@ mux.HandleFunc("GET /api/items", api.Wrap(h.Items))
 
 Adapters are cheap and stateless.
 
-## Contracts worth knowing
+## Contracts
 
 - **Error path**: a returned error, a respond error, and the `nil, nil`
   programming error (surfaced as `web.ErrNilResponse`) all reach the
