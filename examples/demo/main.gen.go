@@ -91,14 +91,17 @@ func run() error {
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 
 	migrationSources := migrations.Sources{
-		{Module: "shared", FS: shared.Migrations, Dir: "migrations"},
+		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
 	}
 
 	sharedSqlDB, err := shared.NewDB(sharedDatabase)
 	if err != nil {
 		return err
 	}
-	sharedQueryDialect := shared.NewQueryDialect()
+	sharedQueryDB, err := shared.NewQueries(sharedSqlDB)
+	if err != nil {
+		return err
+	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		return err
@@ -119,16 +122,13 @@ func run() error {
 	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
-		DB:      sharedSqlDB,
-		Dialect: sharedQueryDialect,
+		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
 	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
-
-	sharedMigrationsDialect := shared.NewDialect()
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -140,7 +140,7 @@ func run() error {
 	}
 
 	// Start: after providers, before middleware and routes
-	if err := shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources); err != nil {
+	if err := shared.MigrateDB(ctx, sharedSqlDB, migrationSources); err != nil {
 		return err
 	}
 

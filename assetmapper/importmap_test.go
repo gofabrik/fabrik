@@ -336,9 +336,7 @@ func TestImportmap_RenderWithOptions_EmptyNonceMatchesPlainRender(t *testing.T) 
 }
 
 func TestImportmap_RenderWithOptions_NonceIsHTMLEscaped(t *testing.T) {
-	// Per CSP spec the nonce should be base64-ish, but a buggy
-	// caller could pass a value containing quotes or angle brackets.
-	// The nonce must be attribute-escaped so it can't break out.
+	// Escape nonce values defensively; callers may pass invalid CSP tokens.
 	src := fstest.MapFS{"app.js": {Data: []byte("export default {}")}}
 	m := newRenderMapper(t, src)
 	im := assetmapper.NewImportmap()

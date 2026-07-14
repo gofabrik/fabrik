@@ -3,7 +3,8 @@
 //
 // Reads run caller SQL verbatim and always scan into a struct T,
 // including single-column results. Writes generate SQL from flat
-// structs and use [Dialect] to choose placeholder style.
+// structs and use [Dialect] to choose placeholder style. [New] returns a [DB]
+// handle for sharing one executor and dialect across reads and writes.
 //
 // Field names map to snake_case columns. Use `db:"name"` to override
 // and `db:"-"` to skip a field. Nested structs are not flattened:

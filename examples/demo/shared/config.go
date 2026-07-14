@@ -9,3 +9,8 @@ type Config struct {
 type Database struct {
 	Path string `yaml:"path" env:"DEMO_DATABASE_PATH" default:"demo.db"`
 }
+
+//fabrik:config log
+type Log struct {
+	Level string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
+}

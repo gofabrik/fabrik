@@ -28,9 +28,31 @@ single-row intent with `LIMIT 1`.
 Verbatim applies to SQL text only. Bind args are still normalized,
 notably `time.Time` to RFC3339Nano text.
 
+## The DB handle
+
+`query.New` binds an executor and a dialect into a `*DB`. A `*DB` is
+itself an `Executor`, so reads and writes share one value.
+
+```go
+q, err := query.New(db, query.DialectSQLite) // errors on a nil exec or unknown dialect
+if err != nil {
+	return err
+}
+id, err := q.Insert(ctx, "users", u)
+users, err := query.All[User](ctx, q, "SELECT * FROM users")
+```
+
+`q.Tx(ctx, func(tx *query.DB) error { ... })` runs a transaction and hands
+the callback a `*DB` bound to the `*sql.Tx` with the same dialect, so writes
+stay dialect-free inside the transaction as well.
+
+The free functions remain available when you want to pass the executor and,
+for writes, the `Dialect` explicitly.
+
 ## Writes
 
-Write helpers generate SQL, so they take a `Dialect`:
+The write helpers generate SQL, so as free functions they take a `Dialect`
+(the handle binds it for you - see above):
 
 ```go
 id, err := query.Insert(ctx, db, d, "users", u)

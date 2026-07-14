@@ -48,7 +48,7 @@ import "embed"
 //go:embed migrations
 var Plain embed.FS
 
-//fabrik:migrations dir=files module=bad//name
+//fabrik:migrations dir=files stream=bad//name
 var NoEmbed embed.FS
 -- web/migrations/0001_ok.sql --
 SELECT 1;
@@ -57,5 +57,5 @@ error: web/migrations.go:5:1: the go:embed pattern does not cover all:migrations
   help: use //go:embed all:migrations - a plain pattern can silently omit migration files, and a migration that never ships never runs
 error: web/migrations.go:9:1: //fabrik:migrations variable has no //go:embed
   help: add //go:embed all:files above the variable
-error: web/migrations.go:9:38: invalid module name: "bad//name" has a "" segment
-  help: use clean slash-separated segments: module=auth, module=internal/billing
+error: web/migrations.go:9:38: invalid stream name: "bad//name" has a "" segment
+  help: use clean slash-separated segments: stream=auth, stream=internal/billing

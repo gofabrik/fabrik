@@ -9,11 +9,6 @@ import (
 	"github.com/gofabrik/fabrik/migrations"
 )
 
-//fabrik:config log
-type Log struct {
-	Level string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
-}
-
 //fabrik:hook setup
 func InitLogger(l *Log) error {
 	var level slog.Level
@@ -25,6 +20,6 @@ func InitLogger(l *Log) error {
 }
 
 //fabrik:hook start
-func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
-	return src.Migrate(ctx, db, d)
+func MigrateDB(ctx context.Context, db *sql.DB, src migrations.Sources) error {
+	return src.Migrate(ctx, db, migrations.DialectSQLite)
 }

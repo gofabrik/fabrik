@@ -40,8 +40,8 @@ func (*Migrations) Name() string { return "migrations" }
 
 func (*Migrations) Meta() gen.Meta {
 	return gen.Meta{
-		Synopsis: "Migration stream from an embedded tree: [dir=migrations] [module=NAME]",
-		Doc: "**`//fabrik:migrations [dir=migrations] [module=NAME]`**\n\n" +
+		Synopsis: "Migration stream from an embedded tree: [dir=migrations] [stream=NAME]",
+		Doc: "**`//fabrik:migrations [dir=migrations] [stream=NAME]`**\n\n" +
 			"Declared on an exported `embed.FS` variable: the tree's " +
 			"`NNNN_name.sql` files become one migration stream, bound with " +
 			"every other declared stream into an injectable " +
@@ -49,17 +49,16 @@ func (*Migrations) Meta() gen.Meta {
 			"`Sources.Migrate` from a `//fabrik:hook start` function, a " +
 			"handler, or a command. Versions order within a stream. " +
 			"Streams are independent, so tables that reference each other " +
-			"belong in one stream. The stream name derives from the " +
-			"package directory - the location already chosen; `module=` " +
-			"exists for the exceptions: moving a package (pin the old " +
-			"name to keep its history) and packages at the module root. " +
+			"belong in one stream. The default stream name is the package " +
+			"path relative to the module. Use `stream=` to pin identity " +
+			"when moving a package or declaring migrations at module root. " +
 			"Use `all:<dir>` so embedded files match the validated " +
 			"tree.\n\n" +
 			"```go\n//fabrik:migrations\n//go:embed all:migrations\nvar Migrations embed.FS\n```",
 		Example: "//fabrik:migrations",
 		Attrs: []gen.AttrSpec{
 			{Key: "dir", Kind: gen.KindFreeform},
-			{Key: "module", Kind: gen.KindFreeform},
+			{Key: "stream", Kind: gen.KindFreeform},
 		},
 		Tier: gen.TierBind,
 	}
@@ -68,7 +67,7 @@ func (*Migrations) Meta() gen.Meta {
 type migNode struct {
 	pos    token.Position
 	dir    string
-	module string // module= override, empty derives from package dir
+	stream string // stream= override
 
 	varName  string
 	pkg      *types.Package
@@ -87,11 +86,11 @@ func (mg *Migrations) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 				"use a clean relative path: dir=migrations")
 		}
 	}
-	if m, ok := args.Attr["module"]; ok {
-		nd.module = m.Text
-		if err := validStream(nd.module); err != nil {
-			ds.Error(a.ArgPos(m.Col), fmt.Sprintf("invalid module name: %v", err),
-				"use clean slash-separated segments: module=auth, module=internal/billing")
+	if m, ok := args.Attr["stream"]; ok {
+		nd.stream = m.Text
+		if err := validStream(nd.stream); err != nil {
+			ds.Error(a.ArgPos(m.Col), fmt.Sprintf("invalid stream name: %v", err),
+				"use clean slash-separated segments: stream=auth, stream=internal/billing")
 		}
 	}
 	checkEmbedPattern(a, nd.dir, &ds)
@@ -165,14 +164,14 @@ func (mg *Migrations) resolveStreams(g *gen.Gen) diag.Diagnostics {
 		if d.resolved != "" {
 			continue
 		}
-		if d.module != "" {
-			d.resolved = d.module
+		if d.stream != "" {
+			d.resolved = d.stream
 			continue
 		}
 		rel := strings.TrimPrefix(d.pkg.Path(), g.Module()+"/")
 		if rel == g.Module() || rel == "" || rel == "." {
 			ds.Error(d.pos, "cannot derive a stream name for a package at the module root",
-				"name the stream explicitly: //fabrik:migrations module=NAME")
+				"name the stream explicitly: //fabrik:migrations stream=NAME")
 			continue
 		}
 		d.resolved = rel
@@ -200,7 +199,7 @@ func (mg *Migrations) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		var b strings.Builder
 		b.WriteString(migPkg + ".Sources{\n")
 		for _, d := range decls {
-			fmt.Fprintf(&b, "{Module: %q, FS: %s.%s, Dir: %q},\n", d.resolved, g.ImportPkg(d.pkg), d.varName, d.dir)
+			fmt.Fprintf(&b, "{Stream: %q, FS: %s.%s, Dir: %q},\n", d.resolved, g.ImportPkg(d.pkg), d.varName, d.dir)
 		}
 		b.WriteString("}")
 		v := g.Var("migrationSources")
@@ -234,14 +233,14 @@ func (mg *Migrations) Validate(g *gen.Gen) diag.Diagnostics {
 	for _, d := range mg.decls {
 		if first, dup := owner[d.resolved]; dup {
 			ds.Error(d.pos, fmt.Sprintf("migration stream %q is already declared at %s", d.resolved, first.pos),
-				"streams are bookkeeping identity; name one of them differently with module=")
+				"streams are bookkeeping identity; name one of them differently with stream=")
 			continue
 		}
 		owner[d.resolved] = d
 	}
 
 	for _, d := range mg.decls {
-		src := migrations.Sources{{Module: d.resolved, FS: mg.treeFS(d.srcDir), Dir: d.dir}}
+		src := migrations.Sources{{Stream: d.resolved, FS: mg.treeFS(d.srcDir), Dir: d.dir}}
 		if err := src.Check(); err != nil {
 			ds.Error(d.pos, err.Error(),
 				"migrations are validated at generation time; fix the tree and rerun")

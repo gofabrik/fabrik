@@ -34,7 +34,7 @@ One value carries everything:
 | Lifecycle | `Promote` (login), `Destroy` (logout), `Renew`, `SID`, `UserID` |
 | Out-of-band | `Load`, `UpdateSID`, `ClearSID`, `DestroySID`, `ListForUser`, `RevokeAllForUser` |
 
-## Semantics worth knowing
+## Semantics
 
 - **Writes stage, then commit once.** `Save` and `Clear` mark the
   request dirty; middleware commits at response start. `Update` is

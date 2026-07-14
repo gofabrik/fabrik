@@ -5,11 +5,6 @@ import (
 	"os"
 )
 
-//fabrik:config log
-type Log struct {
-	Level string `yaml:"level" env:"{{.EnvPrefix}}_LOG_LEVEL" default:"info"`
-}
-
 //fabrik:hook setup
 func InitLogger(l *Log) error {
 	var level slog.Level

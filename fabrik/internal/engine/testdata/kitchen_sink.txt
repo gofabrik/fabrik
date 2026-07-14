@@ -271,7 +271,7 @@ func run() error {
 
 	// Providers
 	migrationSources := migrations.Sources{
-		{Module: "store", FS: store.Migrations, Dir: "migrations"},
+		{Stream: "store", FS: store.Migrations, Dir: "migrations"},
 	}
 
 	// store.Store, selected by store.kind

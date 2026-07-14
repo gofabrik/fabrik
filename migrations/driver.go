@@ -22,7 +22,7 @@ type driver interface {
 type session interface {
 	querier
 
-	apply(ctx context.Context, module string, m migration, insertSQL string) error
+	apply(ctx context.Context, stream string, m migration, insertSQL string) error
 
 	close() error
 }

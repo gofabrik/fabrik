@@ -34,11 +34,11 @@ var (
 	// the same numeric version prefix.
 	ErrDuplicateVersion = errors.New("duplicate migration version")
 
-	// ErrDuplicateModule is wrapped when two sources name one stream.
-	ErrDuplicateModule = errors.New("duplicate migration module")
+	// ErrDuplicateStream is wrapped when two sources name one stream.
+	ErrDuplicateStream = errors.New("duplicate migration stream")
 
 	// ErrInvalidSource is wrapped when a Source is malformed: nil FS,
-	// or an invalid Dir or Module.
+	// or an invalid Dir or Stream.
 	ErrInvalidSource = errors.New("invalid migration source")
 )
 
@@ -84,7 +84,7 @@ func (s State) String() string {
 
 // MigrationStatus is one migration's source and database state.
 type MigrationStatus struct {
-	Module  string
+	Stream  string
 	Version int64
 	Name    string
 	// Checksum is empty for StatePending.
@@ -97,8 +97,8 @@ type MigrationStatus struct {
 
 // Source is one migration stream.
 type Source struct {
-	// Module names the stream. Empty is a valid stream key.
-	Module string
+	// Stream names the stream. Empty is a valid stream key.
+	Stream string
 	FS     fs.FS
 	// Dir is the subdirectory inside FS. Empty uses the whole FS.
 	Dir string
@@ -108,7 +108,7 @@ type Source struct {
 type Sources []Source
 
 // Migrate applies every pending migration in source to db, treating
-// the FS root as the migration directory (module ""). See
+// the FS root as the migration directory (stream ""). See
 // [Sources.Migrate] for the full contract.
 func Migrate(ctx context.Context, db *sql.DB, d Dialect, source fs.FS) error {
 	return Sources{{FS: source}}.Migrate(ctx, db, d)
@@ -116,7 +116,7 @@ func Migrate(ctx context.Context, db *sql.DB, d Dialect, source fs.FS) error {
 
 // Status reports the state of every migration in source and in the
 // database, treating the FS root as the migration directory
-// (module ""). See [Sources.Status] for the full contract.
+// (stream ""). See [Sources.Status] for the full contract.
 func Status(ctx context.Context, db *sql.DB, d Dialect, source fs.FS) ([]MigrationStatus, error) {
 	return Sources{{FS: source}}.Status(ctx, db, d)
 }
@@ -128,7 +128,7 @@ func (s Sources) Check() error {
 }
 
 // Migrate applies every pending migration in every stream, streams in
-// sorted module order, versions ascending within each. Re-running is
+// sorted stream order, versions ascending within each. Re-running is
 // idempotent.
 //
 // One engine session spans the whole call; each migration commits
@@ -169,7 +169,7 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, d Dialect) (rerr error
 	inSource := make(map[appliedKey]migration)
 	for _, st := range streams {
 		for _, m := range st.migs {
-			inSource[appliedKey{module: st.module, version: m.version}] = m
+			inSource[appliedKey{stream: st.name, version: m.version}] = m
 		}
 	}
 	for _, k := range sortedKeys(applied) {
@@ -177,30 +177,30 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, d Dialect) (rerr error
 		m, ok := inSource[k]
 		if !ok {
 			return fmt.Errorf("migration %s is recorded as applied but missing from source: %w",
-				displayName(k.module, k.version, row.name), ErrOrphan)
+				displayName(k.stream, k.version, row.name), ErrOrphan)
 		}
 		if row.checksum != m.checksum {
 			return fmt.Errorf("migration %s has changed since it was applied (file checksum %s, stored %s): %w",
-				displayName(k.module, k.version, m.name), m.checksum, row.checksum, ErrDrift)
+				displayName(k.stream, k.version, m.name), m.checksum, row.checksum, ErrDrift)
 		}
 	}
 
-	insertSQL := "INSERT INTO schema_migrations (module, version, name, checksum, applied_at) VALUES (" + placeholders(drv, 5) + ")"
+	insertSQL := "INSERT INTO schema_migrations (stream, version, name, checksum, applied_at) VALUES (" + placeholders(drv, 5) + ")"
 
 	for _, st := range streams {
 		for _, m := range st.migs {
-			if _, ok := applied[appliedKey{module: st.module, version: m.version}]; ok {
+			if _, ok := applied[appliedKey{stream: st.name, version: m.version}]; ok {
 				continue
 			}
-			if err := sess.apply(ctx, st.module, m, insertSQL); err != nil {
-				return fmt.Errorf("apply migration %s: %w", displayName(st.module, m.version, m.name), err)
+			if err := sess.apply(ctx, st.name, m, insertSQL); err != nil {
+				return fmt.Errorf("apply migration %s: %w", displayName(st.name, m.version, m.name), err)
 			}
 		}
 	}
 	return nil
 }
 
-// Status reports source and database rows, sorted by (Module, Version).
+// Status reports source and database rows, sorted by (Stream, Version).
 // It is read-only and does not lock; concurrent Migrate calls may make
 // the snapshot transient.
 func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]MigrationStatus, error) {
@@ -229,12 +229,12 @@ func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]Migration
 	inSource := make(map[appliedKey]bool)
 	for _, st := range streams {
 		for _, m := range st.migs {
-			k := appliedKey{module: st.module, version: m.version}
+			k := appliedKey{stream: st.name, version: m.version}
 			inSource[k] = true
 			row, ok := applied[k]
 			if !ok {
 				out = append(out, MigrationStatus{
-					Module:       st.module,
+					Stream:       st.name,
 					Version:      m.version,
 					Name:         m.name,
 					FileChecksum: m.checksum,
@@ -247,7 +247,7 @@ func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]Migration
 				state = StateDrifted
 			}
 			out = append(out, MigrationStatus{
-				Module:       st.module,
+				Stream:       st.name,
 				Version:      m.version,
 				Name:         m.name,
 				Checksum:     row.checksum,
@@ -262,7 +262,7 @@ func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]Migration
 			continue
 		}
 		out = append(out, MigrationStatus{
-			Module:    k.module,
+			Stream:    k.stream,
 			Version:   k.version,
 			Name:      row.name,
 			Checksum:  row.checksum,
@@ -271,8 +271,8 @@ func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]Migration
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Module != out[j].Module {
-			return out[i].Module < out[j].Module
+		if out[i].Stream != out[j].Stream {
+			return out[i].Stream < out[j].Stream
 		}
 		return out[i].Version < out[j].Version
 	})
@@ -294,13 +294,13 @@ type appliedRow struct {
 
 // appliedKey identifies one bookkeeping row.
 type appliedKey struct {
-	module  string
+	stream  string
 	version int64
 }
 
 type stream struct {
-	module string
-	migs   []migration
+	name string
+	migs []migration
 }
 
 var filenameRE = regexp.MustCompile(`^(\d+)_([A-Za-z0-9_-]+)\.sql$`)
@@ -320,18 +320,18 @@ func loadStreams(sources Sources) ([]stream, error) {
 	streams := make([]stream, 0, len(sources))
 	for i, src := range sources {
 		if src.FS == nil {
-			return nil, fmt.Errorf("Sources[%d] (module %q): nil FS: %w", i, src.Module, ErrInvalidSource)
+			return nil, fmt.Errorf("Sources[%d] (stream %q): nil FS: %w", i, src.Stream, ErrInvalidSource)
 		}
 		if err := validateCleanRel(src.Dir); err != nil {
 			return nil, fmt.Errorf("Sources[%d].Dir: %v: %w", i, err, ErrInvalidSource)
 		}
-		if err := validateCleanRel(src.Module); err != nil {
-			return nil, fmt.Errorf("Sources[%d].Module: %v: %w", i, err, ErrInvalidSource)
+		if err := validateCleanRel(src.Stream); err != nil {
+			return nil, fmt.Errorf("Sources[%d].Stream: %v: %w", i, err, ErrInvalidSource)
 		}
-		if seen[src.Module] {
-			return nil, fmt.Errorf("module %q declared by two sources: %w", src.Module, ErrDuplicateModule)
+		if seen[src.Stream] {
+			return nil, fmt.Errorf("stream %q declared by two sources: %w", src.Stream, ErrDuplicateStream)
 		}
-		seen[src.Module] = true
+		seen[src.Stream] = true
 
 		fsys := src.FS
 		if src.Dir != "" {
@@ -341,13 +341,13 @@ func loadStreams(sources Sources) ([]stream, error) {
 			}
 			fsys = sub
 		}
-		migs, err := loadMigrations(fsys, src.Module)
+		migs, err := loadMigrations(fsys, src.Stream)
 		if err != nil {
 			return nil, err
 		}
-		streams = append(streams, stream{module: src.Module, migs: migs})
+		streams = append(streams, stream{name: src.Stream, migs: migs})
 	}
-	sort.Slice(streams, func(i, j int) bool { return streams[i].module < streams[j].module })
+	sort.Slice(streams, func(i, j int) bool { return streams[i].name < streams[j].name })
 	return streams, nil
 }
 
@@ -376,18 +376,18 @@ func validateCleanRel(p string) error {
 	return nil
 }
 
-func displayName(module string, version int64, name string) string {
+func displayName(stream string, version int64, name string) string {
 	n := fmt.Sprintf("%d_%s", version, name)
-	if module != "" {
-		return module + "/" + n
+	if stream != "" {
+		return stream + "/" + n
 	}
 	return n
 }
 
-func loadMigrations(source fs.FS, module string) ([]migration, error) {
+func loadMigrations(source fs.FS, stream string) ([]migration, error) {
 	entries, err := fs.ReadDir(source, ".")
 	if err != nil {
-		return nil, fmt.Errorf("read source (module %q): %w", module, err)
+		return nil, fmt.Errorf("read source (stream %q): %w", stream, err)
 	}
 
 	var migs []migration
@@ -395,7 +395,7 @@ func loadMigrations(source fs.FS, module string) ([]migration, error) {
 	for _, e := range entries {
 		// Migration trees are flat; nested SQL files would never run.
 		if e.IsDir() {
-			return nil, fmt.Errorf("%q is a directory (module %q): migration trees are flat: %w", e.Name(), module, ErrInvalidSource)
+			return nil, fmt.Errorf("%q is a directory (stream %q): migration trees are flat: %w", e.Name(), stream, ErrInvalidSource)
 		}
 		name := e.Name()
 		if !strings.HasSuffix(name, ".sql") {
@@ -431,7 +431,7 @@ func loadMigrations(source fs.FS, module string) ([]migration, error) {
 }
 
 func loadApplied(ctx context.Context, q querier) (map[appliedKey]appliedRow, error) {
-	rows, err := q.QueryContext(ctx, `SELECT module, version, name, checksum, applied_at FROM schema_migrations`)
+	rows, err := q.QueryContext(ctx, `SELECT stream, version, name, checksum, applied_at FROM schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("query schema_migrations: %w", err)
 	}
@@ -441,7 +441,7 @@ func loadApplied(ctx context.Context, q querier) (map[appliedKey]appliedRow, err
 	for rows.Next() {
 		var k appliedKey
 		var r appliedRow
-		if err := rows.Scan(&k.module, &k.version, &r.name, &r.checksum, &r.appliedAt); err != nil {
+		if err := rows.Scan(&k.stream, &k.version, &r.name, &r.checksum, &r.appliedAt); err != nil {
 			return nil, err
 		}
 		applied[k] = r
@@ -456,8 +456,8 @@ func sortedKeys(applied map[appliedKey]appliedRow) []appliedKey {
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].module != keys[j].module {
-			return keys[i].module < keys[j].module
+		if keys[i].stream != keys[j].stream {
+			return keys[i].stream < keys[j].stream
 		}
 		return keys[i].version < keys[j].version
 	})

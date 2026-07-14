@@ -2,8 +2,6 @@ package shared
 
 import "embed"
 
-// Assets compile at startup: hashed URLs, references rewritten.
-//
 //fabrik:assets
 //go:embed all:assets
 var Assets embed.FS
@@ -11,3 +9,7 @@ var Assets embed.FS
 //fabrik:migrations
 //go:embed all:migrations
 var Migrations embed.FS
+
+//fabrik:templates
+//go:embed all:templates
+var Templates embed.FS

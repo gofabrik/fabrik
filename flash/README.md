@@ -17,10 +17,18 @@ msgs, _ := fl.Take(ctx)        // []flash.Message{{Kind, Text}}
 
 | Method | Contract |
 |--------|----------|
-| `Add(ctx, kind, text)` | Appends for the next render; stages into the request's session commit. Concurrent requests on one session are last-writer-wins |
-| `Take(ctx)` | Returns pending messages and clears them |
+| `Add(ctx, kind, text)` | Appends for the next render, atomically (optimistic CAS with retry) |
+| `Take(ctx)` | Returns pending messages and clears them, atomically |
 | `Peek(ctx)` | Reads without consuming |
 | `Clear(ctx)` | Drops pending messages unrendered |
+
+`Add`, `Take`, and `Clear` are atomic read-modify-writes on the session
+cell (optimistic CAS, retried up to the session's `MaxRetries`), committed
+immediately. A call that returns nil neither lost a message nor delivered
+one twice; under sustained contention a call may exhaust its retries and
+return `session.ErrVersionConflict`. No message is silently dropped; the
+caller decides whether to retry. `Take` and `Clear` skip the write
+(and never mint a session) when nothing is pending.
 
 `Message.Kind` is your rendering vocabulary: `"success"`,
 `"error"`, `"info"` by convention; the package never interprets it.

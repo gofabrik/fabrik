@@ -46,31 +46,28 @@ every migration as `pending`, `applied`, `drifted`, or `orphan`.
 Independent packages cannot coordinate a global version sequence, so
 migrations group into **streams**: versions order within a stream,
 streams are independent, and bookkeeping is keyed by
-`(module, version)`:
+`(stream, version)`:
 
 ```go
 srcs := migrations.Sources{
-	{Module: "auth", FS: auth.Migrations, Dir: "migrations"},
-	{Module: "todos", FS: todos.Migrations, Dir: "migrations"},
+	{Stream: "auth", FS: auth.Migrations, Dir: "migrations"},
+	{Stream: "todos", FS: todos.Migrations, Dir: "migrations"},
 }
 if err := srcs.Migrate(ctx, db, dialect); err != nil { ... }
 ```
 
-Streams apply in sorted module order, one engine session and one lock
+Streams apply in sorted stream order, one engine session and one lock
 across the whole call. A failing migration skips the rest of its
 stream and all later streams; applied work stays.
 
-One hard design rule: **tables that reference each other belong in
-one stream.** Streams compose freely only because they are
-independent; there is no cross-stream dependency ordering.
+Tables that reference each other belong in one stream. Streams compose
+freely because there is no cross-stream dependency ordering.
 
 A `Migrate` or `Status` call owns the whole `schema_migrations`
-table: applied rows in modules not present among the sources are
+table: applied rows in streams not present among the sources are
 orphans. Removing a package's migrations without cleaning its rows is
-loud, never silent. The table name is fixed by the same decision:
-this library assumes it is the only migration tool bookkeeping in the
-database. Sharing one database with Rails, goose, or another app's
-`schema_migrations` is out of scope, not merely unsupported.
+loud, never silent. This library assumes it owns `schema_migrations`;
+sharing that table with another migration tool is out of scope.
 
 ## Concurrency
 
@@ -98,6 +95,6 @@ TEST_POSTGRES_DSN='postgres://user:pass@localhost:5432/testdb?sslmode=disable' g
 ## Errors
 
 Branchable failures wrap sentinels: `ErrDrift`, `ErrOrphan`,
-`ErrInvalidFilename`, `ErrDuplicateVersion`, `ErrDuplicateModule`,
+`ErrInvalidFilename`, `ErrDuplicateVersion`, `ErrDuplicateStream`,
 `ErrInvalidSource`. I/O and SQL failures pass through wrapped with
 the migration they belong to.

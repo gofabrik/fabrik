@@ -7,7 +7,7 @@ import (
 )
 
 func TestCheck(t *testing.T) {
-	ok := Sources{{Module: "auth", FS: fstest.MapFS{"0001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}}}}
+	ok := Sources{{Stream: "auth", FS: fstest.MapFS{"0001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}}}}
 	if err := ok.Check(); err != nil {
 		t.Fatalf("valid sources: %v", err)
 	}
@@ -18,17 +18,17 @@ func TestCheck(t *testing.T) {
 		want error
 	}{
 		{"empty", Sources{}, ErrInvalidSource},
-		{"nil FS", Sources{{Module: "web"}}, ErrInvalidSource},
-		{"absolute dir", Sources{{Module: "web", FS: fstest.MapFS{}, Dir: "/m"}}, ErrInvalidSource},
-		{"dotdot dir", Sources{{Module: "web", FS: fstest.MapFS{}, Dir: "../m"}}, ErrInvalidSource},
-		{"bad module", Sources{{Module: "web//x", FS: fstest.MapFS{}}}, ErrInvalidSource},
-		{"duplicate module", Sources{{Module: "web", FS: fstest.MapFS{}}, {Module: "web", FS: fstest.MapFS{}}}, ErrDuplicateModule},
-		{"bad filename", Sources{{Module: "web", FS: fstest.MapFS{"nope.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}}}}, ErrInvalidFilename},
-		{"duplicate version", Sources{{Module: "web", FS: fstest.MapFS{
+		{"nil FS", Sources{{Stream: "web"}}, ErrInvalidSource},
+		{"absolute dir", Sources{{Stream: "web", FS: fstest.MapFS{}, Dir: "/m"}}, ErrInvalidSource},
+		{"dotdot dir", Sources{{Stream: "web", FS: fstest.MapFS{}, Dir: "../m"}}, ErrInvalidSource},
+		{"bad stream", Sources{{Stream: "web//x", FS: fstest.MapFS{}}}, ErrInvalidSource},
+		{"duplicate stream", Sources{{Stream: "web", FS: fstest.MapFS{}}, {Stream: "web", FS: fstest.MapFS{}}}, ErrDuplicateStream},
+		{"bad filename", Sources{{Stream: "web", FS: fstest.MapFS{"nope.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}}}}, ErrInvalidFilename},
+		{"duplicate version", Sources{{Stream: "web", FS: fstest.MapFS{
 			"0001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
 			"0001_b.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
 		}}}, ErrDuplicateVersion},
-		{"nested directory", Sources{{Module: "web", FS: fstest.MapFS{
+		{"nested directory", Sources{{Stream: "web", FS: fstest.MapFS{
 			"auth/0001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
 		}}}, ErrInvalidSource},
 	}

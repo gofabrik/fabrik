@@ -105,7 +105,7 @@ config: 2 problems:
   server.addr: is required
 ```
 
-A few behaviors worth knowing:
+## Behavior
 
 - **A later layer overrides mappings field by field, but replaces lists wholesale.** A `config.local.yaml` that sets one key under `server:` leaves the base layer's sibling keys intact; a list value replaces the base layer's entire list - there is no element-level merge.
 - **An empty env value is treated as unset.** `FOO=` does not override a configured value; set an empty string in YAML.
