@@ -98,7 +98,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	sharedQueryDialect := shared.NewQueryDialect()
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		return err
@@ -120,15 +119,12 @@ func run() error {
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		DB:      sharedSqlDB,
-		Dialect: sharedQueryDialect,
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
 	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
-
-	sharedMigrationsDialect := shared.NewDialect()
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -140,7 +136,7 @@ func run() error {
 	}
 
 	// Start: after providers, before middleware and routes
-	if err := shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources); err != nil {
+	if err := shared.MigrateDB(ctx, sharedSqlDB, migrationSources); err != nil {
 		return err
 	}
 
