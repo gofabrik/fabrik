@@ -4,3 +4,8 @@ package shared
 type Config struct {
 	Addr string `yaml:"addr" env:"{{.EnvPrefix}}_HTTP_ADDR" default:":8080"`
 }
+
+//fabrik:config log
+type Log struct {
+	Level string `yaml:"level" env:"{{.EnvPrefix}}_LOG_LEVEL" default:"info"`
+}

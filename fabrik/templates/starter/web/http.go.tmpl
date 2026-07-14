@@ -1,9 +1,12 @@
 package web
 
 import (
+	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
+	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/web"
 )
 
@@ -29,4 +32,30 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	}
 	slog.InfoContext(req.Context(), "greeting", "name", name)
 	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started}), nil
+}
+
+//fabrik:http:group /api
+type API struct {
+	Greeter Greeter
+}
+
+//fabrik:http GET /greet/{name}
+func (a *API) Greet(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte(a.Greeter.Greet(r.PathValue("name"))))
+}
+
+// Docs lists the registered routes.
+type Docs struct {
+	Router *router.Router
+}
+
+//fabrik:http GET /routes
+func (d *Docs) List(w http.ResponseWriter, r *http.Request) {
+	for _, rt := range d.Router.Routes() {
+		method := rt.Method
+		if method == "" {
+			method = "ANY"
+		}
+		fmt.Fprintf(w, "%s %s\n", method, rt.Pattern)
+	}
 }

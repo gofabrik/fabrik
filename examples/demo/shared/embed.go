@@ -11,3 +11,7 @@ var Assets embed.FS
 //fabrik:migrations
 //go:embed all:migrations
 var Migrations embed.FS
+
+//fabrik:templates
+//go:embed all:templates
+var Templates embed.FS

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gofabrik/fabrik/router/middleware"
+	"github.com/gofabrik/fabrik/session"
 )
 
 //fabrik:http:middleware
@@ -11,6 +12,11 @@ func Logged(next http.Handler) http.Handler { return middleware.Logger(next) }
 
 //fabrik:http:middleware
 func Recovered(next http.Handler) http.Handler { return middleware.Recover(next) }
+
+//fabrik:http:middleware
+func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
+	return m.Middleware
+}
 
 // NoStore disables client caching.
 //
