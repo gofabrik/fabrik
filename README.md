@@ -87,5 +87,6 @@ together by the CLI:
 - [assetmapper](assetmapper/README.md) - import maps, vendored browser packages, and hashed assets.
 - [migrations](migrations/README.md) - forward-only SQL migrations for `database/sql`.
 - [query](query/README.md) - typed reads and struct-derived writes over `database/sql`.
+- [jobs](jobs/README.md) - background jobs.
 - [session](session/README.md) - typed HTTP sessions with pluggable stores and tokens.
 - [flash](flash/README.md) - one-shot messages stored in sessions.

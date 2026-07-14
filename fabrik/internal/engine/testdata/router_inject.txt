@@ -54,7 +54,7 @@ func run() error {
 		Router: r,
 	}
 
-	// Routes
+	// Register
 	r.Method("GET", "/routes", webDocs.List)
 
 	// Serve

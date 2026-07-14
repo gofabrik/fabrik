@@ -8,6 +8,7 @@ require (
 	github.com/gofabrik/fabrik/config/directive v0.0.0
 	github.com/gofabrik/fabrik/diag v0.0.0
 	github.com/gofabrik/fabrik/gen v0.0.0
+	github.com/gofabrik/fabrik/jobs/directive v0.0.0
 	github.com/gofabrik/fabrik/migrations/directive v0.0.0
 	github.com/gofabrik/fabrik/router/directive v0.0.0
 	github.com/gofabrik/fabrik/templates/directive v0.0.0
@@ -28,6 +29,8 @@ replace (
 	github.com/gofabrik/fabrik/config/directive => ../config/directive
 	github.com/gofabrik/fabrik/diag => ../diag
 	github.com/gofabrik/fabrik/gen => ../gen
+	github.com/gofabrik/fabrik/jobs => ../jobs
+	github.com/gofabrik/fabrik/jobs/directive => ../jobs/directive
 	github.com/gofabrik/fabrik/migrations => ../migrations
 	github.com/gofabrik/fabrik/migrations/directive => ../migrations/directive
 	github.com/gofabrik/fabrik/router/directive => ../router/directive

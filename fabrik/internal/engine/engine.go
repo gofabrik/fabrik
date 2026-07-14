@@ -90,6 +90,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 
 	g := gen.New()
 	g.SetModule(res.ModulePath)
+	g.SetTypes(res.Types)
 	for _, d := range directives {
 		if h, ok := d.(gen.Hinter); ok {
 			g.AddMissingHint(h.MissingHint)

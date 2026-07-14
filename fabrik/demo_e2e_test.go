@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,42 +49,56 @@ func TestDemoEndToEnd(t *testing.T) {
 	defer server.Process.Kill()
 
 	visitRE := regexp.MustCompile(`visit #(\d+)`)
-	get := func(name string) (visit, body string) {
+	// visit returns the visit counter the page rendered (-1 if the server
+	// is not answering yet) and the body.
+	visit := func(name string) (int, string) {
 		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/?name=%s", port, name))
 		if err != nil {
-			return "", ""
+			return -1, ""
 		}
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return visitRE.FindString(string(b)), string(b)
+		m := visitRE.FindStringSubmatch(string(b))
+		if m == nil {
+			return -1, string(b)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n, string(b)
 	}
 
 	deadline := time.Now().Add(10 * time.Second)
+
+	// Wait for the server, then assert the synchronous greeting round-trip
+	// with two controlled requests: greetings are written in-request, so
+	// the greeting from the first shows up alongside the second's. (Done
+	// before the counter poll below, which floods greetings.)
 	for {
-		if first, body := get("one"); first != "" {
-			if !strings.HasSuffix(first, "#1") {
-				t.Fatalf("first visit = %q, want visit #1 on a fresh database", first)
-			}
-			if !strings.Contains(body, `<li class="greeting">one</li>`) {
-				t.Fatalf("first response should list its own greeting:\n%s", body)
-			}
-			second, body := get("two")
-			if second != "visit #2" {
-				t.Fatalf("second visit = %q, want visit #2", second)
-			}
-			// The greeting written by the first request round-trips
-			// through the database into the second response.
-			if !strings.Contains(body, `<li class="greeting">two</li>`) || !strings.Contains(body, `<li class="greeting">one</li>`) {
-				t.Fatalf("second response should list both greetings:\n%s", body)
-			}
-			sessionFlow(t, port)
-			return
+		if _, body := visit("one"); body != "" {
+			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("demo server did not answer")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if _, body := visit("two"); !strings.Contains(body, `<li class="greeting">one</li>`) || !strings.Contains(body, `<li class="greeting">two</li>`) {
+		t.Fatalf("greetings are synchronous; the second response should list both:\n%s", body)
+	}
+
+	// Recording a visit is deferred to a background job, so the counter is
+	// eventually consistent: each request enqueues a Visit the worker
+	// records later. Poll the page until the counter has advanced past the
+	// enqueued visits, which proves the async side effect actually ran.
+	for {
+		if n, _ := visit("poll"); n >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("visit counter never advanced; the background job is not draining")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	sessionFlow(t, port)
 }
 
 // sessionFlow asserts the session-backed greeting: ?name= renames,

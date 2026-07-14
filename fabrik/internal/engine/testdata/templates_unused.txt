@@ -52,7 +52,7 @@ func run() error {
 	// Providers
 	r := router.New()
 
-	// Routes
+	// Register
 	r.Method("GET", "/", web.Home)
 
 	// Serve

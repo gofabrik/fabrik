@@ -40,14 +40,31 @@ Positional arguments:
 
 - `SECTION`
 
+## fabrik:cron
+
+**`//fabrik:cron name=NAME schedule="CRON"`**
+
+Declared on a package function `func(ctx, deps...) error`: it runs on the cron schedule, durably, on the jobs worker - no message. The first parameter is a `context.Context` (or `jobs.Context`), the rest are injected dependencies. `schedule=` is a five-field cron expression.
+
+```go
+//fabrik:cron name=purge-sessions schedule="0 */6 * * *"
+func PurgeSessions(ctx context.Context, s Store) error { ... }
+```
+
+Options:
+
+- `name=` (required)
+- `schedule=` (required)
+
 ## fabrik:hook
 
 **`//fabrik:hook PHASE`**
 
-Marks a function the generated `run()` calls at a named point of the app lifecycle: `config -> setup -> providers -> start -> middleware -> routes -> serve`. Hookable phases, in order:
+Marks a function the generated `run()` calls at a named point of the app lifecycle: `config -> setup -> providers -> middleware -> routes -> prepare -> start -> serve`. Hookable phases, in order:
 
 - `setup` - after config, before providers. Process-level setup (logger, runtime tuning); parameters may be a leading `context.Context` and pointers to //fabrik:config structs.
-- `start` - after providers, before middleware and routes. Work on built resources (migrations, cache warming); parameters resolve against everything providers and libraries bind.
+- `prepare` - after everything is wired and registered, before runtime processes start. Run pre-intake work on built resources (schema checks, cache warming, migrations, seeding); parameters resolve against everything providers and libraries bind.
+- `start` - after prepare, before serving. Start runtime processes that consume registered and prepared state (workers, schedulers, watchers); parameters resolve against everything providers and libraries bind.
 
 Hooks of one phase run in source order and must be independent. A returned `error` aborts startup.
 
@@ -61,7 +78,7 @@ func InitLogger(cfg *Log) error {
 
 Positional arguments:
 
-- `PHASE` - one of setup, start
+- `PHASE` - one of setup, prepare, start
 
 ## fabrik:http
 
@@ -197,11 +214,27 @@ Options:
 
 - `dir=`
 
+## fabrik:job
+
+**`//fabrik:job [name=NAME] [kind=KIND]`**
+
+Declared on a package function `func(ctx, deps..., msg T) error`: the first parameter is a `context.Context` (or `jobs.Context` for the accessors), the middle parameters are injected dependencies like a provider, and the **last** parameter is the message. One handler on a message type is a command (`Enqueue`), several are an event (`Publish`). All handlers assemble one injected `*jobs.Manager` whose only dependency is a `jobs.Store` provider. `name=` sets the handler id (default: the function name); `kind=` pins the wire kind (default: the message type's module path).
+
+```go
+//fabrik:job
+func SendWelcome(ctx context.Context, m WelcomeEmail) error { ... }
+```
+
+Options:
+
+- `name=`
+- `kind=`
+
 ## fabrik:migrations
 
 **`//fabrik:migrations [dir=migrations] [stream=NAME]`**
 
-Declared on an exported `embed.FS` variable: the tree's `NNNN_name.sql` files become one migration stream, bound with every other declared stream into an injectable `migrations.Sources`. Nothing runs automatically - call `Sources.Migrate` from a `//fabrik:hook start` function, a handler, or a command. Versions order within a stream. Streams are independent, so tables that reference each other belong in one stream. The default stream name is the package path relative to the module. Use `stream=` to pin identity when moving a package or declaring migrations at module root. Use `all:<dir>` so embedded files match the validated tree.
+Declared on an exported `embed.FS` variable: the tree's `NNNN_name.sql` files become one migration stream, bound with every other declared stream into an injectable `migrations.Sources`. Nothing runs automatically - call `Sources.Migrate` from a `//fabrik:hook prepare` function, a handler, or a command. Versions order within a stream. Streams are independent, so tables that reference each other belong in one stream. The default stream name is the package path relative to the module. Use `stream=` to pin identity when moving a package or declaring migrations at module root. Use `all:<dir>` so embedded files match the validated tree.
 
 ```go
 //fabrik:migrations

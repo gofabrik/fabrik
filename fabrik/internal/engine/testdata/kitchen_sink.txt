@@ -121,7 +121,7 @@ func NewDialect() migrations.Dialect { return migrations.DialectSQLite }
 //fabrik:hook start
 func WarmCache(ctx context.Context, p *Pool) error { return nil }
 
-//fabrik:hook start
+//fabrik:hook prepare
 func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
 	return src.Migrate(ctx, db, d)
 }
@@ -339,19 +339,10 @@ func run() error {
 		Config: sharedConfig,
 	}
 
-	// Start: after providers, before middleware and routes
-	if err := store.WarmCache(ctx, storePool); err != nil {
-		return err
-	}
-
-	if err := store.MigrateDB(ctx, storeSqlDB, storeMigrationsDialect, migrationSources); err != nil {
-		return err
-	}
-
 	// Middleware
 	r.Use(shared.Recovered)
 
-	// Routes
+	// Register
 	r.Handle("/static/", http.StripPrefix("/static", http.FileServerFS(webStatic)))
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.Method("GET", "/api/items/{id}", webAPI.Item, shared.RequireAuth)
@@ -359,6 +350,16 @@ func run() error {
 	r.Handle("/metrics", web.Metrics())
 	r.Method("GET", "/api/api/items.json", adapter.Wrap(webAPI.ItemsJSON), shared.RequireAuth)
 	r.NotFound(web.Missing)
+
+	// Prepare: after registration, before runtime start
+	if err := store.MigrateDB(ctx, storeSqlDB, storeMigrationsDialect, migrationSources); err != nil {
+		return err
+	}
+
+	// Start: after prepare, before serving
+	if err := store.WarmCache(ctx, storePool); err != nil {
+		return err
+	}
 
 	// Serve
 	return sharedServer.Serve(r)

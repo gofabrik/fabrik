@@ -101,7 +101,7 @@ func run() error {
 	r := router.New()
 	webHandlers := &web.Handlers{}
 
-	// Routes
+	// Register
 	r.Method("GET", "/app/home", adapter.Wrap(webHandlers.Home), shared.RequireAuth)
 	r.Method("POST", "/app/save", adapter.Wrap(webHandlers.Save), shared.RequireAuth)
 	r.Method("GET", "/app/raw", webHandlers.Raw, shared.RequireAuth)

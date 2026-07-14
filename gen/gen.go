@@ -20,9 +20,10 @@ const (
 	PhaseConfig     Phase = iota // configuration loading, before all else
 	PhaseSetup                   // setup hooks: config exists, providers do not
 	PhaseWire                    // construct app and runtime values
-	PhaseStart                   // start hooks: everything built, nothing serving
 	PhaseMiddleware              // global middleware registration
-	PhaseRegister                // register generated behavior
+	PhaseRegister                // register generated behavior onto constructed values
+	PhasePrepare                 // prepare hooks: pre-intake work on registered resources
+	PhaseStart                   // start hooks: start background runtime processes
 	PhaseServe                   // start serving, ending with return
 )
 
@@ -34,9 +35,10 @@ var phaseLabels = []struct {
 	{PhaseConfig, "Config"},
 	{PhaseSetup, "Setup: after config, before providers"},
 	{PhaseWire, "Providers"},
-	{PhaseStart, "Start: after providers, before middleware and routes"},
 	{PhaseMiddleware, "Middleware"},
-	{PhaseRegister, "Routes"},
+	{PhaseRegister, "Register"},
+	{PhasePrepare, "Prepare: after registration, before runtime start"},
+	{PhaseStart, "Start: after prepare, before serving"},
 	{PhaseServe, "Serve"},
 }
 
@@ -63,6 +65,7 @@ type Gen struct {
 	current    string // active directive
 	module     string // module path of the generated app
 	hints      []func(types.Type) (string, bool)
+	types      map[string]*types.Package // import path -> package, for LookupType
 
 	materializing []string // active lazy-bind stack
 }
@@ -80,6 +83,26 @@ func New() *Gen {
 
 // SetModule records the module path of the app being generated.
 func (g *Gen) SetModule(path string) { g.module = path }
+
+// SetTypes supplies the type-checked packages (keyed by import path) so a
+// directive can resolve a library type by path via [Gen.LookupType].
+func (g *Gen) SetTypes(m map[string]*types.Package) { g.types = m }
+
+// LookupType returns the named type from the package at pkgPath, if that
+// package was type-checked in this run (i.e. the app imports it). It lets
+// a directive resolve a dependency type - jobs.Store, say - that appears
+// in no annotated signature but is imported elsewhere in the app.
+func (g *Gen) LookupType(pkgPath, name string) (types.Type, bool) {
+	pkg := g.types[pkgPath]
+	if pkg == nil {
+		return nil, false
+	}
+	obj := pkg.Scope().Lookup(name)
+	if obj == nil {
+		return nil, false
+	}
+	return obj.Type(), true
+}
 
 // Module returns the module path of the app being generated.
 func (g *Gen) Module() string { return g.module }
@@ -305,6 +328,21 @@ func (g *Gen) HasBinding(t types.Type, name string) bool {
 	}
 	if _, ok := g.lazyByPath[types.TypeString(t, nil)]; ok && name == "" {
 		return true
+	}
+	return false
+}
+
+// HasProviderBinding reports whether a type-keyed lazy binding exists for
+// (t, name) - the kind a //fabrik:provider registers with BindLazy. It
+// deliberately ignores path-keyed bindings (BindLazyPath) and the eager
+// binds a library directive's own materialization leaves behind, so a
+// directive that owns a type by path can detect an app provider competing
+// for the same type, which Instance would silently shadow.
+func (g *Gen) HasProviderBinding(t types.Type, name string) bool {
+	t = types.Unalias(t)
+	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
+		_, ok := m[name]
+		return ok
 	}
 	return false
 }

@@ -9,6 +9,7 @@ import (
 	configdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
 	"github.com/gofabrik/fabrik/gen"
+	jobsdir "github.com/gofabrik/fabrik/jobs/directive"
 	migdir "github.com/gofabrik/fabrik/migrations/directive"
 	routerdir "github.com/gofabrik/fabrik/router/directive"
 	tpldir "github.com/gofabrik/fabrik/templates/directive"
@@ -25,6 +26,7 @@ func New() []gen.Directive {
 	// Conventional config layers are optional; custom sources belong in providers.
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
+	jobsJob, jobsCron := jobsdir.New()
 	// Registry order is presentation only; lifecycle order comes from Meta.Tier.
 	return []gen.Directive{
 		provider,
@@ -43,6 +45,8 @@ func New() []gen.Directive {
 		tpldir.NewFuncs(tpl),
 		assetsdir.NewAssets(host, tpl),
 		migdir.NewMigrations(),
+		jobsJob,
+		jobsCron,
 		cfg,
 	}
 }

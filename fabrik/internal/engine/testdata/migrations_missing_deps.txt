@@ -1,4 +1,4 @@
-A start hook consuming migrations without the app providing *sql.DB
+A prepare hook consuming migrations without the app providing *sql.DB
 and migrations.Dialect gets the standard unresolved-dependency
 diagnostics at the hook, with recipes for both.
 -- go.mod --
@@ -27,7 +27,7 @@ import (
 	"github.com/gofabrik/fabrik/migrations"
 )
 
-//fabrik:hook start
+//fabrik:hook prepare
 func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
 	return src.Migrate(ctx, db, d)
 }
@@ -42,8 +42,8 @@ var Migrations embed.FS
 -- shared/migrations/0001_users.sql --
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 -- want/diags --
-error: shared/hooks.go:11:37: no provider or binding supplies this start hook parameter
+error: shared/hooks.go:11:37: no provider or binding supplies this hook parameter
   help: declare a //fabrik:provider for it
-error: shared/hooks.go:11:49: no provider or binding supplies this start hook parameter
+error: shared/hooks.go:11:49: no provider or binding supplies this hook parameter
   help: provide it next to your database: //fabrik:provider
 func NewDialect(cfg *DBConfig) migrations.Dialect { return migrations.DialectSQLite }

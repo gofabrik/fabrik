@@ -46,7 +46,7 @@ func run() error {
 	r := router.New()
 	adapter := web2.NewAdapter()
 
-	// Routes
+	// Register
 	r.Method("GET", "/items", adapter.Wrap(web.Items))
 
 	// Serve

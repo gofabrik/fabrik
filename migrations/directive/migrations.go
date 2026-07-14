@@ -46,7 +46,7 @@ func (*Migrations) Meta() gen.Meta {
 			"`NNNN_name.sql` files become one migration stream, bound with " +
 			"every other declared stream into an injectable " +
 			"`migrations.Sources`. Nothing runs automatically - call " +
-			"`Sources.Migrate` from a `//fabrik:hook start` function, a " +
+			"`Sources.Migrate` from a `//fabrik:hook prepare` function, a " +
 			"handler, or a command. Versions order within a stream. " +
 			"Streams are independent, so tables that reference each other " +
 			"belong in one stream. The default stream name is the package " +
@@ -250,7 +250,7 @@ func (mg *Migrations) Validate(g *gen.Gen) diag.Diagnostics {
 	for _, d := range mg.decls {
 		if !d.built {
 			ds.Warn(d.pos, fmt.Sprintf("migrations %s can never run: nothing injects migrations.Sources", d.varName),
-				"call them from a start hook: //fabrik:hook start\nfunc MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error { return src.Migrate(ctx, db, d) }")
+				"call them from a prepare hook: //fabrik:hook prepare\nfunc MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error { return src.Migrate(ctx, db, d) }")
 		}
 	}
 	return ds

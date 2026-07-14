@@ -75,8 +75,13 @@ func TestEndToEnd(t *testing.T) {
 	if _, err := wire(dir); err != nil {
 		t.Fatalf("fabrik wire: %v", err)
 	}
-	// Generated imports may add modules absent from handwritten sources.
-	tidy = exec.Command("go", "mod", "tidy")
+	// Best-effort tidy to add the requires the generated imports need from
+	// what is available offline. -e lets it exit zero even when the fuller
+	// import set pulls test-only transitive deps of the replaced local
+	// modules (e.g. yaml.v3's kr/text) that the offline cache lacks - those
+	// are not build deps. This does not assert the tidy is clean; the build
+	// below is the gate on missing build deps.
+	tidy = exec.Command("go", "mod", "tidy", "-e")
 	tidy.Dir = dir
 	if out, err := tidy.CombinedOutput(); err != nil {
 		t.Fatalf("go mod tidy after wire: %v\n%s", err, out)

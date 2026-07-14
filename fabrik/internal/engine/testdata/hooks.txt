@@ -73,7 +73,7 @@ func run() error {
 
 	r := router.New()
 
-	// Routes
+	// Register
 	r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))
 	r.NotFound(web.NotFound)
 	r.MethodNotAllowed(web.MethodNotAllowed)

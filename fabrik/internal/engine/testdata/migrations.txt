@@ -1,5 +1,5 @@
 Migration streams union across packages into one injectable
-migrations.Sources; a start hook calls them explicitly with the db and
+migrations.Sources; a prepare hook calls them explicitly with the db and
 dialect the app provides. Nothing runs unless the user calls it.
 -- go.mod --
 module app
@@ -33,7 +33,7 @@ func NewDB() (*sql.DB, error) { return sql.Open("sqlite", "file:app.db") }
 //fabrik:provider
 func NewDialect() migrations.Dialect { return migrations.DialectSQLite }
 
-//fabrik:hook start
+//fabrik:hook prepare
 func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
 	return src.Migrate(ctx, db, d)
 }
@@ -99,13 +99,13 @@ func run() error {
 	}
 	r := router.New()
 
-	// Start: after providers, before middleware and routes
+	// Register
+	r.Method("GET", "/{$}", web.Home)
+
+	// Prepare: after registration, before runtime start
 	if err := shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources); err != nil {
 		return err
 	}
-
-	// Routes
-	r.Method("GET", "/{$}", web.Home)
 
 	// Serve
 	addr := ":8080"
