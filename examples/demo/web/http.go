@@ -1,7 +1,6 @@
 package web
 
 import (
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -43,7 +42,7 @@ func (HomePage) Template() string { return "web/home" }
 
 type Handlers struct {
 	Greeter Greeter
-	DB      *sql.DB
+	Queries *query.DB
 	Session *session.Manager[shared.Session]
 	Flash   *flash.Flash
 }
@@ -78,18 +77,18 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 
 	slog.InfoContext(ctx, "greeting", "name", name)
 
-	visits, err := query.One[visitCount](ctx, h.DB,
+	visits, err := query.One[visitCount](ctx, h.Queries,
 		`INSERT INTO visits (id, count) VALUES (1, 1)
 		 ON CONFLICT (id) DO UPDATE SET count = count + 1
 		 RETURNING count`)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := query.Insert(ctx, h.DB, query.DialectSQLite, "greetings", Greeting{Name: name, Created: time.Now()}); err != nil {
+	if _, err := h.Queries.Insert(ctx, "greetings", Greeting{Name: name, Created: time.Now()}); err != nil {
 		return nil, err
 	}
 
-	recent, err := query.All[Greeting](ctx, h.DB,
+	recent, err := query.All[Greeting](ctx, h.Queries,
 		"SELECT * FROM greetings ORDER BY id DESC LIMIT 5")
 	if err != nil {
 		return nil, err

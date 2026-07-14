@@ -6,19 +6,23 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/flash"
+	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/session"
 	_ "modernc.org/sqlite"
 )
 
 //fabrik:provider
 func NewDB(cfg *Database) (*sql.DB, error) {
-	// SQLiteStore expects the driver to handle writer contention.
 	return sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)")
 }
 
 //fabrik:provider
+func NewQueries(db *sql.DB) (*query.DB, error) {
+	return query.New(db, query.DialectSQLite)
+}
+
+//fabrik:provider
 func NewSession(db *sql.DB) (*session.Manager[Session], error) {
-	// The migrations stream owns the sessions table.
 	store, err := session.NewSQLiteStore(db, session.SQLiteOptions{})
 	if err != nil {
 		return nil, err

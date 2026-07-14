@@ -21,7 +21,5 @@ func InitLogger(l *Log) error {
 
 //fabrik:hook start
 func MigrateDB(ctx context.Context, db *sql.DB, src migrations.Sources) error {
-	// Dialect is composition metadata, not a dependency: the app is SQLite,
-	// so it is written at the call site rather than injected.
 	return src.Migrate(ctx, db, migrations.DialectSQLite)
 }

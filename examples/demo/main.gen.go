@@ -98,6 +98,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	sharedQueryDB, err := shared.NewQueries(sharedSqlDB)
+	if err != nil {
+		return err
+	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		return err
@@ -118,7 +122,7 @@ func run() error {
 	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
-		DB:      sharedSqlDB,
+		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
 	}
