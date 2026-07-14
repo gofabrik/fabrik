@@ -53,9 +53,7 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {
 ```
 
 `fabrik wire` scans these directives and generates `main.gen.go`, the app entry
-point that connects directive-owned code into executable Go. The generated code
-depends only on the standard library and the router, and the router itself is
-standard library only.
+point that connects directive-owned code into executable Go.
 
 ## Commands
 
@@ -75,10 +73,19 @@ Use `fabrik wire -check` in CI to verify it is current.
 
 ## Directives
 
-See [DIRECTIVES.md](DIRECTIVES.md), generated from the same registry the tool runs.
+See [DIRECTIVES.md](DIRECTIVES.md).
 
-- `//fabrik:provider` - mark a constructor whose return value is available to
-  generated app code by matching types.
-- `//fabrik:http METHOD /path` - register a handler on the given route. The handler
-  is a standard `func(http.ResponseWriter, *http.Request)`, on a plain function or a
-  method of a wired struct.
+## Libraries
+
+Fabrik is built from small Go libraries that can be used on their own or wired
+together by the CLI:
+
+- [router](router/README.md) - routing and middleware on top of `net/http`.
+- [config](config/README.md) - typed YAML configuration with defaults and env overrides.
+- [templates](templates/README.md) - sectioned HTML templates with shared layouts and helpers.
+- [web](web/README.md) - typed HTTP responses and request helpers.
+- [assetmapper](assetmapper/README.md) - import maps, vendored browser packages, and hashed assets.
+- [migrations](migrations/README.md) - forward-only SQL migrations for `database/sql`.
+- [query](query/README.md) - typed reads and struct-derived writes over `database/sql`.
+- [session](session/README.md) - typed HTTP sessions with pluggable stores and tokens.
+- [flash](flash/README.md) - one-shot messages stored in sessions.
