@@ -8,8 +8,10 @@
 //	// in the handler that renders:
 //	msgs, err := fl.Take(ctx)
 //
-// Flash keeps its data in a private session cell and commits with the
-// request's other session writes.
+// Flash keeps its data in a private session cell. Add, Take, and Clear commit
+// immediately with optimistic CAS, retried up to the session's MaxRetries. A
+// successful call preserves one-shot delivery; retry exhaustion returns
+// session.ErrVersionConflict.
 //
 // The library is standalone: net/http and any mux, no framework
 // required.
@@ -47,21 +49,20 @@ func New(m session.Registry) (*Flash, error) {
 	return &Flash{cell: h}, nil
 }
 
-// Add appends a message for the next render.
-//
-// Concurrent requests on one session are last-writer-wins, matching
-// staged session writes.
+// Add appends a message for the next render. Concurrent successful calls all
+// survive; retry exhaustion returns session.ErrVersionConflict.
 func (f *Flash) Add(ctx context.Context, kind, text string) error {
-	d, err := f.cell.Get(ctx)
-	if err != nil {
-		return err
-	}
-	d.Messages = append(d.Messages, Message{Kind: kind, Text: text})
-	return f.cell.Save(ctx, d)
+	return f.cell.Update(ctx, func(d *data) error {
+		d.Messages = append(d.Messages, Message{Kind: kind, Text: text})
+		return nil
+	})
 }
 
-// Take returns pending messages and clears them.
+// Take returns pending messages and clears them, atomically: a message is
+// delivered to exactly one Take. Like Add it retries a CAS conflict up to the
+// session's MaxRetries, then returns session.ErrVersionConflict.
 func (f *Flash) Take(ctx context.Context) ([]Message, error) {
+	// Empty reads do not write or mint a session.
 	d, err := f.cell.Get(ctx)
 	if err != nil {
 		return nil, err
@@ -69,10 +70,16 @@ func (f *Flash) Take(ctx context.Context) ([]Message, error) {
 	if len(d.Messages) == 0 {
 		return nil, nil
 	}
-	if err := f.cell.Clear(ctx); err != nil {
+	// Update has no delete form; clearing writes an empty cell.
+	var taken []Message
+	if err := f.cell.Update(ctx, func(d *data) error {
+		taken = d.Messages
+		d.Messages = nil
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	return d.Messages, nil
+	return taken, nil
 }
 
 // Peek returns the pending messages without consuming them.
@@ -84,7 +91,18 @@ func (f *Flash) Peek(ctx context.Context) ([]Message, error) {
 	return d.Messages, nil
 }
 
-// Clear drops pending messages without rendering them.
+// Clear drops pending messages without rendering them. It is a no-op, with no
+// write, when there is nothing pending.
 func (f *Flash) Clear(ctx context.Context) error {
-	return f.cell.Clear(ctx)
+	d, err := f.cell.Get(ctx)
+	if err != nil {
+		return err
+	}
+	if len(d.Messages) == 0 {
+		return nil
+	}
+	return f.cell.Update(ctx, func(d *data) error {
+		d.Messages = nil
+		return nil
+	})
 }
