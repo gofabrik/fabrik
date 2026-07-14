@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +26,8 @@ func (s *Server) Serve(h http.Handler) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	slog.Info("server listening", "addr", s.Config.Addr)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
