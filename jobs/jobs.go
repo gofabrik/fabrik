@@ -4,20 +4,17 @@
 // is a function registered against a message type with [On] (or the
 // [Handle] command shortcut). One handler on a type is a command,
 // enqueued with [Manager.Enqueue]; many handlers on a type are an event,
-// fanned out with [Manager.Publish]. Both compile to the same unit of
-// persisted work - a job row keyed by (kind, handler-id) - and run
-// through the same retry, lease, and inspection machinery.
+// fanned out with [Manager.Publish]. Both persist as jobs keyed by
+// (kind, handler-id) and use the same retry, lease, and inspection machinery.
 //
 // Jobs are at-least-once: a worker can crash mid-attempt and the job
 // runs again, so non-idempotent side effects should carry their own
 // idempotency key. Two backends ship in this package: an in-memory store
 // (tests, examples, local dev) and a SQLite store (single node,
-// durable). Neither imports a SQL driver - the SQLite store takes a
-// *sql.DB the caller opened.
+// durable). Neither imports a SQL driver; the SQLite store takes a
+// caller-opened *sql.DB.
 //
-// The library is standalone: net/http or nothing, any *sql.DB, no
-// framework. In a fabrik app the //fabrik:job directive removes the
-// registration boilerplate.
+// In a fabrik app, the //fabrik:job directive generates registration code.
 package jobs
 
 import (
@@ -48,9 +45,7 @@ const (
 	StateDiscarded State = "discarded"
 )
 
-// Terminal reports whether s is a terminal state - one a worker never
-// re-claims, moved only by operator action ([Manager.RetryJob],
-// [Manager.DeleteJob]).
+// Terminal reports whether workers can no longer claim s.
 func (s State) Terminal() bool {
 	switch s {
 	case StateSucceeded, StateFailed, StateCancelled, StateDiscarded:
@@ -189,7 +184,7 @@ func (e *DuplicateError) Is(target error) bool { return target == ErrDuplicate }
 func NewID() string {
 	var b [16]byte
 	if _, err := crand.Read(b[:]); err != nil {
-		// crypto/rand cannot fail on a healthy system; treat like OOM.
+		// Failure indicates an unusable system random source.
 		panic("jobs: crypto/rand.Read failed: " + err.Error())
 	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
@@ -217,4 +212,20 @@ func validIdent(what, s string) error {
 		}
 	}
 	return nil
+}
+
+func validOnTimeout(o OnTimeout) error {
+	switch o {
+	case TimeoutRetry, TimeoutFail, TimeoutDiscard:
+		return nil
+	}
+	return fmt.Errorf("jobs: OnTimeout has an out-of-range value (%d)", int(o))
+}
+
+func validCatchUp(c CatchUp) error {
+	switch c {
+	case CatchUpOnce, CatchUpSkip, CatchUpAll:
+		return nil
+	}
+	return fmt.Errorf("jobs: CatchUp has an out-of-range value (%d)", int(c))
 }

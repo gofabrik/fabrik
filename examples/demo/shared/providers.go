@@ -25,18 +25,11 @@ func NewQueries(db *sql.DB) (*query.DB, error) {
 
 //fabrik:provider
 func NewJobStore(db *sql.DB) (jobs.Store, error) {
-	// The jobs schema is created by a migration (0004_jobs.sql), not
-	// AutoCreate, so the demo exercises the real lifecycle: migrations run
-	// in a prepare hook, then StartJobs reconciles schedules against the
-	// schema they created.
+	// Migrations create the jobs schema before schedule reconciliation.
 	return jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: false})
 }
 
-// NewJobsConfig configures the manager the //fabrik:job directive builds.
-// The directive emits jobs.New(store, config); store and config both come
-// from providers, so this is where the manager is tuned (logger, hooks,
-// scheduler group). Drop this provider and the directive falls back to
-// jobs.Config{} defaults.
+// NewJobsConfig configures the generated jobs manager.
 //
 //fabrik:provider
 func NewJobsConfig() jobs.Config {

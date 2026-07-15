@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// JobInfo is the inspection view of a job, returned by [Manager.GetJob]
-// and [Manager.ListJobs] and used as the store's row shape.
+// JobInfo is the inspection view returned by [Manager.GetJob] and [Manager.ListJobs].
 type JobInfo struct {
 	ID          string
 	Kind        string

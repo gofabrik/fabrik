@@ -9,9 +9,11 @@ import (
 // Store is the persistence contract. Backends must be safe for concurrent
 // use; each method is atomic from the caller's view.
 type Store interface {
-	// Insert writes a batch atomically. UniqueKey collisions skip that row
-	// with Duplicate=true; other rows still commit.
-	Insert(ctx context.Context, jobs []Job) ([]InsertResult, error)
+	// Insert writes a batch atomically, stamping created_at/updated_at with
+	// now (the manager's clock; stores must not read the wall clock).
+	// UniqueKey collisions skip that row with Duplicate=true; other rows
+	// still commit.
+	Insert(ctx context.Context, now time.Time, jobs []Job) ([]InsertResult, error)
 
 	// Claim locks up to req.Limit eligible rows and returns them as
 	// running. Eligible: state in (available, pending) AND
@@ -19,20 +21,17 @@ type Store interface {
 	// in req.Handlers. Order: priority desc, available_at asc, id asc.
 	Claim(ctx context.Context, req ClaimRequest) ([]ClaimedJob, error)
 
-	// Heartbeat extends a running job's lease iff this worker still
-	// holds it, and reports whether cancellation was requested. Returns
-	// ErrNotFound when the lease was swept or stolen.
-	Heartbeat(ctx context.Context, jobID, workerID string, until time.Time) (cancelRequested bool, err error)
+	// Heartbeat extends a running job's lease to until iff this worker
+	// still holds it, stamping updated_at with now, and reports whether
+	// cancellation was requested. Returns ErrNotFound when the lease was
+	// swept or stolen.
+	Heartbeat(ctx context.Context, jobID, workerID string, now, until time.Time) (cancelRequested bool, err error)
 
-	// Complete writes the outcome, appends the attempt row, and clears the
-	// lease iff this worker still holds it. cancel_requested wins over any
-	// supplied outcome.
-	Complete(ctx context.Context, jobID, workerID string, o Outcome) (applied State, err error)
+	// Complete persists the attempt and outcome only while workerID owns the lease.
+	// Cancellation wins, and now cannot regress updated_at.
+	Complete(ctx context.Context, jobID, workerID string, now time.Time, o Outcome) (applied State, err error)
 
-	// SweepExpired reclaims running rows past their lease: writes a
-	// synthetic "lease expired" attempt, bumps the counter, then applies
-	// the exhaustion rule (available if attempts remain, else
-	// discarded). Returns the number reclaimed.
+	// SweepExpired records expired leases as attempts and applies retry exhaustion.
 	SweepExpired(ctx context.Context, now time.Time) (int, error)
 
 	// Get returns a job by id, or ErrNotFound.
@@ -90,11 +89,10 @@ type Store interface {
 
 // TxEnqueuer is the optional transactional-enqueue capability.
 type TxEnqueuer interface {
-	InsertTx(ctx context.Context, tx *sql.Tx, jobs []Job) ([]InsertResult, error)
+	InsertTx(ctx context.Context, tx *sql.Tx, now time.Time, jobs []Job) ([]InsertResult, error)
 }
 
-// Job is the row to insert. ID and CreatedAt are assigned by the store,
-// not supplied here. Time fields are Go-native; the store normalizes.
+// Job is an insert row; the store assigns its ID and timestamps.
 type Job struct {
 	Kind        string
 	HandlerID   string
@@ -122,9 +120,7 @@ type InsertResult struct {
 	CreatedAt time.Time
 	Kind      string
 	HandlerID string
-	// ScheduledFor echoes the inserted job's tick (zero for a directly
-	// enqueued job), so a per-job OnEnqueue hook reports the right tick
-	// even across a multi-fire catch-up.
+	// ScheduledFor preserves each schedule tick across catch-up inserts.
 	ScheduledFor time.Time
 	// Duplicate is true when a UniqueKey collision made the store skip
 	// the insert; ID is then the existing live job's id.
@@ -146,15 +142,13 @@ type ClaimRequest struct {
 	Handlers map[HandlerKey]struct{}
 }
 
-// HandlerKey identifies a registered handler: a message kind plus a
-// handler-id. It is the routing key of a job row.
+// HandlerKey is the persisted routing identity of a registered handler.
 type HandlerKey struct {
 	Kind      string
 	HandlerID string
 }
 
-// ClaimedJob is a row returned by [Store.Claim]: the [Job] fields plus
-// the runtime identity the worker needs.
+// ClaimedJob is a [Job] plus its lease identity.
 type ClaimedJob struct {
 	Job
 	ID          string
@@ -162,8 +156,7 @@ type ClaimedJob struct {
 	LockedUntil time.Time
 }
 
-// Outcome is the parameter to [Store.Complete]: the job-state fields and
-// the ledger fields written in the same transaction.
+// Outcome contains the job state and attempt ledger fields written by [Store.Complete].
 type Outcome struct {
 	State       State
 	Attempt     int
@@ -232,5 +225,6 @@ type ScheduleFire struct {
 	ExpectedLastRun sql.NullTime // Valid=false for the first fire
 	NewLastRun      time.Time
 	NewNextRun      time.Time
+	Now             time.Time // manager clock: schedule updated_at and inserted jobs' timestamps
 	Jobs            []Job
 }

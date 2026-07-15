@@ -57,7 +57,7 @@ func runWorker(t *testing.T, m *jobs.Manager) {
 	t.Helper()
 	w, err := jobs.NewWorker(m, jobs.WorkerConfig{
 		PollInterval: 5 * time.Millisecond,
-		// Keep leases long enough for -race scheduler stalls.
+		// Allow for race-detector scheduling delays.
 		LeaseDuration:     timeScale * 150 * time.Millisecond,
 		HeartbeatInterval: 30 * time.Millisecond,
 		SweepInterval:     20 * time.Millisecond,
@@ -154,6 +154,161 @@ func TestSQLiteCancelRunning(t *testing.T) {
 	eventually(t, func() bool { return state(t, m, id) == jobs.StateCancelled }, "cancelled")
 }
 
+func TestSQLiteSweepCancellationWins(t *testing.T) {
+	m, store := newMgr(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	res, err := store.Insert(ctx, now, []jobs.Job{{
+		Kind: "email", HandlerID: "email", Payload: []byte("{}"),
+		Queue: "default", MaxAttempts: 5, AvailableAt: now,
+	}})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("insert: %v", err)
+	}
+	id := res[0].ID
+	claimed, err := store.Claim(ctx, jobs.ClaimRequest{
+		WorkerID: "w1", Queues: []string{"default"}, Now: now, Lease: time.Minute, Limit: 1,
+		Handlers: map[jobs.HandlerKey]struct{}{{Kind: "email", HandlerID: "email"}: {}},
+	})
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim: %v (n=%d)", err, len(claimed))
+	}
+	if immediate, err := store.Cancel(ctx, id, now); err != nil || immediate {
+		t.Fatalf("cancel of a running job: immediate=%v err=%v", immediate, err)
+	}
+	// Cancellation remains terminal after lease recovery.
+	if _, err := store.SweepExpired(ctx, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got := state(t, m, id); got != jobs.StateCancelled {
+		t.Fatalf("state = %q, want %q", got, jobs.StateCancelled)
+	}
+}
+
+func TestSQLiteClockControlsTimestamps(t *testing.T) {
+	fixed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	store, err := jobs.NewSQLiteStore(openDB(t), jobs.SQLiteOptions{AutoCreate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := jobs.New(store, jobs.Config{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:    func() time.Time { return fixed },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs.Handle(m, "email", func(jobs.Context, Email) error { return nil })
+	id, err := m.Enqueue(context.Background(), Email{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := m.GetJob(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Persisted timestamps use Config.Now.
+	if !info.CreatedAt.Equal(fixed) || !info.UpdatedAt.Equal(fixed) {
+		t.Fatalf("timestamps = created %v / updated %v, want injected %v", info.CreatedAt, info.UpdatedAt, fixed)
+	}
+}
+
+func TestSQLiteConcurrentUniqueKey(t *testing.T) {
+	m, _ := newMgr(t)
+	jobs.Handle(m, "email", func(jobs.Context, Email) error { return nil })
+	const n = 16
+	var wg sync.WaitGroup
+	dups := make([]bool, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := m.Enqueue(context.Background(), Email{}, jobs.UniqueKey("k"))
+			dups[i] = errors.Is(err, jobs.ErrDuplicate)
+		}(i)
+	}
+	wg.Wait()
+	live := 0
+	for _, d := range dups {
+		if !d {
+			live++
+		}
+	}
+	if live != 1 {
+		t.Fatalf("concurrent UniqueKey inserts created %d live jobs, want 1", live)
+	}
+}
+
+func TestSQLiteConcurrentFireSchedule(t *testing.T) {
+	_, store := newMgr(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := store.UpsertSchedule(ctx, jobs.ScheduleRow{
+		Name: "s", Kind: "email", Spec: "every:1000", Payload: []byte(`{}`), OptionsJSON: []byte(`{}`),
+		NextRunAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job := jobs.Job{Kind: "email", HandlerID: "email", Payload: []byte(`{}`), Queue: "default", MaxAttempts: 1, AvailableAt: now}
+	const n = 10
+	var wg sync.WaitGroup
+	var wins atomic.Int32
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			won, _, err := store.FireSchedule(ctx, jobs.ScheduleFire{
+				Name: "s", ExpectedLastRun: sql.NullTime{Valid: false},
+				NewLastRun: now, NewNextRun: now.Add(time.Second), Now: now, Jobs: []jobs.Job{job},
+			})
+			if err == nil && won {
+				wins.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	// One scheduler wins each tick.
+	if wins.Load() != 1 {
+		t.Fatalf("concurrent FireSchedule produced %d winners, want exactly 1", wins.Load())
+	}
+}
+
+func TestSQLiteCompleteDoesNotRegressUpdatedAt(t *testing.T) {
+	m, store := newMgr(t)
+	ctx := context.Background()
+	early := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	late := early.Add(time.Hour)
+	res, err := store.Insert(ctx, early, []jobs.Job{{
+		Kind: "email", HandlerID: "email", Payload: []byte("{}"),
+		Queue: "default", MaxAttempts: 5, AvailableAt: early,
+	}})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("insert: %v", err)
+	}
+	id := res[0].ID
+	if _, err := store.Claim(ctx, jobs.ClaimRequest{
+		WorkerID: "w1", Queues: []string{"default"}, Now: early, Lease: time.Minute, Limit: 1,
+		Handlers: map[jobs.HandlerKey]struct{}{{Kind: "email", HandlerID: "email"}: {}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Cancel(ctx, id, late); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Complete(ctx, id, "w1", early, jobs.Outcome{
+		State: jobs.StateSucceeded, Attempt: 1, AttemptState: jobs.AttemptSucceeded, StartedAt: early, FinishedAt: early,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := m.GetJob(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.UpdatedAt.Equal(late) {
+		t.Fatalf("updated_at = %v, want %v (MAX clamp must not regress under concurrent cancel)", info.UpdatedAt, late)
+	}
+}
+
 func TestSQLiteDedupAndDuplicate(t *testing.T) {
 	m, _ := newMgr(t)
 	jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { return nil })
@@ -196,20 +351,19 @@ func TestSQLiteFireScheduleCAS(t *testing.T) {
 	}
 	job := jobs.Job{Kind: "email", HandlerID: "email", Payload: []byte(`{}`), Queue: "default", MaxAttempts: 1, AvailableAt: now}
 	won, res, err := store.FireSchedule(ctx, jobs.ScheduleFire{
-		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Jobs: []jobs.Job{job},
+		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Now: now, Jobs: []jobs.Job{job},
 	})
 	if err != nil || !won || len(res) != 1 {
 		t.Fatalf("first fire: won=%v res=%d err=%v", won, len(res), err)
 	}
 	won, _, err = store.FireSchedule(ctx, jobs.ScheduleFire{
-		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Jobs: []jobs.Job{job},
+		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Now: now, Jobs: []jobs.Job{job},
 	})
 	if err != nil || won {
 		t.Fatalf("stale fire should lose: won=%v err=%v", won, err)
 	}
 }
 
-// TestSQLiteNoDoubleClaim pins guarded claim behavior with a plain DSN.
 func TestSQLiteNoDoubleClaim(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "race.db") + "?_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
@@ -299,7 +453,7 @@ func TestSQLiteInsertTx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := s2.InsertTx(context.Background(), tx, []jobs.Job{{
+	res, err := s2.InsertTx(context.Background(), tx, time.Now().UTC(), []jobs.Job{{
 		Kind: "email", HandlerID: "email", Payload: []byte(`{}`), Queue: "default", MaxAttempts: 1, AvailableAt: time.Now(),
 	}})
 	if err != nil {

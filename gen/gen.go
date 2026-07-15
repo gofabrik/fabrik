@@ -84,14 +84,10 @@ func New() *Gen {
 // SetModule records the module path of the app being generated.
 func (g *Gen) SetModule(path string) { g.module = path }
 
-// SetTypes supplies the type-checked packages (keyed by import path) so a
-// directive can resolve a library type by path via [Gen.LookupType].
+// SetTypes supplies type-checked packages for [Gen.LookupType].
 func (g *Gen) SetTypes(m map[string]*types.Package) { g.types = m }
 
-// LookupType returns the named type from the package at pkgPath, if that
-// package was type-checked in this run (i.e. the app imports it). It lets
-// a directive resolve a dependency type - jobs.Store, say - that appears
-// in no annotated signature but is imported elsewhere in the app.
+// LookupType returns a named type from a type-checked imported package.
 func (g *Gen) LookupType(pkgPath, name string) (types.Type, bool) {
 	pkg := g.types[pkgPath]
 	if pkg == nil {
@@ -177,6 +173,9 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 	}
 	m[name] = &lazyBind{build: build, owner: g.current}
 }
+
+// BindPath publishes an expression while its lazy path binding is materializing.
+func (g *Gen) BindPath(path, expr string) { g.pathExprs[path] = expr }
 
 // BindLazyPath registers a lazy binding matched by a printed type path.
 func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics)) {
@@ -275,9 +274,21 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 		lb.running = false
 	}()
 	expr, ds := lb.build()
-	// Diagnosed type builds are cached to report shared dependency errors once.
-	g.Bind(t, name, expr)
+	// BindPath may populate the type-keyed cache during the build.
+	if !g.typeBound(t, name) {
+		g.Bind(t, name, expr)
+	}
 	return expr, ds, true
+}
+
+// typeBound reports whether (t, name) already has a type-keyed bind.
+func (g *Gen) typeBound(t types.Type, name string) bool {
+	m, _ := g.binds.At(types.Unalias(t)).(map[string]string)
+	if m == nil {
+		return false
+	}
+	_, ok := m[name]
+	return ok
 }
 
 // cycleDiag reports the active provider cycle ending at key.
@@ -332,12 +343,7 @@ func (g *Gen) HasBinding(t types.Type, name string) bool {
 	return false
 }
 
-// HasProviderBinding reports whether a type-keyed lazy binding exists for
-// (t, name) - the kind a //fabrik:provider registers with BindLazy. It
-// deliberately ignores path-keyed bindings (BindLazyPath) and the eager
-// binds a library directive's own materialization leaves behind, so a
-// directive that owns a type by path can detect an app provider competing
-// for the same type, which Instance would silently shadow.
+// HasProviderBinding reports whether (t, name) has a provider-owned lazy binding, excluding library path bindings.
 func (g *Gen) HasProviderBinding(t types.Type, name string) bool {
 	t = types.Unalias(t)
 	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {

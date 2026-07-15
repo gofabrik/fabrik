@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-// TestDemoEndToEnd covers the committed demo wiring and startup path.
 func TestDemoEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping end-to-end test in -short mode")
@@ -30,8 +29,10 @@ func TestDemoEndToEnd(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "demo-bin")
+	// Build outside go.work to verify the demo's module metadata.
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = demoDir
+	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
@@ -68,10 +69,7 @@ func TestDemoEndToEnd(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 
-	// Wait for the server, then assert the synchronous greeting round-trip
-	// with two controlled requests: greetings are written in-request, so
-	// the greeting from the first shows up alongside the second's. (Done
-	// before the counter poll below, which floods greetings.)
+	// Verify synchronous greeting writes before polling asynchronous visits.
 	for {
 		if _, body := visit("one"); body != "" {
 			break
@@ -85,10 +83,7 @@ func TestDemoEndToEnd(t *testing.T) {
 		t.Fatalf("greetings are synchronous; the second response should list both:\n%s", body)
 	}
 
-	// Recording a visit is deferred to a background job, so the counter is
-	// eventually consistent: each request enqueues a Visit the worker
-	// records later. Poll the page until the counter has advanced past the
-	// enqueued visits, which proves the async side effect actually ran.
+	// Visit counts are eventually consistent because workers update them asynchronously.
 	for {
 		if n, _ := visit("poll"); n >= 2 {
 			break
@@ -101,8 +96,6 @@ func TestDemoEndToEnd(t *testing.T) {
 	sessionFlow(t, port)
 }
 
-// sessionFlow asserts the session-backed greeting: ?name= renames,
-// and the name persists per visitor through the cookie jar.
 func sessionFlow(t *testing.T, port string) {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
@@ -133,8 +126,6 @@ func sessionFlow(t *testing.T, port string) {
 	if strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("flash showed on the request that added it - it must ride the commit to the next one:\n%s", body)
 	}
-	// The second request carries no name; the session remembers the
-	// greeting and the flash library's cell arrives alongside it.
 	body = get(client, "/")
 	if !strings.Contains(body, "Goodbye, alice!") {
 		t.Fatalf("session did not persist the greeting name:\n%s", body)
@@ -142,11 +133,9 @@ func sessionFlow(t *testing.T, port string) {
 	if !strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("flash message did not round-trip through the store:\n%s", body)
 	}
-	// The flash is one-shot: taken, it is gone.
 	if body = get(client, "/"); strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("flash survived being taken:\n%s", body)
 	}
-	// A visitor without the cookie is unaffected: distinct session.
 	if body := get(http.DefaultClient, "/"); !strings.Contains(body, "Goodbye, world!") {
 		t.Fatalf("fresh visitor should get the default greeting:\n%s", body)
 	}

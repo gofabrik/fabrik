@@ -127,13 +127,13 @@ func nullNanos(t time.Time, set bool) sql.NullInt64 {
 
 const terminalStates = "'succeeded','failed','cancelled','discarded'"
 
-func (s *SQLiteStore) Insert(ctx context.Context, jobs []Job) ([]InsertResult, error) {
+func (s *SQLiteStore) Insert(ctx context.Context, now time.Time, jobs []Job) ([]InsertResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	out, err := insertTx(ctx, tx, jobs)
+	out, err := insertTx(ctx, tx, now, jobs)
 	if err != nil {
 		return nil, err
 	}
@@ -144,13 +144,13 @@ func (s *SQLiteStore) Insert(ctx context.Context, jobs []Job) ([]InsertResult, e
 }
 
 // InsertTx is the transactional-enqueue capability ([TxEnqueuer]).
-func (s *SQLiteStore) InsertTx(ctx context.Context, tx *sql.Tx, jobs []Job) ([]InsertResult, error) {
-	return insertTx(ctx, tx, jobs)
+func (s *SQLiteStore) InsertTx(ctx context.Context, tx *sql.Tx, now time.Time, jobs []Job) ([]InsertResult, error) {
+	return insertTx(ctx, tx, now, jobs)
 }
 
 // insertTx writes a batch inside tx, deduping live unique keys as it goes.
-func insertTx(ctx context.Context, tx *sql.Tx, jobs []Job) ([]InsertResult, error) {
-	now := time.Now().UTC()
+func insertTx(ctx context.Context, tx *sql.Tx, now time.Time, jobs []Job) ([]InsertResult, error) {
+	now = now.UTC()
 	out := make([]InsertResult, 0, len(jobs))
 	for _, j := range jobs {
 		if j.UniqueKey != "" {
@@ -252,6 +252,7 @@ func (s *SQLiteStore) Claim(ctx context.Context, req ClaimRequest) ([]ClaimedJob
 	}
 	fetch := limit
 	if len(req.QueueLimits) > 0 {
+		// Queue limits are applied in Go over a fixed 500-row candidate window.
 		fetch = 500
 	}
 
@@ -332,7 +333,7 @@ func (s *SQLiteStore) Claim(ctx context.Context, req ClaimRequest) ([]ClaimedJob
 	return out, nil
 }
 
-func (s *SQLiteStore) Heartbeat(ctx context.Context, jobID, workerID string, until time.Time) (bool, error) {
+func (s *SQLiteStore) Heartbeat(ctx context.Context, jobID, workerID string, now, until time.Time) (bool, error) {
 	var cancelReq int
 	err := s.db.QueryRowContext(ctx,
 		"SELECT cancel_requested FROM jobs WHERE id=? AND state='running' AND locked_by=?",
@@ -345,7 +346,7 @@ func (s *SQLiteStore) Heartbeat(ctx context.Context, jobID, workerID string, unt
 	}
 	res, err := s.db.ExecContext(ctx,
 		"UPDATE jobs SET locked_until=?, updated_at=? WHERE id=? AND locked_by=? AND state='running'",
-		nanos(until), nanos(time.Now()), jobID, workerID)
+		nanos(until), nanos(now), jobID, workerID)
 	if err != nil {
 		return false, err
 	}
@@ -356,7 +357,7 @@ func (s *SQLiteStore) Heartbeat(ctx context.Context, jobID, workerID string, unt
 	return cancelReq != 0, nil
 }
 
-func (s *SQLiteStore) Complete(ctx context.Context, jobID, workerID string, o Outcome) (State, error) {
+func (s *SQLiteStore) Complete(ctx context.Context, jobID, workerID string, now time.Time, o Outcome) (State, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -387,7 +388,7 @@ func (s *SQLiteStore) Complete(ctx context.Context, jobID, workerID string, o Ou
 		}
 	}
 
-	now := time.Now().UTC()
+	now = now.UTC()
 	newAttempt := o.Attempt
 	if record {
 		if cancelReq != 0 && o.AttemptState == "" {
@@ -411,8 +412,9 @@ VALUES (?,?,?,?,?,?,?,?)`,
 		avail = nanos(o.AvailableAt)
 	}
 	// Ownership guards roll back the attempt insert on a stolen lease.
+	// Preserve newer timestamps written by concurrent operations.
 	res, err := tx.ExecContext(ctx, `UPDATE jobs SET state=?, attempt=?, error=?, available_at=CASE WHEN ?>0 THEN ? ELSE available_at END,
-locked_by='', locked_until=0, cancel_requested=0, updated_at=? WHERE id=? AND locked_by=? AND state='running'`,
+locked_by='', locked_until=0, cancel_requested=0, updated_at=MAX(updated_at, ?) WHERE id=? AND locked_by=? AND state='running'`,
 		string(applied), newAttempt, o.Error, avail, avail, nanos(now), jobID, workerID)
 	if err != nil {
 		return "", err
@@ -434,7 +436,7 @@ func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) (int, err
 	defer tx.Rollback()
 
 	rows, err := tx.QueryContext(ctx,
-		"SELECT id, attempt, max_attempts, locked_by, locked_until FROM jobs WHERE state='running' AND locked_until>0 AND locked_until<=?",
+		"SELECT id, attempt, max_attempts, locked_by, locked_until, cancel_requested FROM jobs WHERE state='running' AND locked_until>0 AND locked_until<=?",
 		nanos(now))
 	if err != nil {
 		return 0, err
@@ -444,11 +446,12 @@ func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) (int, err
 		attempt, maxAtt int
 		lockedBy        string
 		lockedUntil     int64
+		cancelRequested bool
 	}
 	var list []expired
 	for rows.Next() {
 		var e expired
-		if err := rows.Scan(&e.id, &e.attempt, &e.maxAtt, &e.lockedBy, &e.lockedUntil); err != nil {
+		if err := rows.Scan(&e.id, &e.attempt, &e.maxAtt, &e.lockedBy, &e.lockedUntil, &e.cancelRequested); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -464,9 +467,14 @@ func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) (int, err
 		attemptNum := e.attempt + 1
 		newState := StateAvailable
 		errMsg := ""
-		if attemptNum >= e.maxAtt {
-			newState = StateDiscarded
-			errMsg = "lease expired"
+		attemptState, attemptErr := AttemptFailed, "lease expired"
+		switch {
+		case e.cancelRequested:
+			// Cancellation remains terminal across lease recovery.
+			newState, errMsg = StateCancelled, "cancelled"
+			attemptState, attemptErr = AttemptCancelled, "cancelled after lease expiry"
+		case attemptNum >= e.maxAtt:
+			newState, errMsg = StateDiscarded, "lease expired"
 		}
 		// Reclaim only the lease observed by the select.
 		res, err := tx.ExecContext(ctx,
@@ -481,7 +489,7 @@ func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) (int, err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO job_attempts (id,job_id,attempt,worker_id,state,error,started_at,finished_at)
 VALUES (?,?,?,?,?,?,?,?)`,
-			NewID(), e.id, attemptNum, e.lockedBy, string(AttemptFailed), "lease expired", e.lockedUntil, nanos(now)); err != nil {
+			NewID(), e.id, attemptNum, e.lockedBy, string(attemptState), attemptErr, e.lockedUntil, nanos(now)); err != nil {
 			return 0, err
 		}
 		count++
@@ -874,7 +882,7 @@ func (s *SQLiteStore) FireSchedule(ctx context.Context, f ScheduleFire) (bool, [
 	newLast := nullNanos(f.NewLastRun, !f.NewLastRun.IsZero())
 	res, err := tx.ExecContext(ctx,
 		"UPDATE job_schedules SET last_run_at=?, next_run_at=?, updated_at=? WHERE sched_group=? AND name=? AND last_run_at IS ?",
-		newLast, nanos(f.NewNextRun), nanos(time.Now()), f.Group, f.Name, expected)
+		newLast, nanos(f.NewNextRun), nanos(f.Now), f.Group, f.Name, expected)
 	if err != nil {
 		return false, nil, err
 	}
@@ -888,7 +896,7 @@ func (s *SQLiteStore) FireSchedule(ctx context.Context, f ScheduleFire) (bool, [
 		}
 		return false, nil, nil
 	}
-	results, err := insertTx(ctx, tx, f.Jobs)
+	results, err := insertTx(ctx, tx, f.Now, f.Jobs)
 	if err != nil {
 		return false, nil, err
 	}

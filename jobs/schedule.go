@@ -111,6 +111,24 @@ func (m *Manager) Schedule(name string, spec Spec, msg any, opts ScheduleOptions
 	if len(ids) == 0 {
 		return fmt.Errorf("jobs.Schedule: kind %q has no handler; a schedule that fires nothing is refused", kind)
 	}
+	// Reject declarations that would fail on every scheduler tick.
+	if opts.Queue != "" {
+		if err := validIdent("queue", opts.Queue); err != nil {
+			return err
+		}
+	}
+	if opts.MaxAttempts < 0 {
+		return fmt.Errorf("jobs.Schedule: MaxAttempts must be >= 0 (got %d)", opts.MaxAttempts)
+	}
+	if opts.Timeout < 0 {
+		return fmt.Errorf("jobs.Schedule: Timeout must be >= 0 (got %v)", opts.Timeout)
+	}
+	if err := validOnTimeout(opts.OnTimeout); err != nil {
+		return err
+	}
+	if err := validCatchUp(opts.CatchUp); err != nil {
+		return err
+	}
 	if opts.Singleton && opts.CatchUp == CatchUpAll {
 		m.config.Logger.Warn("jobs.Schedule: Singleton with CatchUpAll collapses every catch-up fire to one live job; use CatchUpOnce for the same effect without redundant inserts",
 			"schedule", name)
@@ -126,7 +144,6 @@ func (m *Manager) Schedule(name string, spec Spec, msg any, opts ScheduleOptions
 	return m.declare(row)
 }
 
-// buildScheduleRow constructs a row without mutating the declared set.
 func (m *Manager) buildScheduleRow(name, kind string, payload []byte, spec Spec, opts ScheduleOptions) (ScheduleRow, error) {
 	optsJSON, err := json.Marshal(opts)
 	if err != nil {
@@ -149,9 +166,7 @@ func (m *Manager) buildScheduleRow(name, kind string, payload []byte, spec Spec,
 	}, nil
 }
 
-// declare records an in-memory schedule declaration. The name is
-// persistent identity; duplicate declarations return
-// [ErrScheduleAlreadyDeclared].
+// Schedule names are persistent identities within a scheduler group.
 func (m *Manager) declare(row ScheduleRow) error {
 	m.schedMu.Lock()
 	defer m.schedMu.Unlock()
@@ -254,20 +269,12 @@ func (m *Manager) fireSchedule(ctx context.Context, row ScheduleRow, now time.Ti
 
 	expected := sql.NullTime{Time: row.LastRunAt, Valid: row.LastRunSet}
 
-	// Advance next_run so this schedule does not wake every tick.
 	if len(ticks) == 0 {
-		fire := ScheduleFire{Group: row.Group, Name: row.Name, ExpectedLastRun: expected, NewLastRun: row.LastRunAt, NewNextRun: next}
-		if !row.LastRunSet {
-			// Keep last_run NULL.
-			fire.NewLastRun = time.Time{}
-		}
-		fCtx, cancel := m.withStoreTimeout(ctx)
-		_, _, _ = m.store.FireSchedule(fCtx, fire)
-		cancel()
+		m.advanceSchedule(ctx, row, next, expected)
 		return
 	}
 
-	// Live handler set decides fan-out (the scheduler process's set).
+	// Fan-out follows handlers registered in this scheduler process.
 	m.mu.RLock()
 	handlerIDs := append([]string(nil), m.kindHandlers[row.Kind]...)
 	m.mu.RUnlock()
@@ -284,7 +291,6 @@ func (m *Manager) fireSchedule(ctx context.Context, row ScheduleRow, now time.Ti
 		onTimeout:   opts.OnTimeout,
 	}
 	if opts.Singleton {
-		// Include the group because schedule names are group-scoped.
 		o.uniqueKey = "schedule:" + row.Group + ":" + row.Name
 	}
 
@@ -292,13 +298,15 @@ func (m *Manager) fireSchedule(ctx context.Context, row ScheduleRow, now time.Ti
 	for _, tick := range ticks {
 		jobsForTick, err := m.buildJobs(row.Kind, handlerIDs, json.RawMessage(row.Payload), o, tick, true)
 		if err != nil {
-			m.config.Logger.Warn("jobs: scheduler buildJobs", "schedule", row.Name, "err", err)
+			// Skip invalid persisted rows without creating a hot loop.
+			m.config.Logger.Warn("jobs: scheduler buildJobs; advancing without firing", "schedule", row.Name, "err", err)
+			m.advanceSchedule(ctx, row, next, expected)
 			return
 		}
 		emitted = append(emitted, jobsForTick...)
 	}
 
-	fire := ScheduleFire{Group: row.Group, Name: row.Name, ExpectedLastRun: expected, NewLastRun: now, NewNextRun: next, Jobs: emitted}
+	fire := ScheduleFire{Group: row.Group, Name: row.Name, ExpectedLastRun: expected, NewLastRun: now, NewNextRun: next, Now: now, Jobs: emitted}
 	fCtx, cancel := m.withStoreTimeout(ctx)
 	won, results, err := m.store.FireSchedule(fCtx, fire)
 	cancel()
@@ -309,8 +317,19 @@ func (m *Manager) fireSchedule(ctx context.Context, row ScheduleRow, now time.Ti
 	if !won {
 		return
 	}
-	// InsertResult carries each job's tick for catch-up bursts.
+	// Results preserve each catch-up tick for enqueue hooks.
 	m.fireEnqueueHooks(ctx, results, row.Kind, false, row.Name)
+}
+
+// advanceSchedule skips a tick without recording a run or firing enqueue hooks.
+func (m *Manager) advanceSchedule(ctx context.Context, row ScheduleRow, next time.Time, expected sql.NullTime) {
+	fire := ScheduleFire{Group: row.Group, Name: row.Name, ExpectedLastRun: expected, NewLastRun: row.LastRunAt, NewNextRun: next, Now: m.now()}
+	if !row.LastRunSet {
+		fire.NewLastRun = time.Time{} // keep last_run NULL
+	}
+	fCtx, cancel := m.withStoreTimeout(ctx)
+	_, _, _ = m.store.FireSchedule(fCtx, fire)
+	cancel()
 }
 
 // planFires returns the tick times this fire should emit, the new

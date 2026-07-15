@@ -18,7 +18,6 @@ type Context interface {
 	ScheduledFor() (time.Time, bool)
 }
 
-// jobMeta is the per-run metadata carried on the context.
 type jobMeta struct {
 	jobID        string
 	kind         string
@@ -73,9 +72,7 @@ func Kind(ctx context.Context) string {
 	return ""
 }
 
-// AttemptNumber returns the current attempt (1-based), or 0 outside a
-// job. (Named to avoid colliding with the [Attempt] ledger type; the
-// [Context.Attempt] method is unaffected.)
+// AttemptNumber returns the current attempt, starting at 1, or 0 outside a job.
 func AttemptNumber(ctx context.Context) int {
 	if m := metaFrom(ctx); m != nil {
 		return m.attempt

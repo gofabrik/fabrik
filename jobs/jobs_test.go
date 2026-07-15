@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -163,6 +164,394 @@ func TestEnqueuePublishScheduleRejectPointer(t *testing.T) {
 	if _, err := m.Enqueue(context.Background(), (*Email)(nil)); err == nil {
 		t.Fatal("Enqueue must reject a nil pointer message")
 	}
+}
+
+func TestClockControlsTimestamps(t *testing.T) {
+	fixed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	store := NewMemoryStore()
+	m, err := New(store, Config{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:    func() time.Time { return fixed },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	id, err := m.Enqueue(context.Background(), Email{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := m.GetJob(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Persisted timestamps use Config.Now.
+	if !info.CreatedAt.Equal(fixed) || !info.UpdatedAt.Equal(fixed) {
+		t.Fatalf("timestamps = created %v / updated %v, want injected %v", info.CreatedAt, info.UpdatedAt, fixed)
+	}
+}
+
+// flakyStore injects transient completion failures.
+type flakyStore struct {
+	Store
+	failCompletes atomic.Int32
+}
+
+func (f *flakyStore) Complete(ctx context.Context, jobID, workerID string, now time.Time, o Outcome) (State, error) {
+	if f.failCompletes.Add(-1) >= 0 {
+		return "", errors.New("transient store failure")
+	}
+	return f.Store.Complete(ctx, jobID, workerID, now, o)
+}
+
+func TestCompleteRetriesTransientFailure(t *testing.T) {
+	fs := &flakyStore{Store: NewMemoryStore()}
+	fs.failCompletes.Store(2)
+	m := testManager(t, fs)
+	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	// Completion retries continue beyond the original claim deadline.
+	runWorker(t, m, WorkerConfig{
+		PollInterval: 5 * time.Millisecond, LeaseDuration: 60 * time.Millisecond,
+		HeartbeatInterval: 20 * time.Millisecond, SweepInterval: 10 * time.Second,
+	})
+	id, err := m.Enqueue(context.Background(), Email{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() bool {
+		i, _ := m.GetJob(context.Background(), id)
+		return i != nil && i.State == StateSucceeded
+	}, "succeeded after transient completion failures past the original lease")
+}
+
+func TestCompleteDoesNotRegressUpdatedAt(t *testing.T) {
+	store := NewMemoryStore()
+	m := testManager(t, store)
+	ctx := context.Background()
+	early := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	late := early.Add(time.Hour)
+	res, err := store.Insert(ctx, early, []Job{{
+		Kind: "email", HandlerID: "email", Payload: []byte("{}"),
+		Queue: "default", MaxAttempts: 5, AvailableAt: early,
+	}})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("insert: %v", err)
+	}
+	id := res[0].ID
+	if _, err := store.Claim(ctx, ClaimRequest{
+		WorkerID: "w1", Queues: []string{"default"}, Now: early, Lease: time.Minute, Limit: 1,
+		Handlers: map[HandlerKey]struct{}{{Kind: "email", HandlerID: "email"}: {}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Completion must not replace a newer cancellation timestamp.
+	if _, err := store.Cancel(ctx, id, late); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Complete(ctx, id, "w1", early, Outcome{
+		State: StateSucceeded, Attempt: 1, AttemptState: AttemptSucceeded, StartedAt: early, FinishedAt: early,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := m.GetJob(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.UpdatedAt.Equal(late) {
+		t.Fatalf("updated_at = %v, want %v (must not regress under a concurrent cancel)", info.UpdatedAt, late)
+	}
+}
+
+func TestCancelWinsOverCompletion(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	res, err := store.Insert(ctx, now, []Job{{
+		Kind: "email", HandlerID: "email", Payload: []byte("{}"),
+		Queue: "default", MaxAttempts: 5, AvailableAt: now,
+	}})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("insert: %v", err)
+	}
+	id := res[0].ID
+	if _, err := store.Claim(ctx, ClaimRequest{
+		WorkerID: "w1", Queues: []string{"default"}, Now: now, Lease: time.Minute, Limit: 1,
+		Handlers: map[HandlerKey]struct{}{{Kind: "email", HandlerID: "email"}: {}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Cancel(ctx, id, now); err != nil {
+		t.Fatal(err)
+	}
+	// A stored cancellation overrides the runner's outcome.
+	applied, err := store.Complete(ctx, id, "w1", now, Outcome{
+		State: StateSucceeded, Attempt: 1, AttemptState: AttemptSucceeded, StartedAt: now, FinishedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != StateCancelled {
+		t.Fatalf("applied = %q, want cancelled (cancel wins over the runner's success)", applied)
+	}
+}
+
+func TestConcurrentUniqueKeyInsert(t *testing.T) {
+	store := NewMemoryStore()
+	m := testManager(t, store)
+	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	const n = 20
+	var wg sync.WaitGroup
+	ids := make([]string, n)
+	dups := make([]bool, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id, err := m.Enqueue(context.Background(), Email{}, UniqueKey("k"))
+			ids[i] = id
+			dups[i] = errors.Is(err, ErrDuplicate)
+		}(i)
+	}
+	wg.Wait()
+	// All callers observe the same live job.
+	live := 0
+	for i := 0; i < n; i++ {
+		if !dups[i] {
+			live++
+		}
+	}
+	if live != 1 {
+		t.Fatalf("concurrent UniqueKey inserts created %d live jobs, want 1", live)
+	}
+	for i := 0; i < n; i++ {
+		if ids[i] != ids[0] {
+			t.Fatalf("id[%d]=%s != id[0]=%s; all should be the one live job", i, ids[i], ids[0])
+		}
+	}
+}
+
+func TestSweepExpiredCancellationWins(t *testing.T) {
+	store := NewMemoryStore()
+	m := testManager(t, store)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	res, err := store.Insert(ctx, now, []Job{{
+		Kind: "email", HandlerID: "email", Payload: []byte("{}"),
+		Queue: "default", MaxAttempts: 5, AvailableAt: now,
+	}})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("insert: %v", err)
+	}
+	id := res[0].ID
+	claimed, err := store.Claim(ctx, ClaimRequest{
+		WorkerID: "w1", Queues: []string{"default"}, Now: now, Lease: time.Minute, Limit: 1,
+		Handlers: map[HandlerKey]struct{}{{Kind: "email", HandlerID: "email"}: {}},
+	})
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim: %v (n=%d)", err, len(claimed))
+	}
+	if immediate, err := store.Cancel(ctx, id, now); err != nil || immediate {
+		t.Fatalf("cancel of a running job: immediate=%v err=%v", immediate, err)
+	}
+	// Cancellation remains terminal after lease recovery.
+	if _, err := store.SweepExpired(ctx, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := m.GetJob(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != StateCancelled {
+		t.Fatalf("state = %q, want %q", info.State, StateCancelled)
+	}
+}
+
+func TestShutdownTimeoutDefault(t *testing.T) {
+	m := testManager(t, NewMemoryStore())
+	w, err := NewWorker(m, WorkerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.cfg.ShutdownTimeout != 30*time.Second {
+		t.Fatalf("zero ShutdownTimeout = %v, want 30s default", w.cfg.ShutdownTimeout)
+	}
+}
+
+func TestShutdownDeadlineReturns(t *testing.T) {
+	m := testManager(t, NewMemoryStore())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	Handle[Email](m, "email", func(c Context, e Email) error {
+		close(started)
+		<-release
+		return nil
+	})
+	w, err := NewWorker(m, WorkerConfig{
+		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
+		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startDone := make(chan error, 1)
+	go func() { startDone <- w.Start(context.Background()) }()
+	if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	// Shutdown deadlines bound non-cooperative handlers.
+	stopCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop = %v, want DeadlineExceeded (handler ignores cancel)", err)
+	}
+	select {
+	case err := <-startDone:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Start = %v, want DeadlineExceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return after the Stop deadline")
+	}
+	close(release)
+}
+
+// decodePause blocks decoding before the handler-start transition.
+type decodePause struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+var decodeHook atomic.Pointer[decodePause]
+
+type blockDecodeMsg struct{}
+
+func (*blockDecodeMsg) UnmarshalJSON([]byte) error {
+	if h := decodeHook.Load(); h != nil {
+		close(h.entered)
+		<-h.release
+	}
+	return nil
+}
+
+func TestHandlerNotStartedAfterAbandon(t *testing.T) {
+	pause := &decodePause{entered: make(chan struct{}), release: make(chan struct{})}
+	decodeHook.Store(pause)
+	defer decodeHook.Store(nil)
+
+	m := testManager(t, NewMemoryStore())
+	var ran atomic.Bool
+	Handle[blockDecodeMsg](m, "block", func(Context, blockDecodeMsg) error {
+		ran.Store(true)
+		return nil
+	})
+	w, err := NewWorker(m, WorkerConfig{
+		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
+		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startDone := make(chan error, 1)
+	go func() { startDone <- w.Start(context.Background()) }()
+	if _, err := m.Enqueue(context.Background(), blockDecodeMsg{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain wins while the attempt is still registered.
+	<-pause.entered
+	stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop = %v, want DeadlineExceeded", err)
+	}
+	// The registered to running transition must fail after abandonment.
+	close(pause.release)
+	<-startDone
+	time.Sleep(50 * time.Millisecond)
+	if ran.Load() {
+		t.Fatal("handler was invoked after its attempt was abandoned")
+	}
+}
+
+func TestAbandonedRunEmitsFinishHook(t *testing.T) {
+	var finishes atomic.Int32
+	var committed atomic.Bool
+	committed.Store(true)
+	store := NewMemoryStore()
+	m, err := New(store, Config{
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DefaultBackoff: ExponentialBackoff{Base: time.Millisecond, Max: 5 * time.Millisecond},
+		Hooks: Hooks{OnAttemptFinish: func(_ context.Context, e AttemptFinishEvent) {
+			finishes.Add(1)
+			committed.Store(e.Committed)
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	Handle[Email](m, "email", func(c Context, e Email) error {
+		close(started)
+		<-release
+		return nil
+	})
+	w, err := NewWorker(m, WorkerConfig{
+		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
+		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = w.Start(context.Background()) }()
+	if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	stopCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop = %v, want DeadlineExceeded", err)
+	}
+	// An abandoned run reports an uncommitted finish after the handler returns.
+	close(release)
+	eventually(t, func() bool { return finishes.Load() == 1 }, "OnAttemptFinish fired once")
+	if committed.Load() {
+		t.Fatal("abandoned attempt's OnAttemptFinish must have Committed=false")
+	}
+}
+
+func TestTimeoutIsCooperative(t *testing.T) {
+	m := testManager(t, NewMemoryStore())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	Handle[Email](m, "email", func(c Context, e Email) error {
+		close(started)
+		<-release
+		return c.Err()
+	})
+	runWorker(t, m, WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond})
+	id, err := m.Enqueue(context.Background(), Email{}, Timeout(50*time.Millisecond), TimeoutAction(TimeoutFail))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	// Timeout cancels the context but does not terminate the handler.
+	time.Sleep(200 * time.Millisecond)
+	info, err := m.GetJob(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != StateRunning {
+		t.Fatalf("state = %q while the handler ignores its timeout, want running", info.State)
+	}
+	// Timeout policy applies after the handler returns.
+	close(release)
+	eventually(t, func() bool {
+		i, _ := m.GetJob(context.Background(), id)
+		return i != nil && i.State == StateFailed
+	}, "timeout policy applied after return")
 }
 
 func TestStartRejectsSecondStart(t *testing.T) {
@@ -331,7 +720,7 @@ func TestDecodePayloadPark(t *testing.T) {
 	store := NewMemoryStore()
 	m := testManager(t, store)
 	Handle[Email](m, "email", func(Context, Email) error { return nil })
-	_, err := store.Insert(context.Background(), []Job{{
+	_, err := store.Insert(context.Background(), time.Now().UTC(), []Job{{
 		Kind: "email", HandlerID: "email", Payload: []byte("not json"),
 		Queue: "default", MaxAttempts: 3, AvailableAt: time.Now(),
 	}})
@@ -353,9 +742,10 @@ func TestClaimFilterSkipsUnrunnable(t *testing.T) {
 	store := NewMemoryStore()
 	m := testManager(t, store)
 	Handle[Email](m, "email", func(Context, Email) error { return nil })
-	res, _ := store.Insert(context.Background(), []Job{{
+	now := time.Now().UTC()
+	res, _ := store.Insert(context.Background(), now, []Job{{
 		Kind: "email", HandlerID: "other", Payload: []byte(`{}`),
-		Queue: "default", MaxAttempts: 3, AvailableAt: time.Now(),
+		Queue: "default", MaxAttempts: 3, AvailableAt: now,
 	}})
 	id := res[0].ID
 	runWorker(t, m, WorkerConfig{})

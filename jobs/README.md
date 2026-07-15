@@ -1,9 +1,7 @@
 # jobs
 
-A durable, embeddable background-job engine. Typed messages, one handler
-(a command) or many (an event), retries with backoff, cron and delayed
-triggers, crash recovery. Standalone: net/http or nothing, any `*sql.DB`,
-no framework. Memory and SQLite backends; neither imports a SQL driver.
+A durable background-job engine with typed messages, retries, scheduling,
+crash recovery, and memory or SQLite storage.
 
 ```go
 type WelcomeEmail struct{ UserID int64 }
@@ -11,7 +9,6 @@ type WelcomeEmail struct{ UserID int64 }
 mgr, _ := jobs.New(jobs.NewMemoryStore(), jobs.Config{})
 
 jobs.Handle(mgr, "email.welcome", func(ctx jobs.Context, m WelcomeEmail) error {
-	// ... send it ...
 	return nil
 })
 
@@ -55,12 +52,17 @@ non-idempotent side effects behind your own idempotency key.
 
 - **Retries** with exponential backoff and jitter; `ErrPermanent`
   short-circuits to failed; a bounded `MaxAttempts` (default 25).
-- **Per-attempt timeout** with a `TimeoutRetry` / `TimeoutFail` /
-  `TimeoutDiscard` policy.
-- **Cancellation**: `CancelJob` stops a pending job now, a running one on
-  its next heartbeat.
+- **Per-attempt timeout** with a `TimeoutRetry`, `TimeoutFail`, or
+  `TimeoutDiscard` policy. Timeout and cancellation are cooperative: the
+  deadline cancels the context but cannot terminate the goroutine. Timeout
+  policy applies after the handler returns.
+- **Cancellation**: `CancelJob` stops a pending job now; a running one is
+  requested to stop on its next heartbeat by cancelling its context.
 - **Crash recovery**: an expired lease is reclaimed and re-run (or
   discarded at the cap).
+- **Concurrency**: `Concurrency` caps in-flight jobs; `PerQueue` caps them
+  per queue. With `PerQueue` set, SQLite applies budgets over a fixed 500-row
+  candidate window, so a saturated queue can delay eligible rows beyond it.
 - **Inspection**: `GetJob`, `ListJobs`, `ListJobAttempts`, `ListQueues`,
   `ListWorkers`. **Hooks**: `OnEnqueue`, `OnAttemptStart`,
   `OnAttemptFinish`.
@@ -93,7 +95,7 @@ store := jobs.NewMemoryStore()                       // tests, local dev
 store, _ := jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: true})
 ```
 
-The SQLite store takes a `*sql.DB` you opened - it imports no driver.
+The SQLite store takes a caller-opened `*sql.DB` and imports no driver.
 Open it with WAL, a busy timeout, and immediate-locked transactions; for
 `modernc.org/sqlite`:
 
@@ -102,6 +104,5 @@ file:jobs.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immedi
 ```
 
 Construct with `AutoCreate: true`, or apply `jobs.SQLiteSchema()` through
-your migrations. Single node (one file, possibly several processes on
-it). PostgreSQL and durable workflow steps are later, behind the same
-`Store` interface.
+your migrations. It supports one SQLite file used by one or more processes
+on a single node.

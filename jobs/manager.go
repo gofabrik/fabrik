@@ -60,7 +60,6 @@ type Manager struct {
 	declared map[string]ScheduleRow // schedule name -> declaration (this group)
 }
 
-// handlerEntry is a type-erased registered handler.
 type handlerEntry struct {
 	decode func([]byte) (any, error)
 	invoke func(Context, any) error
@@ -203,8 +202,6 @@ func Handle[T any](m *Manager, kind string, fn func(Context, T) error) error {
 	return On[T](m, kind, fn)
 }
 
-// resolve maps a message value to its kind and the handler-ids
-// registered for it (in registration order).
 func (m *Manager) resolve(msg any) (kind string, ids []string, err error) {
 	t := reflect.TypeOf(msg)
 	if t == nil {
@@ -224,7 +221,6 @@ func (m *Manager) resolve(msg any) (kind string, ids []string, err error) {
 	return kind, ids, nil
 }
 
-// handlerFor returns the registered handler for a key.
 func (m *Manager) handlerFor(k HandlerKey) (handlerEntry, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -232,8 +228,6 @@ func (m *Manager) handlerFor(k HandlerKey) (handlerEntry, bool) {
 	return e, ok
 }
 
-// handlerSet returns this process's registered (kind, handler-id) set,
-// for the claim filter.
 func (m *Manager) handlerSet() map[HandlerKey]struct{} {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -277,7 +271,7 @@ func MaxAttempts(n int) Option { return func(o *jobOpts) { o.maxAttempts = n } }
 // WithBackoff sets a per-job backoff override (must be serializable).
 func WithBackoff(b Backoff) Option { return func(o *jobOpts) { o.backoff = b } }
 
-// Timeout sets a per-attempt timeout.
+// Timeout sets a cooperative per-attempt cancellation deadline.
 func Timeout(d time.Duration) Option { return func(o *jobOpts) { o.timeout = d } }
 
 // TimeoutAction sets what a timed-out attempt does.
@@ -328,6 +322,9 @@ func (m *Manager) buildJobs(kind string, ids []string, msg any, o *jobOpts, sche
 	}
 	if o.timeout < 0 {
 		return nil, fmt.Errorf("jobs: Timeout must be >= 0 (got %v)", o.timeout)
+	}
+	if err := validOnTimeout(o.onTimeout); err != nil {
+		return nil, err
 	}
 	timeoutMs := int64(o.timeout / time.Millisecond)
 	if o.timeout > 0 && timeoutMs == 0 {
@@ -381,7 +378,7 @@ func (m *Manager) Enqueue(ctx context.Context, msg any, opts ...Option) (string,
 	if err != nil {
 		return "", err
 	}
-	results, err := m.store.Insert(ctx, rows)
+	results, err := m.store.Insert(ctx, m.now(), rows)
 	if err != nil {
 		return "", err
 	}
@@ -416,7 +413,7 @@ func (m *Manager) Publish(ctx context.Context, msg any, opts ...Option) ([]Publi
 	if err != nil {
 		return nil, err
 	}
-	results, err := m.store.Insert(ctx, rows)
+	results, err := m.store.Insert(ctx, m.now(), rows)
 	if err != nil {
 		return nil, err
 	}
@@ -447,7 +444,7 @@ func (m *Manager) EnqueueTx(ctx context.Context, tx *sql.Tx, msg any, opts ...Op
 	if err != nil {
 		return "", err
 	}
-	results, err := txs.InsertTx(ctx, tx, rows)
+	results, err := txs.InsertTx(ctx, tx, m.now(), rows)
 	if err != nil {
 		return "", err
 	}
@@ -476,7 +473,7 @@ func (m *Manager) PublishTx(ctx context.Context, tx *sql.Tx, msg any, opts ...Op
 	if err != nil {
 		return nil, err
 	}
-	results, err := txs.InsertTx(ctx, tx, rows)
+	results, err := txs.InsertTx(ctx, tx, m.now(), rows)
 	if err != nil {
 		return nil, err
 	}
@@ -492,8 +489,7 @@ func toPublishResults(results []InsertResult) []PublishResult {
 	return out
 }
 
-// fireEnqueueHooks emits OnEnqueue for newly inserted (non-duplicate)
-// rows. Duplicate-skipped rows fire nothing.
+// fireEnqueueHooks excludes rows skipped by unique-key deduplication.
 func (m *Manager) fireEnqueueHooks(ctx context.Context, results []InsertResult, kind string, transactional bool, scheduleName string) {
 	if m.config.Hooks.OnEnqueue == nil {
 		return
@@ -515,7 +511,6 @@ func (m *Manager) fireEnqueueHooks(ctx context.Context, results []InsertResult, 
 	}
 }
 
-// safeHook isolates user hook panics.
 func (m *Manager) safeHook(name string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {

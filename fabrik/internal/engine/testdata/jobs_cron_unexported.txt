@@ -1,0 +1,39 @@
+Generated bootstrap code calls a //fabrik:cron function as a
+package-qualified symbol, so an unexported function cannot be referenced
+and is rejected at generation.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/jobs v0.0.0
+
+replace github.com/gofabrik/fabrik/jobs => JOBSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/jobs"
+
+//fabrik:provider
+func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
+
+//fabrik:hook start
+func Boot(mgr *jobs.Manager) error { return nil }
+-- cleanup/cleanup.go --
+package cleanup
+
+import "context"
+
+//fabrik:cron name=nightly schedule="0 3 * * *"
+func purgeOld(ctx context.Context) error { return nil }
+-- want/diags --
+error: cleanup/cleanup.go:5:1: //fabrik:cron function purgeOld must be exported
+  help: generated code calls it as a package-qualified symbol; capitalize the name

@@ -11,8 +11,7 @@ import (
 	"time"
 )
 
-// WorkerConfig is a worker's whole tuning surface. The zero value is
-// usable; [NewWorker] fills defaults.
+// WorkerConfig configures a worker. The zero value is valid.
 type WorkerConfig struct {
 	// ID identifies this worker in locked_by and ListWorkers. Generated
 	// when empty.
@@ -33,13 +32,13 @@ type WorkerConfig struct {
 	HeartbeatInterval time.Duration
 	// SweepInterval is the housekeeping cadence. Defaults to 30s.
 	SweepInterval time.Duration
-	// ShutdownTimeout bounds the drain when Start's own ctx is cancelled
-	// (Stop carries its own deadline). Defaults to 30s; 0 drains forever,
-	// negative cancels in-flight immediately.
+	// ShutdownTimeout bounds draining after Start's context ends. Zero defaults
+	// to 30s; negative cancels immediately. Use Stop(context.Background()) for
+	// an unbounded drain.
 	ShutdownTimeout time.Duration
 }
 
-// Worker drives the run loop: claim, dispatch, heartbeat, persist.
+// Worker claims and executes jobs.
 type Worker struct {
 	manager  *Manager
 	cfg      WorkerConfig
@@ -51,14 +50,51 @@ type Worker struct {
 
 	drainMu  sync.Mutex
 	drainCtx context.Context
+	drainErr error // drain result, published before doneCh closes
 
-	started  atomic.Bool
-	draining atomic.Bool
+	started   atomic.Bool
+	draining  atomic.Bool
+	abandoned atomic.Bool // any attempt abandoned at the drain deadline
 
 	sem           chan struct{}
 	wg            sync.WaitGroup
-	cancels       sync.Map // jobID -> context.CancelFunc
+	active        sync.Map // jobID -> *runState
 	queueInFlight sync.Map // queue -> *atomic.Int32
+}
+
+// runPhase serializes handler start and completion against shutdown abandonment.
+const (
+	phaseRegistered int32 = iota // in active; handler not yet invoked
+	phaseRunning                 // handler invoked
+	phaseResolving               // runner is committing the outcome
+	phaseAbandoned               // drain claimed it (terminal)
+)
+
+type runState struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc // cancels the handler context
+	hbStop context.CancelFunc // stops the heartbeat (so the lease is not renewed)
+	phase  atomic.Int32       // a runPhase
+}
+
+// setCancels publishes cancellation functions before the attempt starts.
+func (rs *runState) setCancels(cancel, hbStop context.CancelFunc) {
+	rs.mu.Lock()
+	rs.cancel, rs.hbStop = cancel, hbStop
+	rs.mu.Unlock()
+}
+
+// abandon stops any published heartbeat and handler contexts.
+func (rs *runState) abandon() {
+	rs.mu.Lock()
+	cancel, hbStop := rs.cancel, rs.hbStop
+	rs.mu.Unlock()
+	if hbStop != nil {
+		hbStop()
+	}
+	if cancel != nil {
+		cancel()
+	}
 }
 
 const staleWorkerMultiplier = 5
@@ -113,11 +149,9 @@ func NewWorker(m *Manager, cfg WorkerConfig) (*Worker, error) {
 // ID returns the worker's identity as persisted in locked_by.
 func (w *Worker) ID() string { return w.cfg.ID }
 
-// Start blocks until ctx is cancelled or [Worker.Stop] is called, then
-// drains. Returns nil on a clean drain; context.DeadlineExceeded only
-// when the drain deadline expired with handlers still running.
+// Start runs until ctx ends or [Worker.Stop] is called, then drains. It returns
+// context.DeadlineExceeded if the drain deadline expires with unfinished work.
 func (w *Worker) Start(ctx context.Context) error {
-	// A worker is single-use; the run loop owns doneCh.
 	if !w.started.CompareAndSwap(false, true) {
 		return ErrWorkerAlreadyStarted
 	}
@@ -155,7 +189,6 @@ loop:
 	for {
 		select {
 		case <-ctx.Done():
-			// Start cancellation uses WorkerConfig.ShutdownTimeout.
 			drainCtx, drainCancel = w.shutdownDrainCtx()
 			break loop
 		case <-w.stopCh:
@@ -172,36 +205,38 @@ loop:
 			w.trySweep(ctx)
 		}
 	}
-	return w.drain(drainCtx)
+	err := w.drain(drainCtx)
+	// Publish the result before unblocking Stop.
+	w.drainMu.Lock()
+	w.drainErr = err
+	w.drainMu.Unlock()
+	return err
 }
 
-// shutdownDrainCtx builds the drain deadline for Start cancellation.
 func (w *Worker) shutdownDrainCtx() (context.Context, context.CancelFunc) {
-	switch {
-	case w.cfg.ShutdownTimeout < 0:
+	if w.cfg.ShutdownTimeout < 0 {
 		c, cancel := context.WithCancel(context.Background())
 		cancel() // already-expired: cancel in-flight immediately
 		return c, func() {}
-	case w.cfg.ShutdownTimeout == 0:
-		return context.Background(), func() {} // drain forever
-	default:
-		return context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout)
 	}
+	return context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout)
 }
 
-// Stop signals shutdown and blocks until Start returns. ctx is the drain
-// deadline. Idempotent; the first call fixes the deadline.
-func (w *Worker) Stop(ctx context.Context) {
+// Stop signals shutdown and waits for Start. It is idempotent; the first call
+// fixes ctx as the drain deadline. Before Start, it returns immediately.
+func (w *Worker) Stop(ctx context.Context) error {
 	w.stopOnce.Do(func() {
 		w.drainMu.Lock()
 		w.drainCtx = ctx
 		w.drainMu.Unlock()
 		close(w.stopCh)
 	})
-	// Start owns doneCh; if Start never ran, there is nothing to wait for.
 	if w.started.Load() {
 		<-w.doneCh
 	}
+	w.drainMu.Lock()
+	defer w.drainMu.Unlock()
+	return w.drainErr
 }
 
 func (w *Worker) tryClaim(ctx context.Context) {
@@ -231,8 +266,11 @@ func (w *Worker) tryClaim(ctx context.Context) {
 	for _, row := range rows {
 		w.sem <- struct{}{}
 		w.bumpQueueInFlight(row.Queue, 1)
+		// Make the attempt visible to drain before launching it.
+		rs := &runState{}
+		w.active.Store(row.ID, rs)
 		w.wg.Add(1)
-		go w.run(row)
+		go w.run(row, rs)
 	}
 }
 
@@ -297,6 +335,8 @@ func (w *Worker) trySweep(ctx context.Context) {
 	cancel3()
 }
 
+// drain abandons active attempts when ctx ends. Resolving attempts may finish
+// after it returns.
 func (w *Worker) drain(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() { w.wg.Wait(); close(done) }()
@@ -305,18 +345,26 @@ func (w *Worker) drain(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		w.draining.Store(true)
-		w.cancels.Range(func(_, v any) bool {
-			if cancel, ok := v.(context.CancelFunc); ok {
-				cancel()
+		w.active.Range(func(_, v any) bool {
+			rs := v.(*runState)
+			// Resolving attempts retain ownership of completion.
+			if rs.phase.CompareAndSwap(phaseRegistered, phaseAbandoned) ||
+				rs.phase.CompareAndSwap(phaseRunning, phaseAbandoned) {
+				rs.abandon()
+				w.abandoned.Store(true)
 			}
 			return true
 		})
-		<-done
-		// DeadlineExceeded means in-flight work was cancelled.
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		// Any abandonment or unfinished resolution makes the drain incomplete.
+		select {
+		case <-done:
+			if w.abandoned.Load() {
+				return context.DeadlineExceeded
+			}
+			return nil
+		default:
 			return context.DeadlineExceeded
 		}
-		return nil
 	}
 }
 
@@ -328,26 +376,16 @@ func workerID() string {
 	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), NewID()[:8])
 }
 
-// run executes one claimed job.
-func (w *Worker) run(row ClaimedJob) {
+// run executes a claimed job whose state is already visible to drain.
+func (w *Worker) run(row ClaimedJob, rs *runState) {
 	defer w.wg.Done()
 	defer func() { <-w.sem }()
 	defer w.bumpQueueInFlight(row.Queue, -1)
+	defer w.active.Delete(row.ID)
 
 	bg := context.Background()
 	attemptNum := row.Attempt + 1
 	logger := w.manager.config.Logger.With("job_id", row.ID, "kind", row.Kind, "handler", row.HandlerID)
-
-	entry, ok := w.manager.handlerFor(HandlerKey{Kind: row.Kind, HandlerID: row.HandlerID})
-	if !ok {
-		w.park(bg, row, attemptNum, logger, fmt.Errorf("%w: %s/%s", ErrUnregisteredHandler, row.Kind, row.HandlerID))
-		return
-	}
-	msg, err := entry.decode(row.Payload)
-	if err != nil {
-		w.park(bg, row, attemptNum, logger, err)
-		return
-	}
 
 	runCtx, cancel := context.WithCancel(bg)
 	defer cancel()
@@ -356,12 +394,29 @@ func (w *Worker) run(row ClaimedJob) {
 		runCtx, tcancel = context.WithTimeout(runCtx, time.Duration(row.TimeoutMs)*time.Millisecond)
 		defer tcancel()
 	}
-	w.cancels.Store(row.ID, cancel)
-	defer w.cancels.Delete(row.ID)
-
-	var cancelByUser atomic.Bool
 	hbCtx, hbStop := context.WithCancel(bg)
 	defer hbStop()
+
+	rs.setCancels(cancel, hbStop)
+
+	entry, ok := w.manager.handlerFor(HandlerKey{Kind: row.Kind, HandlerID: row.HandlerID})
+	if !ok {
+		w.park(bg, rs, row, attemptNum, logger, fmt.Errorf("%w: %s/%s", ErrUnregisteredHandler, row.Kind, row.HandlerID))
+		return
+	}
+	msg, err := entry.decode(row.Payload)
+	if err != nil {
+		w.park(bg, rs, row, attemptNum, logger, err)
+		return
+	}
+
+	// Only the winner of registered -> running may invoke the handler.
+	if !rs.phase.CompareAndSwap(phaseRegistered, phaseRunning) {
+		logger.Warn("jobs: attempt abandoned before start; handler not invoked", "job_id", row.ID)
+		return
+	}
+
+	var cancelByUser atomic.Bool
 	var auxWg sync.WaitGroup
 	auxWg.Add(1)
 	go func() {
@@ -393,21 +448,36 @@ func (w *Worker) run(row ClaimedJob) {
 	hbStop()
 	auxWg.Wait()
 
+	// Drain can abandon a running attempt before completion begins.
+	if !rs.phase.CompareAndSwap(phaseRunning, phaseResolving) {
+		logger.Warn("jobs: attempt abandoned at shutdown deadline; not completing", "job_id", row.ID)
+		w.finishHook(runCtx, row, attemptNum, runErr, finished.Sub(started), "", false)
+		return
+	}
+
 	outcome := w.decideOutcome(row, attemptNum, runErr, cancelByUser.Load(), started, finished)
 	applied, committed := w.complete(bg, row, outcome, logger)
-
-	if w.manager.config.Hooks.OnAttemptFinish != nil {
-		w.manager.safeHook("OnAttemptFinish", func() {
-			w.manager.config.Hooks.OnAttemptFinish(runCtx, AttemptFinishEvent{
-				JobID: row.ID, Kind: row.Kind, HandlerID: row.HandlerID, Attempt: attemptNum,
-				Err: runErr, Dur: finished.Sub(started), State: applied, Committed: committed,
-			})
-		})
-	}
+	w.finishHook(runCtx, row, attemptNum, runErr, finished.Sub(started), applied, committed)
 }
 
-// park records a terminal failure for unrunnable persisted work.
-func (w *Worker) park(bg context.Context, row ClaimedJob, attemptNum int, logger *slog.Logger, cause error) {
+func (w *Worker) finishHook(ctx context.Context, row ClaimedJob, attemptNum int, runErr error, dur time.Duration, state State, committed bool) {
+	if w.manager.config.Hooks.OnAttemptFinish == nil {
+		return
+	}
+	w.manager.safeHook("OnAttemptFinish", func() {
+		w.manager.config.Hooks.OnAttemptFinish(ctx, AttemptFinishEvent{
+			JobID: row.ID, Kind: row.Kind, HandlerID: row.HandlerID, Attempt: attemptNum,
+			Err: runErr, Dur: dur, State: state, Committed: committed,
+		})
+	})
+}
+
+// park records a terminal failure unless drain already abandoned the attempt.
+func (w *Worker) park(bg context.Context, rs *runState, row ClaimedJob, attemptNum int, logger *slog.Logger, cause error) {
+	if !rs.phase.CompareAndSwap(phaseRegistered, phaseResolving) {
+		logger.Warn("jobs: attempt abandoned before park; not parking", "job_id", row.ID)
+		return
+	}
 	now := w.manager.now()
 	start := AttemptStartEvent{JobID: row.ID, Kind: row.Kind, HandlerID: row.HandlerID, Attempt: attemptNum, Logger: logger}
 	if w.manager.config.Hooks.OnAttemptStart != nil {
@@ -418,17 +488,9 @@ func (w *Worker) park(bg context.Context, row ClaimedJob, attemptNum int, logger
 		AttemptState: AttemptFailed, StartedAt: now, FinishedAt: now,
 	}
 	applied, committed := w.complete(bg, row, outcome, logger)
-	if w.manager.config.Hooks.OnAttemptFinish != nil {
-		w.manager.safeHook("OnAttemptFinish", func() {
-			w.manager.config.Hooks.OnAttemptFinish(bg, AttemptFinishEvent{
-				JobID: row.ID, Kind: row.Kind, HandlerID: row.HandlerID, Attempt: attemptNum,
-				Err: cause, Dur: 0, State: applied, Committed: committed,
-			})
-		})
-	}
+	w.finishHook(bg, row, attemptNum, cause, 0, applied, committed)
 }
 
-// decideOutcome resolves one run's fate in the fixed precedence order.
 func (w *Worker) decideOutcome(row ClaimedJob, attemptNum int, runErr error, cancelByUser bool, started, finished time.Time) Outcome {
 	o := Outcome{Attempt: attemptNum, StartedAt: started, FinishedAt: finished}
 	if runErr != nil {
@@ -492,25 +554,31 @@ func (w *Worker) backoffFor(row ClaimedJob) Backoff {
 	return w.manager.config.DefaultBackoff
 }
 
-// complete abandons lost leases and retries transient store failures.
+// complete retries transient failures with a fixed budget. ErrNotFound means
+// ownership was lost.
 func (w *Worker) complete(bg context.Context, row ClaimedJob, o Outcome, logger *slog.Logger) (applied State, committed bool) {
-	deadline := row.LockedUntil
-	for attempt := 0; ; attempt++ {
+	const maxAttempts = 5
+	const maxBackoff = 2 * time.Second
+	backoff := 100 * time.Millisecond
+	for attempt := 1; ; attempt++ {
 		cctx, cancel := w.manager.withStoreTimeout(bg)
-		applied, err := w.manager.store.Complete(cctx, row.ID, w.cfg.ID, o)
+		applied, err := w.manager.store.Complete(cctx, row.ID, w.cfg.ID, w.manager.now(), o)
 		cancel()
 		if err == nil {
 			return applied, true
 		}
 		if errors.Is(err, ErrNotFound) {
-			logger.Warn("jobs: complete abandoned, lease lost", "err", err)
+			logger.Warn("jobs: complete abandoned, ownership lost", "err", err)
 			return "", false
 		}
-		if attempt >= 3 || !w.manager.now().Before(deadline) {
-			logger.Warn("jobs: complete failed, giving up", "err", err)
+		if attempt >= maxAttempts {
+			logger.Warn("jobs: complete failed after retries, giving up", "attempts", attempt, "err", err)
 			return "", false
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(backoff)
+		if backoff *= 2; backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 
@@ -523,7 +591,8 @@ func (w *Worker) heartbeat(ctx context.Context, jobID string, cancel context.Can
 			return
 		case <-ticker.C:
 			hbCtx, hbCancel := w.manager.withStoreTimeout(ctx)
-			cancelRequested, err := w.manager.store.Heartbeat(hbCtx, jobID, w.cfg.ID, w.manager.now().Add(w.cfg.LeaseDuration))
+			now := w.manager.now()
+			cancelRequested, err := w.manager.store.Heartbeat(hbCtx, jobID, w.cfg.ID, now, now.Add(w.cfg.LeaseDuration))
 			hbCancel()
 			if err != nil {
 				if ctx.Err() != nil {

@@ -83,6 +83,31 @@ func TestScheduleRequiresHandler(t *testing.T) {
 	}
 }
 
+func TestScheduleRejectsInvalidOptions(t *testing.T) {
+	store := NewMemoryStore()
+	m := schedManager(t, store)
+	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	cases := map[string]ScheduleOptions{
+		"bad queue":     {Queue: "no spaces!"},
+		"neg attempts":  {MaxAttempts: -1},
+		"neg timeout":   {Timeout: -time.Second},
+		"bad ontimeout": {OnTimeout: OnTimeout(99)},
+		"bad catchup":   {CatchUp: CatchUp(99)},
+	}
+	for name, opts := range cases {
+		if err := m.Schedule("poll", Every(time.Minute), Email{}, opts); err == nil {
+			t.Fatalf("%s: Schedule accepted invalid options", name)
+		}
+	}
+	// Rejected declarations must not persist.
+	if err := m.ReconcileSchedules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := store.ListSchedules(context.Background(), ""); len(rows) != 0 {
+		t.Fatalf("rejected schedules should not persist; got %+v", rows)
+	}
+}
+
 func TestScheduleDuplicateName(t *testing.T) {
 	m := schedManager(t, NewMemoryStore())
 	Handle[Email](m, "email", func(Context, Email) error { return nil })
@@ -140,13 +165,13 @@ func TestFireScheduleCASNullFirst(t *testing.T) {
 	job := Job{Kind: "email", HandlerID: "email", Payload: []byte(`{}`), Queue: "default", MaxAttempts: 1, AvailableAt: now}
 
 	won, res, err := store.FireSchedule(context.Background(), ScheduleFire{
-		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Jobs: []Job{job},
+		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Now: now, Jobs: []Job{job},
 	})
 	if err != nil || !won || len(res) != 1 {
 		t.Fatalf("first fire: won=%v res=%d err=%v", won, len(res), err)
 	}
 	won, res, err = store.FireSchedule(context.Background(), ScheduleFire{
-		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Jobs: []Job{job},
+		Name: "s", ExpectedLastRun: sql.NullTime{Valid: false}, NewLastRun: now, NewNextRun: now.Add(time.Second), Now: now, Jobs: []Job{job},
 	})
 	if err != nil || won || len(res) != 0 {
 		t.Fatalf("stale fire should lose: won=%v res=%d err=%v", won, len(res), err)
@@ -174,7 +199,7 @@ func TestRegisterCron(t *testing.T) {
 		t.Fatalf("schedule: %+v", rows)
 	}
 	runWorker(t, m, WorkerConfig{})
-	store.Insert(context.Background(), []Job{{
+	store.Insert(context.Background(), time.Now().UTC(), []Job{{
 		Kind: "cron:purge", HandlerID: "purge", Payload: []byte("{}"),
 		Queue: "default", MaxAttempts: 1, AvailableAt: time.Now(),
 	}})
@@ -189,7 +214,7 @@ func TestSingletonCollapsesCatchUp(t *testing.T) {
 		{Kind: "email", HandlerID: "email", Payload: []byte(`{}`), Queue: "default", MaxAttempts: 1, AvailableAt: now, UniqueKey: uk},
 		{Kind: "email", HandlerID: "email", Payload: []byte(`{}`), Queue: "default", MaxAttempts: 1, AvailableAt: now, UniqueKey: uk},
 	}
-	res, _ := store.Insert(context.Background(), jobs)
+	res, _ := store.Insert(context.Background(), now, jobs)
 	if res[0].Duplicate || !res[1].Duplicate {
 		t.Fatalf("singleton: first new, second dup, got %+v", res)
 	}

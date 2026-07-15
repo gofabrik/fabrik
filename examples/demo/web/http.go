@@ -79,8 +79,7 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 
 	slog.InfoContext(ctx, "greeting", "name", name)
 
-	// Recording the visit is deferred to a background job; the page reads
-	// the running count without waiting on the write.
+	// Visit counts lag because workers persist them asynchronously.
 	if _, err := h.Jobs.Enqueue(ctx, Visit{Path: "/"}); err != nil {
 		return nil, err
 	}

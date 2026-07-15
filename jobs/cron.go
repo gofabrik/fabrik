@@ -2,11 +2,9 @@ package jobs
 
 import "fmt"
 
-// cronPrefix namespaces cron internal kinds.
 const cronPrefix = "cron:"
 
-// cronKind is the wire kind for a cron's internal job. Each cron gets a
-// distinct kind so its schedule fires only its own function.
+// Each cron has a distinct kind so its schedule invokes only its function.
 func cronKind(name string) string { return cronPrefix + name }
 
 // RegisterCron binds a named function to an in-memory cron declaration.
@@ -29,8 +27,7 @@ func RegisterCron(m *Manager, name, schedule string, fn func(Context) error) err
 	}
 	kind := cronKind(name)
 
-	// Declare before registering the handler, so duplicate names leave no
-	// partial handler state.
+	// Duplicate declarations must not leave partial handler state.
 	row, err := m.buildScheduleRow(name, kind, []byte("{}"), spec, ScheduleOptions{Singleton: true})
 	if err != nil {
 		return err

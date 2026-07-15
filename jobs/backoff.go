@@ -53,7 +53,6 @@ func (b ExponentialBackoff) Next(attempt int) time.Duration {
 	return d
 }
 
-// backoffSpec is the persistence shape of a serializable [Backoff].
 type backoffSpec struct {
 	Type   string        `json:"type"`
 	Base   time.Duration `json:"base,omitempty"`

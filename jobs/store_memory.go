@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// MemoryStore is the in-process, non-durable [Store] for tests,
-// examples, and local dev. State does not survive restart. Construct
-// with [NewMemoryStore].
+// MemoryStore is a non-durable in-process [Store] for tests and development.
 type MemoryStore struct {
 	mu        sync.Mutex
 	rows      map[string]*memRow
@@ -47,16 +45,14 @@ func NewMemoryStore() *MemoryStore {
 func uniqKey(kind, handler, key string) string { return kind + "\x00" + handler + "\x00" + key }
 func schedKey(group, name string) string       { return group + "\x00" + name }
 
-func (s *MemoryStore) Insert(_ context.Context, jobs []Job) ([]InsertResult, error) {
+func (s *MemoryStore) Insert(_ context.Context, now time.Time, jobs []Job) ([]InsertResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.insertLocked(jobs), nil
+	return s.insertLocked(now.UTC(), jobs), nil
 }
 
-// insertLocked inserts a batch, deduping live UniqueKeys as it goes (so
-// later identical rows in the same batch collapse onto earlier ones).
-func (s *MemoryStore) insertLocked(jobs []Job) []InsertResult {
-	now := time.Now().UTC()
+// insertLocked deduplicates against live jobs and earlier rows in the batch.
+func (s *MemoryStore) insertLocked(now time.Time, jobs []Job) []InsertResult {
 	out := make([]InsertResult, 0, len(jobs))
 	for _, j := range jobs {
 		if j.UniqueKey != "" {
@@ -146,7 +142,7 @@ func (s *MemoryStore) Claim(_ context.Context, req ClaimRequest) ([]ClaimedJob, 
 	return out, nil
 }
 
-func (s *MemoryStore) Heartbeat(_ context.Context, jobID, workerID string, until time.Time) (bool, error) {
+func (s *MemoryStore) Heartbeat(_ context.Context, jobID, workerID string, now, until time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.rows[jobID]
@@ -154,11 +150,11 @@ func (s *MemoryStore) Heartbeat(_ context.Context, jobID, workerID string, until
 		return false, ErrNotFound
 	}
 	r.lockedUntil = until
-	r.updatedAt = time.Now().UTC()
+	r.updatedAt = now.UTC()
 	return r.cancelRequested, nil
 }
 
-func (s *MemoryStore) Complete(_ context.Context, jobID, workerID string, o Outcome) (State, error) {
+func (s *MemoryStore) Complete(_ context.Context, jobID, workerID string, now time.Time, o Outcome) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.rows[jobID]
@@ -194,7 +190,10 @@ func (s *MemoryStore) Complete(_ context.Context, jobID, workerID string, o Outc
 	r.lockedBy = ""
 	r.lockedUntil = time.Time{}
 	r.cancelRequested = false
-	r.updatedAt = time.Now().UTC()
+	// Preserve newer timestamps written by concurrent operations.
+	if u := now.UTC(); u.After(r.updatedAt) {
+		r.updatedAt = u
+	}
 	if applied.Terminal() {
 		s.freeUniq(r)
 	}
@@ -210,16 +209,26 @@ func (s *MemoryStore) SweepExpired(_ context.Context, now time.Time) (int, error
 			continue
 		}
 		attemptNum := r.attempt + 1
+		attemptState, attemptErr := AttemptFailed, "lease expired"
+		if r.cancelRequested {
+			attemptState, attemptErr = AttemptCancelled, "cancelled after lease expiry"
+		}
 		s.attempts[r.id] = append(s.attempts[r.id], Attempt{
 			ID: NewID(), JobID: r.id, Attempt: attemptNum, WorkerID: r.lockedBy,
-			State: AttemptFailed, Error: "lease expired", StartedAt: r.lockedUntil, FinishedAt: now,
+			State: attemptState, Error: attemptErr, StartedAt: r.lockedUntil, FinishedAt: now,
 		})
 		r.attempt = attemptNum
-		if attemptNum >= r.MaxAttempts {
+		switch {
+		case r.cancelRequested:
+			// Cancellation remains terminal across lease recovery.
+			r.state = StateCancelled
+			r.lastError = "cancelled"
+			s.freeUniq(r)
+		case attemptNum >= r.MaxAttempts:
 			r.state = StateDiscarded
 			r.lastError = "lease expired"
 			s.freeUniq(r)
-		} else {
+		default:
 			r.state = StateAvailable
 			r.AvailableAt = now
 		}
@@ -507,11 +516,11 @@ func (s *MemoryStore) FireSchedule(_ context.Context, f ScheduleFire) (bool, []I
 		(f.ExpectedLastRun.Valid && !sched.LastRunAt.Equal(f.ExpectedLastRun.Time)) {
 		return false, nil, nil
 	}
-	results := s.insertLocked(f.Jobs)
+	results := s.insertLocked(f.Now.UTC(), f.Jobs)
 	sched.LastRunAt = f.NewLastRun
 	sched.LastRunSet = !f.NewLastRun.IsZero()
 	sched.NextRunAt = f.NewNextRun
-	sched.UpdatedAt = time.Now().UTC()
+	sched.UpdatedAt = f.Now.UTC()
 	s.schedules[key] = sched
 	return true, results, nil
 }

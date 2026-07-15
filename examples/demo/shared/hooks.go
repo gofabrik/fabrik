@@ -31,8 +31,7 @@ func StartJobs(ctx context.Context, mgr *jobs.Manager) error {
 	if err != nil {
 		return err
 	}
-	// Sync declared schedules to the store synchronously, so a failure
-	// aborts startup instead of being lost in the scheduler goroutine.
+	// Reconcile schedules after migrations create their schema.
 	if err := mgr.ReconcileSchedules(ctx); err != nil {
 		return err
 	}

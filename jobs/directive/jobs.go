@@ -26,7 +26,6 @@ func New() (*Jobs, *Cron) {
 	return &Jobs{b: b}, &Cron{b: b}
 }
 
-// builder is state shared between the job and cron directives.
 type builder struct {
 	jobs       []*jobNode
 	crons      []*cronNode
@@ -131,6 +130,11 @@ func (j *Jobs) Check(n any, t gen.Typed) diag.Diagnostics {
 			"messages are plain JSON structs; a scalar, slice, or map is not a message type")
 		return ds
 	}
+	if named, ok := nd.msgType.(*types.Named); !ok || !named.Obj().Exported() {
+		ds.Error(nd.pos, fmt.Sprintf("handler %s: the message type must be an exported named struct", fn.Name()),
+			"generated code refers to it as a package-qualified type; name it and capitalize")
+		return ds
+	}
 	for i := 1; i < p.Len()-1; i++ {
 		nd.depTypes = append(nd.depTypes, p.At(i).Type())
 	}
@@ -186,8 +190,7 @@ func (j *Jobs) Validate(g *gen.Gen) diag.Diagnostics {
 		ds.Warn(j.b.pos(), "jobs are declared but nothing injects *jobs.Manager, so no handler can run",
 			"start a worker from a command that injects *jobs.Manager: jobs.NewWorker(mgr, ...).Start(ctx)")
 	}
-	// The directives own *jobs.Manager; a provider for the same type would
-	// be shadowed by the path binding.
+	// A provider-owned manager would be shadowed by the directive binding.
 	if mgr, ok := g.LookupType(jobsPath, "Manager"); ok && g.HasProviderBinding(types.NewPointer(mgr), "") {
 		ds.Error(j.b.pos(), "an app provider returns *jobs.Manager, but //fabrik:job and //fabrik:cron already build and own the manager",
 			"remove that provider; the store and jobs.Config providers still apply")
@@ -327,7 +330,6 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 
 	mgr := g.Var("jobsManager")
 
-	// The manager is a provider; registrations are behavior.
 	g.Node(&gen.Raw{
 		Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: b.pos()}},
 		Lines: []string{
@@ -336,6 +338,9 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 		},
 		Defines: []string{mgr},
 	})
+
+	// Publish the manager before resolving handlers that inject it.
+	g.BindPath(managerPath, mgr)
 
 	var lines []string
 	for _, k := range kinds {
@@ -363,8 +368,6 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 			"}); err != nil {",
 			"return err", "}")
 	}
-	// Schedule sync is a start-time concern, after the schema exists.
-
 	if len(lines) > 0 {
 		g.Node(&gen.Raw{
 			Base:  gen.Base{Phase: gen.PhaseRegister, Label: "Jobs", Origin: gen.Origin{Pos: b.pos()}},
@@ -376,7 +379,6 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	return mgr, ds
 }
 
-// callExpr builds `pkg.Fn(c, deps..., [m])`.
 func callExpr(g *gen.Gen, pkg *types.Package, fn string, deps []string, withMsg bool) string {
 	args := append([]string{"c"}, deps...)
 	if withMsg {
@@ -486,6 +488,11 @@ func funcSig(pos token.Position, t gen.Typed, directive string) (*types.Func, *t
 	if sig.Recv() != nil {
 		ds.Error(pos, directive+" must be a package function, not a method",
 			"dependencies are parameters, not receiver fields")
+		return nil, nil, ds
+	}
+	if !fn.Exported() {
+		ds.Error(pos, fmt.Sprintf("%s function %s must be exported", directive, fn.Name()),
+			"generated code calls it as a package-qualified symbol; capitalize the name")
 		return nil, nil, ds
 	}
 	return fn, sig, ds
