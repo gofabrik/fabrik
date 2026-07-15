@@ -1,0 +1,51 @@
+The //fabrik:job and //fabrik:cron directives build and own *jobs.Manager
+(bound by path). An app //fabrik:provider returning the same type would be
+silently shadowed by Instance's resolution order, so it is rejected.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/jobs v0.0.0
+
+replace github.com/gofabrik/fabrik/jobs => JOBSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/shared.go --
+package shared
+
+import (
+	"context"
+
+	"github.com/gofabrik/fabrik/jobs"
+)
+
+//fabrik:provider
+func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
+
+//fabrik:provider
+func NewManager(s jobs.Store) *jobs.Manager {
+	m, _ := jobs.New(s, jobs.Config{})
+	return m
+}
+
+//fabrik:hook start
+func Boot(ctx context.Context, mgr *jobs.Manager) error { return nil }
+-- mail/mail.go --
+package mail
+
+import "context"
+
+type Welcome struct{ UserID int64 }
+
+//fabrik:job
+func SendWelcome(ctx context.Context, m Welcome) error { return nil }
+-- want/diags --
+error: mail/mail.go:7:1: an app provider returns *jobs.Manager, but //fabrik:job and //fabrik:cron already build and own the manager
+  help: remove that provider; the store and jobs.Config providers still apply

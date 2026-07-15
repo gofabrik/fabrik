@@ -1,0 +1,41 @@
+A job message must be an exported named struct: generated code refers to
+it as a package-qualified type, so an unexported type is rejected at
+generation.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/jobs v0.0.0
+
+replace github.com/gofabrik/fabrik/jobs => JOBSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/jobs"
+
+//fabrik:provider
+func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
+
+//fabrik:hook start
+func Boot(mgr *jobs.Manager) error { return nil }
+-- mail/mail.go --
+package mail
+
+import "context"
+
+type welcome struct{ UserID int64 }
+
+//fabrik:job
+func SendWelcome(ctx context.Context, m welcome) error { return nil }
+-- want/diags --
+error: mail/mail.go:7:1: handler SendWelcome: the message type must be an exported named struct
+  help: generated code refers to it as a package-qualified type; name it and capitalize

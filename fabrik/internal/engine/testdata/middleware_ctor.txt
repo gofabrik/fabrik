@@ -93,7 +93,7 @@ func run() error {
 
 	authMW := shared.RequireAuth(sharedLimiter)
 
-	// Routes
+	// Register
 	r.Method("GET", "/", web.Index)
 	r.Method("POST", "/admin", web.Admin, authMW, shared.Audit)
 	r.Method("DELETE", "/admin", web.Remove, authMW)

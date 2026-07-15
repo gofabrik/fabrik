@@ -75,7 +75,7 @@ func run() error {
 
 	r := router.New()
 
-	// Routes
+	// Register
 	r.Method("GET", "/api", webAPI.Get)
 	r.Method("POST", "/api", webAPI.Post)
 	r.Method("GET", "/health", web.Health)

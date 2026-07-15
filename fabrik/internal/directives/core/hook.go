@@ -22,23 +22,28 @@ func (*Hook) Name() string { return "hook" }
 
 func (*Hook) Meta() gen.Meta {
 	return gen.Meta{
-		Synopsis: "Lifecycle hook function: setup|start",
+		Synopsis: "Lifecycle hook function: setup|prepare|start",
 		Doc: "**`//fabrik:hook PHASE`**\n\n" +
 			"Marks a function the generated `run()` calls at a named point of " +
-			"the app lifecycle: `config -> setup -> providers -> start -> " +
-			"middleware -> routes -> serve`. Hookable phases, in order:\n\n" +
+			"the app lifecycle: `config -> setup -> providers -> middleware -> " +
+			"routes -> prepare -> start -> serve`. Hookable phases, in order:\n\n" +
 			"- `setup` - after config, before providers. Process-level setup " +
 			"(logger, runtime tuning); parameters may be a leading " +
 			"`context.Context` and pointers to //fabrik:config structs.\n" +
-			"- `start` - after providers, before middleware and routes. Work " +
-			"on built resources (migrations, cache warming); parameters " +
+			"- `prepare` - after everything is wired and registered, before " +
+			"runtime processes start. Run pre-intake work on built resources " +
+			"(schema checks, cache warming, migrations, seeding); parameters " +
+			"resolve against everything providers and libraries bind.\n" +
+			"- `start` - after prepare, before serving. Start runtime " +
+			"processes that consume registered and prepared state (workers, " +
+			"schedulers, watchers); parameters " +
 			"resolve against everything providers and libraries bind.\n\n" +
 			"Hooks of one phase run in source order and must be independent. " +
 			"A returned `error` aborts startup.\n\n" +
 			"```go\n//fabrik:hook setup\nfunc InitLogger(cfg *Log) error {\n\tslog.SetDefault(...)\n\treturn nil\n}\n```",
 		Example: "//fabrik:hook setup",
 		Pos: []gen.PosSpec{
-			{Name: "PHASE", Kind: gen.KindEnum, Values: []string{"setup", "start"}},
+			{Name: "PHASE", Kind: gen.KindEnum, Values: []string{"setup", "prepare", "start"}},
 		},
 		Tier: gen.TierHook,
 	}
@@ -61,10 +66,10 @@ func (h *Hook) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	}
 	phase := args.Pos[0]
 	switch phase.Text {
-	case "setup", "start":
+	case "setup", "prepare", "start":
 	default:
 		ds.Error(a.ArgPos(phase.Col), fmt.Sprintf("unknown lifecycle phase %q", phase.Text),
-			"hookable phases in order: setup (after config, before providers), start (after providers, before middleware and routes)")
+			"hookable phases in order: setup (after config, before providers), prepare (pre-intake work), start (runtime processes)")
 	}
 	if ds.HasFatal() {
 		return nil, ds
@@ -142,22 +147,24 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			},
 			func(param) (string, string) {
 				return "setup hooks run before providers; parameters must be context.Context or //fabrik:config structs",
-					"needs a built resource? move this to //fabrik:hook start"
+					"needs a built resource? move this to //fabrik:hook prepare or //fabrik:hook start"
 			})
-	case "start":
-		// Start hooks can consume any generated binding.
+	case "prepare", "start":
+		// Prepare and start hooks can consume any generated binding.
 		args, ds = resolveArgs(g, h.cfg, nd.params,
 			func(pr param) (string, diag.Diagnostics, bool) {
 				return g.Instance(pr.t, "")
 			},
 			func(param) (string, string) {
-				return "no provider or binding supplies this start hook parameter",
+				return "no provider or binding supplies this hook parameter",
 					"declare a //fabrik:provider for it"
 			})
 	}
 
 	phase := gen.PhaseSetup
-	if nd.phase == "start" {
+	if nd.phase == "prepare" {
+		phase = gen.PhasePrepare
+	} else if nd.phase == "start" {
 		phase = gen.PhaseStart
 	}
 	errStyle := gen.ErrNone

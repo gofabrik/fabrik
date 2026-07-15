@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
 )
 
@@ -19,7 +20,22 @@ func InitLogger(l *Log) error {
 	return nil
 }
 
-//fabrik:hook start
+//fabrik:hook prepare
 func MigrateDB(ctx context.Context, db *sql.DB, src migrations.Sources) error {
 	return src.Migrate(ctx, db, migrations.DialectSQLite)
+}
+
+//fabrik:hook start
+func StartJobs(ctx context.Context, mgr *jobs.Manager) error {
+	w, err := jobs.NewWorker(mgr, jobs.WorkerConfig{Concurrency: 2})
+	if err != nil {
+		return err
+	}
+	// Reconcile schedules after migrations create their schema.
+	if err := mgr.ReconcileSchedules(ctx); err != nil {
+		return err
+	}
+	go func() { _ = w.Start(ctx) }()
+	go func() { _ = mgr.StartScheduler(ctx) }()
+	return nil
 }

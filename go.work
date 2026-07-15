@@ -10,6 +10,9 @@ use (
 	./fabrik
 	./flash
 	./gen
+	./jobs
+	./jobs/dbtest
+	./jobs/directive
 	./migrations
 	./migrations/dbtest
 	./migrations/directive

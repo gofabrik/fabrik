@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
+	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
@@ -102,11 +103,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	sharedJobsStore, err := shared.NewJobStore(sharedSqlDB)
+	if err != nil {
+		return err
+	}
+	sharedJobsConfig := shared.NewJobsConfig()
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		return err
 	}
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
+	if err != nil {
+		return err
+	}
+	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
 		return err
 	}
@@ -125,6 +135,7 @@ func run() error {
 		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
+		Jobs:    jobsManager,
 	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
@@ -139,24 +150,44 @@ func run() error {
 		Config: sharedConfig,
 	}
 
-	// Start: after providers, before middleware and routes
-	if err := shared.MigrateDB(ctx, sharedSqlDB, migrationSources); err != nil {
-		return err
-	}
-
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
 
-	// Routes
+	// Register
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/routes", webDocs.List)
+
+	// Jobs
+	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		return err
+	}
+	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
+		return web.RecordVisit(c, sharedQueryDB, m)
+	}); err != nil {
+		return err
+	}
+	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
+		return web.PurgeGreetings(c, sharedQueryDB)
+	}); err != nil {
+		return err
+	}
+
+	// Prepare: after registration, before runtime start
+	if err := shared.MigrateDB(ctx, sharedSqlDB, migrationSources); err != nil {
+		return err
+	}
+
+	// Start: after prepare, before serving
+	if err := shared.StartJobs(ctx, jobsManager); err != nil {
+		return err
+	}
 
 	// Serve
 	return sharedServer.Serve(r)

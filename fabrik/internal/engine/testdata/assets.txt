@@ -118,7 +118,7 @@ func run() error {
 
 	r := router.New()
 
-	// Routes
+	// Register
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.Method("GET", "/{$}", webHandlers.Home)
 

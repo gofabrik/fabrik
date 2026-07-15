@@ -65,7 +65,7 @@ func run() error {
 	r := router.New()
 	webAPI := &web.API{}
 
-	// Routes
+	// Register
 	r.Method("GET", "/api/users", webAPI.Users, shared.RequireAuth)
 	r.Method("GET", "/api", webAPI.Root, shared.RequireAuth)
 	r.Method("GET", "/api/fresh", webAPI.Fresh, shared.RequireAuth, web.NoCache)

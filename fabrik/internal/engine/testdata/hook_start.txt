@@ -58,13 +58,13 @@ func run() error {
 
 	r := router.New()
 
-	// Start: after providers, before middleware and routes
+	// Register
+	r.Method("GET", "/", web.Home)
+
+	// Start: after prepare, before serving
 	if err := store.WarmCache(ctx, storePool); err != nil {
 		return err
 	}
-
-	// Routes
-	r.Method("GET", "/", web.Home)
 
 	// Serve
 	addr := ":8080"

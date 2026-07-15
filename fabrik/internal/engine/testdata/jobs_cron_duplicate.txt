@@ -1,0 +1,41 @@
+A cron name is schedule identity. The generator has every //fabrik:cron
+name statically, so two crons sharing a name are a wire-time error rather
+than a late failure in the generated app's RegisterCron call.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/jobs v0.0.0
+
+replace github.com/gofabrik/fabrik/jobs => JOBSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/jobs"
+
+//fabrik:provider
+func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
+
+//fabrik:hook start
+func Boot(mgr *jobs.Manager) error { return nil }
+-- cleanup/cleanup.go --
+package cleanup
+
+import "context"
+
+//fabrik:cron name=nightly schedule="0 3 * * *"
+func PurgeOld(ctx context.Context) error { return nil }
+
+//fabrik:cron name=nightly schedule="0 4 * * *"
+func PurgeTemp(ctx context.Context) error { return nil }
+-- want/diags --
+error: cleanup/cleanup.go:8:1: duplicate //fabrik:cron name "nightly" (also at $WORK/cleanup/cleanup.go:5:1)

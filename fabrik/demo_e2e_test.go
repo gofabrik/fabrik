@@ -9,12 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-// TestDemoEndToEnd covers the committed demo wiring and startup path.
 func TestDemoEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping end-to-end test in -short mode")
@@ -29,8 +29,10 @@ func TestDemoEndToEnd(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "demo-bin")
+	// Build outside go.work to verify the demo's module metadata.
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = demoDir
+	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
@@ -48,46 +50,52 @@ func TestDemoEndToEnd(t *testing.T) {
 	defer server.Process.Kill()
 
 	visitRE := regexp.MustCompile(`visit #(\d+)`)
-	get := func(name string) (visit, body string) {
+	// visit returns the visit counter the page rendered (-1 if the server
+	// is not answering yet) and the body.
+	visit := func(name string) (int, string) {
 		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/?name=%s", port, name))
 		if err != nil {
-			return "", ""
+			return -1, ""
 		}
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return visitRE.FindString(string(b)), string(b)
+		m := visitRE.FindStringSubmatch(string(b))
+		if m == nil {
+			return -1, string(b)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n, string(b)
 	}
 
 	deadline := time.Now().Add(10 * time.Second)
+
+	// Verify synchronous greeting writes before polling asynchronous visits.
 	for {
-		if first, body := get("one"); first != "" {
-			if !strings.HasSuffix(first, "#1") {
-				t.Fatalf("first visit = %q, want visit #1 on a fresh database", first)
-			}
-			if !strings.Contains(body, `<li class="greeting">one</li>`) {
-				t.Fatalf("first response should list its own greeting:\n%s", body)
-			}
-			second, body := get("two")
-			if second != "visit #2" {
-				t.Fatalf("second visit = %q, want visit #2", second)
-			}
-			// The greeting written by the first request round-trips
-			// through the database into the second response.
-			if !strings.Contains(body, `<li class="greeting">two</li>`) || !strings.Contains(body, `<li class="greeting">one</li>`) {
-				t.Fatalf("second response should list both greetings:\n%s", body)
-			}
-			sessionFlow(t, port)
-			return
+		if _, body := visit("one"); body != "" {
+			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("demo server did not answer")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if _, body := visit("two"); !strings.Contains(body, `<li class="greeting">one</li>`) || !strings.Contains(body, `<li class="greeting">two</li>`) {
+		t.Fatalf("greetings are synchronous; the second response should list both:\n%s", body)
+	}
+
+	// Visit counts are eventually consistent because workers update them asynchronously.
+	for {
+		if n, _ := visit("poll"); n >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("visit counter never advanced; the background job is not draining")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	sessionFlow(t, port)
 }
 
-// sessionFlow asserts the session-backed greeting: ?name= renames,
-// and the name persists per visitor through the cookie jar.
 func sessionFlow(t *testing.T, port string) {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
@@ -118,8 +126,6 @@ func sessionFlow(t *testing.T, port string) {
 	if strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("flash showed on the request that added it - it must ride the commit to the next one:\n%s", body)
 	}
-	// The second request carries no name; the session remembers the
-	// greeting and the flash library's cell arrives alongside it.
 	body = get(client, "/")
 	if !strings.Contains(body, "Goodbye, alice!") {
 		t.Fatalf("session did not persist the greeting name:\n%s", body)
@@ -127,11 +133,9 @@ func sessionFlow(t *testing.T, port string) {
 	if !strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("flash message did not round-trip through the store:\n%s", body)
 	}
-	// The flash is one-shot: taken, it is gone.
 	if body = get(client, "/"); strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("flash survived being taken:\n%s", body)
 	}
-	// A visitor without the cookie is unaffected: distinct session.
 	if body := get(http.DefaultClient, "/"); !strings.Contains(body, "Goodbye, world!") {
 		t.Fatalf("fresh visitor should get the default greeting:\n%s", body)
 	}

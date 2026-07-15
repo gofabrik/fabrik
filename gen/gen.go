@@ -20,9 +20,10 @@ const (
 	PhaseConfig     Phase = iota // configuration loading, before all else
 	PhaseSetup                   // setup hooks: config exists, providers do not
 	PhaseWire                    // construct app and runtime values
-	PhaseStart                   // start hooks: everything built, nothing serving
 	PhaseMiddleware              // global middleware registration
-	PhaseRegister                // register generated behavior
+	PhaseRegister                // register generated behavior onto constructed values
+	PhasePrepare                 // prepare hooks: pre-intake work on registered resources
+	PhaseStart                   // start hooks: start background runtime processes
 	PhaseServe                   // start serving, ending with return
 )
 
@@ -34,9 +35,10 @@ var phaseLabels = []struct {
 	{PhaseConfig, "Config"},
 	{PhaseSetup, "Setup: after config, before providers"},
 	{PhaseWire, "Providers"},
-	{PhaseStart, "Start: after providers, before middleware and routes"},
 	{PhaseMiddleware, "Middleware"},
-	{PhaseRegister, "Routes"},
+	{PhaseRegister, "Register"},
+	{PhasePrepare, "Prepare: after registration, before runtime start"},
+	{PhaseStart, "Start: after prepare, before serving"},
 	{PhaseServe, "Serve"},
 }
 
@@ -63,6 +65,7 @@ type Gen struct {
 	current    string // active directive
 	module     string // module path of the generated app
 	hints      []func(types.Type) (string, bool)
+	types      map[string]*types.Package // import path -> package, for LookupType
 
 	materializing []string // active lazy-bind stack
 }
@@ -80,6 +83,22 @@ func New() *Gen {
 
 // SetModule records the module path of the app being generated.
 func (g *Gen) SetModule(path string) { g.module = path }
+
+// SetTypes supplies type-checked packages for [Gen.LookupType].
+func (g *Gen) SetTypes(m map[string]*types.Package) { g.types = m }
+
+// LookupType returns a named type from a type-checked imported package.
+func (g *Gen) LookupType(pkgPath, name string) (types.Type, bool) {
+	pkg := g.types[pkgPath]
+	if pkg == nil {
+		return nil, false
+	}
+	obj := pkg.Scope().Lookup(name)
+	if obj == nil {
+		return nil, false
+	}
+	return obj.Type(), true
+}
 
 // Module returns the module path of the app being generated.
 func (g *Gen) Module() string { return g.module }
@@ -154,6 +173,9 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 	}
 	m[name] = &lazyBind{build: build, owner: g.current}
 }
+
+// BindPath publishes an expression while its lazy path binding is materializing.
+func (g *Gen) BindPath(path, expr string) { g.pathExprs[path] = expr }
 
 // BindLazyPath registers a lazy binding matched by a printed type path.
 func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics)) {
@@ -252,9 +274,21 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 		lb.running = false
 	}()
 	expr, ds := lb.build()
-	// Diagnosed type builds are cached to report shared dependency errors once.
-	g.Bind(t, name, expr)
+	// BindPath may populate the type-keyed cache during the build.
+	if !g.typeBound(t, name) {
+		g.Bind(t, name, expr)
+	}
 	return expr, ds, true
+}
+
+// typeBound reports whether (t, name) already has a type-keyed bind.
+func (g *Gen) typeBound(t types.Type, name string) bool {
+	m, _ := g.binds.At(types.Unalias(t)).(map[string]string)
+	if m == nil {
+		return false
+	}
+	_, ok := m[name]
+	return ok
 }
 
 // cycleDiag reports the active provider cycle ending at key.
@@ -305,6 +339,16 @@ func (g *Gen) HasBinding(t types.Type, name string) bool {
 	}
 	if _, ok := g.lazyByPath[types.TypeString(t, nil)]; ok && name == "" {
 		return true
+	}
+	return false
+}
+
+// HasProviderBinding reports whether (t, name) has a provider-owned lazy binding, excluding library path bindings.
+func (g *Gen) HasProviderBinding(t types.Type, name string) bool {
+	t = types.Unalias(t)
+	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
+		_, ok := m[name]
+		return ok
 	}
 	return false
 }

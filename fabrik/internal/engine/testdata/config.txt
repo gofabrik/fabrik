@@ -117,7 +117,7 @@ func run() error {
 
 	r := router.New()
 
-	// Routes
+	// Register
 	r.Method("GET", "/", webHandlers.Index)
 
 	// Serve

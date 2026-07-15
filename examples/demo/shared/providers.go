@@ -2,10 +2,12 @@ package shared
 
 import (
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gofabrik/fabrik/flash"
+	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/session"
 	_ "modernc.org/sqlite"
@@ -19,6 +21,19 @@ func NewDB(cfg *Database) (*sql.DB, error) {
 //fabrik:provider
 func NewQueries(db *sql.DB) (*query.DB, error) {
 	return query.New(db, query.DialectSQLite)
+}
+
+//fabrik:provider
+func NewJobStore(db *sql.DB) (jobs.Store, error) {
+	// Migrations create the jobs schema before schedule reconciliation.
+	return jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: false})
+}
+
+// NewJobsConfig configures the generated jobs manager.
+//
+//fabrik:provider
+func NewJobsConfig() jobs.Config {
+	return jobs.Config{Logger: slog.Default()}
 }
 
 //fabrik:provider

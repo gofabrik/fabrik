@@ -29,6 +29,11 @@ type Result struct {
 	MainDir    string // directory of package main, where main.gen.go is written
 	Items      []Item
 	Diags      diag.Diagnostics // typo warnings, ignored-in-main warnings, type errors
+	// Types maps an import path to its type-checked package, including the
+	// transitive imports of the app (so a directive can look up a library
+	// type like jobs.Store by path even when no annotated signature names
+	// it).
+	Types map[string]*types.Package
 }
 
 // Load type-checks the module rooted at dir and collects //fabrik: annotations.
@@ -79,6 +84,11 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 	}
 	res.MainDir = mainDir
 
+	res.Types = map[string]*types.Package{}
+	for _, pkg := range pkgs {
+		collectTypes(pkg.Types, res.Types)
+	}
+
 	res.Diags.Sort()
 	sort.SliceStable(res.Items, func(i, j int) bool {
 		a, b := res.Items[i].Ann.Pos, res.Items[j].Ann.Pos
@@ -88,6 +98,17 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		return a.Line < b.Line
 	})
 	return res, nil
+}
+
+// collectTypes records p and its transitive imports by path.
+func collectTypes(p *types.Package, into map[string]*types.Package) {
+	if p == nil || into[p.Path()] != nil {
+		return
+	}
+	into[p.Path()] = p
+	for _, imp := range p.Imports() {
+		collectTypes(imp, into)
+	}
 }
 
 func scanPackage(pkg *packages.Package, res *Result) {

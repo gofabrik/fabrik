@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/flash"
+	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
@@ -45,6 +46,7 @@ type Handlers struct {
 	Queries *query.DB
 	Session *session.Manager[shared.Session]
 	Flash   *flash.Flash
+	Jobs    *jobs.Manager
 }
 
 //fabrik:web GET /{$} middleware=nocache
@@ -77,10 +79,12 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 
 	slog.InfoContext(ctx, "greeting", "name", name)
 
+	// Visit counts lag because workers persist them asynchronously.
+	if _, err := h.Jobs.Enqueue(ctx, Visit{Path: "/"}); err != nil {
+		return nil, err
+	}
 	visits, err := query.One[visitCount](ctx, h.Queries,
-		`INSERT INTO visits (id, count) VALUES (1, 1)
-		 ON CONFLICT (id) DO UPDATE SET count = count + 1
-		 RETURNING count`)
+		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0) AS count`)
 	if err != nil {
 		return nil, err
 	}

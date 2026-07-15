@@ -1,0 +1,41 @@
+A job message must be a struct - messages are plain JSON structs. A
+//fabrik:job whose last parameter is a named slice (or scalar/map) is
+rejected at generation, matching the runtime Register check.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/jobs v0.0.0
+
+replace github.com/gofabrik/fabrik/jobs => JOBSDIR
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/jobs"
+
+//fabrik:provider
+func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
+
+//fabrik:hook start
+func Boot(mgr *jobs.Manager) error { return nil }
+-- mail/mail.go --
+package mail
+
+import "context"
+
+type Recipients []string
+
+//fabrik:job
+func SendAll(ctx context.Context, r Recipients) error { return nil }
+-- want/diags --
+error: mail/mail.go:7:1: handler SendAll: the message parameter must be a struct
+  help: messages are plain JSON structs; a scalar, slice, or map is not a message type

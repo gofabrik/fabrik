@@ -57,7 +57,7 @@ func run() error {
 	r := router.New()
 	webTenant := &web.Tenant{}
 
-	// Routes
+	// Register
 	r.Method("GET", "/users/new", web.New)
 	r.Method("GET", "/users/{id}", web.Show)
 	r.Method("GET", "/files/{path...}", web.Files)
