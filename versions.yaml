@@ -1,0 +1,34 @@
+module-sets:
+  fabrik:
+    version: v0.1.0
+    modules:
+      - github.com/gofabrik/fabrik/assetmapper
+      - github.com/gofabrik/fabrik/assetmapper/directive
+      - github.com/gofabrik/fabrik/config
+      - github.com/gofabrik/fabrik/config/directive
+      - github.com/gofabrik/fabrik/diag
+      - github.com/gofabrik/fabrik/fabrik
+      - github.com/gofabrik/fabrik/flash
+      - github.com/gofabrik/fabrik/gen
+      - github.com/gofabrik/fabrik/jobs
+      - github.com/gofabrik/fabrik/jobs/directive
+      - github.com/gofabrik/fabrik/migrations
+      - github.com/gofabrik/fabrik/migrations/directive
+      - github.com/gofabrik/fabrik/query
+      - github.com/gofabrik/fabrik/router
+      - github.com/gofabrik/fabrik/router/directive
+      - github.com/gofabrik/fabrik/session
+      - github.com/gofabrik/fabrik/templates
+      - github.com/gofabrik/fabrik/templates/directive
+      - github.com/gofabrik/fabrik/web
+      - github.com/gofabrik/fabrik/web/directive
+excluded-modules:
+  # Test, example, and benchmark modules are built only in the workspace.
+  - demo
+  - github.com/gofabrik/fabrik/jobs/dbtest
+  - github.com/gofabrik/fabrik/migrations/dbtest
+  - github.com/gofabrik/fabrik/query/dbtest
+  - github.com/gofabrik/fabrik/router/bench
+  - github.com/gofabrik/fabrik/session/dbtest
+  # Release tools are pinned separately and never tagged.
+  - github.com/gofabrik/fabrik/internal/tools

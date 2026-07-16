@@ -1,3 +1,11 @@
 module {{.Module}}
 
 go 1.26
+{{- if .FabrikVersion}}
+
+require (
+{{- range .FabrikModules}}
+	{{.}} {{$.FabrikVersion}}
+{{- end}}
+)
+{{- end}}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,12 +27,17 @@ func TestDemoEndToEnd(t *testing.T) {
 	if err := wireCheck(demoDir); err != nil {
 		t.Fatalf("demo main.gen.go is stale: %v", err)
 	}
+	repoRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tmp := t.TempDir()
+	// Local replacements let the committed demo module build before its dependencies are published.
+	src := copyDemoWithLocalReplaces(t, demoDir, repoRoot)
 	bin := filepath.Join(tmp, "demo-bin")
-	// Build outside go.work to verify the demo's module metadata.
 	build := exec.Command("go", "build", "-o", bin, ".")
-	build.Dir = demoDir
+	build.Dir = src
 	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
@@ -39,7 +45,7 @@ func TestDemoEndToEnd(t *testing.T) {
 
 	port := freePort(t)
 	server := exec.Command(bin)
-	server.Dir = demoDir
+	server.Dir = src
 	server.Env = append(os.Environ(),
 		"DEMO_HTTP_ADDR=:"+port,
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
@@ -94,6 +100,41 @@ func TestDemoEndToEnd(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	sessionFlow(t, port)
+}
+
+func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), "demo-src")
+	if err := os.CopyFS(dst, os.DirFS(demoDir)); err != nil {
+		t.Fatalf("copy demo: %v", err)
+	}
+	// os.CopyFS may preserve a read-only mode.
+	if err := os.Chmod(filepath.Join(dst, "go.mod"), 0o644); err != nil {
+		t.Fatalf("chmod go.mod: %v", err)
+	}
+	edit := exec.Command("go", "mod", "edit", "-json")
+	edit.Dir = dst
+	out, err := edit.Output()
+	if err != nil {
+		t.Fatalf("go mod edit -json: %v", err)
+	}
+	var mod struct{ Require []struct{ Path string } }
+	if err := json.Unmarshal(out, &mod); err != nil {
+		t.Fatalf("parse go.mod: %v", err)
+	}
+	const prefix = "github.com/gofabrik/fabrik/"
+	for _, r := range mod.Require {
+		if !strings.HasPrefix(r.Path, prefix) {
+			continue
+		}
+		local := filepath.Join(repoRoot, strings.TrimPrefix(r.Path, prefix))
+		e := exec.Command("go", "mod", "edit", "-replace="+r.Path+"="+local)
+		e.Dir = dst
+		if out, err := e.CombinedOutput(); err != nil {
+			t.Fatalf("inject replace %s: %v\n%s", r.Path, err, out)
+		}
+	}
+	return dst
 }
 
 func sessionFlow(t *testing.T, port string) {

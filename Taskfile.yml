@@ -1,0 +1,150 @@
+version: '3'
+
+vars:
+  BIN: '{{.ROOT_DIR}}/.task-bin'
+  RELEASE: '{{.ROOT_DIR}}/.task-bin/release -root {{.ROOT_DIR}}'
+  CHLOGGEN: '{{.ROOT_DIR}}/.task-bin/chloggen --config {{.ROOT_DIR}}/.chloggen/config.yaml'
+  MULTIMOD: '{{.ROOT_DIR}}/.task-bin/multimod'
+  MODULE_DIRS:
+    sh: cd {{.ROOT_DIR}} && go work edit -json | jq -r '.Use[].DiskPath'
+
+tasks:
+  default:
+    cmds: [task -l]
+    silent: true
+
+  ci:
+    desc: Per-PR gate - build, test, manifest lint, go.work drift, changelog validate
+    cmds:
+      - task: build
+      - task: test
+      - task: manifest:lint
+      - task: workspace:check
+      - task: changelog:validate
+
+  build:
+    desc: Build every workspace module from its own directory
+    cmds:
+      - for: { var: MODULE_DIRS }
+        cmd: cd {{.ROOT_DIR}}/{{.ITEM}} && go build ./...
+
+  test:
+    desc: Test every workspace module, plus the release-tools module
+    cmds:
+      - for: { var: MODULE_DIRS }
+        cmd: cd {{.ROOT_DIR}}/{{.ITEM}} && go test ./...
+      - task: test:tools
+
+  test:tools:
+    desc: Test the release-tools module (outside go.work)
+    dir: '{{.ROOT_DIR}}/internal/tools'
+    env: { GOWORK: 'off' }
+    cmds: [go test ./...]
+
+  manifest:lint:
+    desc: Fail on any missing intra-repo require, wrong version, or module cycle
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} manifest-lint']
+
+  manifest:fix:
+    desc: Add missing intra-repo requires and normalize versions in place
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} manifest-fix']
+
+  workspace:sync:
+    desc: Regenerate go.work replaces from versions.yaml (run after a version bump)
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} workspace-sync']
+
+  workspace:check:
+    desc: Fail if go.work's replace block drifted from versions.yaml
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} workspace-check']
+
+  changelog:validate:
+    desc: Validate the .chloggen fragments
+    deps: [_build:tools]
+    cmds: ['{{.CHLOGGEN}} validate']
+
+  changelog:new:
+    desc: Create a new changelog fragment (FILE=<name>)
+    deps: [_build:tools]
+    requires: { vars: [FILE] }
+    cmds: ['{{.CHLOGGEN}} new -f {{.FILE}}']
+
+  changelog:update:
+    desc: Collapse fragments into CHANGELOG.md (VERSION=vX.Y.Z)
+    deps: [_build:tools]
+    requires: { vars: [VERSION] }
+    cmds: ['{{.CHLOGGEN}} update -v {{.VERSION}}']
+
+  release:verify:
+    # Prerelease runs this before module manifests are updated.
+    desc: Structural multimod verify (versions.yaml is well-formed and consistent)
+    deps: [_build:tools]
+    cmds: ['{{.MULTIMOD}} verify']
+
+  release:prerelease:
+    desc: 'Bump intra-repo requires to VERSION on the prerelease branch, sync go.work, re-lint'
+    deps: [_build:tools, _build:release]
+    requires: { vars: [VERSION] }
+    cmds:
+      - '{{.RELEASE}} assert-version -version {{.VERSION}}'
+      # Multimod returns to the original branch after committing the prerelease branch.
+      - '{{.MULTIMOD}} prerelease -m fabrik -s'
+      - 'git switch prerelease_fabrik_{{.VERSION}}'
+      - task: workspace:sync
+      - task: manifest:lint
+      - task: workspace:check
+
+  release:converge:
+    desc: Tidy every module to a fixed point against the candidate proxy, then verify -mod=readonly
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} converge']
+
+  release:verify-build:
+    desc: Build every module -mod=readonly against a fresh candidate proxy
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} verify']
+
+  release:build-proxy:
+    desc: Write a candidate module proxy to DIR (default .candidate-proxy) from REV (default HEAD)
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} build-proxy {{.DIR | default ".candidate-proxy"}} {{.REV | default "HEAD"}}']
+
+  release:dry-run:
+    # Destructive: use only in a throwaway checkout because this commits version changes and creates a branch.
+    desc: 'Full release dry run at a throwaway VERSION (throwaway checkout only)'
+    deps: [_build:tools, _build:release]
+    requires: { vars: [VERSION] }
+    cmds:
+      - task: release:verify
+      - '{{.RELEASE}} set-version -version {{.VERSION}}'
+      - 'git commit -am "dry-run set version {{.VERSION}}"'
+      - task: release:prerelease VERSION={{.VERSION}}
+      - '{{.RELEASE}} converge'
+
+  release:tag:
+    desc: Create and push the path-prefixed tags for VERSION at COMMIT
+    deps: [_build:release]
+    requires: { vars: [VERSION, COMMIT] }
+    cmds:
+      - '{{.RELEASE}} assert-version -version {{.VERSION}}'
+      - '{{.RELEASE}} tag -commit {{.COMMIT}} -push'
+
+  _build:release:
+    internal: true
+    dir: '{{.ROOT_DIR}}/internal/tools'
+    env: { GOWORK: 'off' }
+    cmds: ['go build -o {{.BIN}}/release ./cmd/release']
+
+  _build:tools:
+    internal: true
+    dir: '{{.ROOT_DIR}}/internal/tools'
+    env: { GOWORK: 'off' }
+    status:
+      - test -x {{.BIN}}/multimod
+      - test -x {{.BIN}}/chloggen
+    cmds:
+      - go build -o {{.BIN}}/multimod go.opentelemetry.io/build-tools/multimod
+      - go build -o {{.BIN}}/chloggen go.opentelemetry.io/build-tools/chloggen

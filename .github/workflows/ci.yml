@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Build pinned Task
+        run: GOWORK=off go -C internal/tools build -o "$RUNNER_TEMP/task" github.com/go-task/task/v3/cmd/task
+      - name: Per-PR gate (build, test, manifest lint, go.work drift, changelog validate)
+        run: "$RUNNER_TEMP/task ci"
+
+  changelog-fragment:
+    # Head-branch detection works before the release label is attached.
+    if: >-
+      github.event_name == 'pull_request'
+      && !startsWith(github.head_ref, 'prerelease_fabrik_')
+      && !contains(github.event.pull_request.labels.*.name, 'skip-changelog')
+      && !contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Require a new changelog fragment
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE"
+          added=$(git diff --name-only --diff-filter=A "origin/${BASE}...HEAD" \
+            | grep -E '^\.chloggen/[^/]+\.ya?ml$' \
+            | grep -vE '\.chloggen/(TEMPLATE|config)\.yaml$' || true)
+          if [ -z "$added" ]; then
+            echo "No new .chloggen/ fragment in this PR."
+            echo "Add one with 'task changelog:new FILE=<slug>', or label the PR 'skip-changelog'."
+            exit 1
+          fi
+          echo "Found fragment(s):"; echo "$added"
