@@ -20,5 +20,6 @@ require (
 require (
 	github.com/gofabrik/fabrik/migrations v0.1.0 // indirect
 	github.com/gofabrik/fabrik/templates v0.1.0 // indirect
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 )
