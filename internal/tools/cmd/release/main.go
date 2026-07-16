@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gofabrik/fabrik/internal/tools/binaries"
 	"github.com/gofabrik/fabrik/internal/tools/candidateproxy"
 	"github.com/gofabrik/fabrik/internal/tools/converge"
 	"github.com/gofabrik/fabrik/internal/tools/gittag"
@@ -123,6 +124,15 @@ func main() {
 			fatal(err)
 		}
 		fmt.Printf("candidate proxy for %s (%d modules) written to %s\n", cfg.Version, len(cfg.Published), args[0])
+	case "build-binaries":
+		if len(args) < 1 {
+			usage()
+			os.Exit(2)
+		}
+		if err := binaries.Build(cfg, args[0]); err != nil {
+			fatal(err)
+		}
+		fmt.Printf("release binaries for %s written to %s\n", cfg.Version, args[0])
 	case "converge":
 		iters, err := converge.Run(cfg, 15)
 		if err != nil {
@@ -141,7 +151,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: release [-root DIR] {manifest-lint|manifest-fix|workspace-sync|workspace-check|build-proxy OUT [REV]|converge|verify|assert-version -version V|set-version -version V|tag -commit SHA [-push]}")
+	fmt.Fprintln(os.Stderr, "usage: release [-root DIR] {manifest-lint|manifest-fix|workspace-sync|workspace-check|build-proxy OUT [REV]|build-binaries OUT|converge|verify|assert-version -version V|set-version -version V|tag -commit SHA [-push]}")
 }
 
 func fatal(err error) {

@@ -1,0 +1,5 @@
+change_type: enhancement
+component: fabrik
+note: Ship prebuilt Fabrik CLI binaries through the gofabrik.dev installer.
+issues: [20]
+subtext:

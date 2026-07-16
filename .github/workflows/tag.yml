@@ -93,5 +93,23 @@ jobs:
             echo "working tree changed during verification; refusing to tag"; git status --porcelain; exit 1
           fi
 
+      - name: Build CLI binaries
+        # Candidate-proxy installs preserve versions; building first avoids tags without binaries.
+        run: '"$RUNNER_TEMP/task" release:build-binaries OUT="$RUNNER_TEMP/dist"'
+
       - name: Create and push tags
         run: '"$RUNNER_TEMP/task" release:tag VERSION="$VERSION" COMMIT="$COMMIT"'
+
+      - name: Publish CLI binaries to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/dist"
+          tag="fabrik/$VERSION"
+          # Reuse the release when retrying a failed upload.
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --title "fabrik $VERSION" \
+              --notes "Prebuilt fabrik CLI binaries for $VERSION."
+          fi
+          gh release upload "$tag" "$dist"/fabrik_*.tar.gz "$dist/checksums.txt" --clobber
