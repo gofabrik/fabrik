@@ -42,8 +42,13 @@ func TestCreateIdempotentAndVersionGuard(t *testing.T) {
 		"module-sets:\n  fabrik:\n    version: v0.1.0\n")
 	writeFile(t, filepath.Join(root, "jobs", "go.mod"), "module x\n")
 	mustGit(t, root, "init")
+	// Persist an identity in the repo: Create runs `git tag -a`, which needs a
+	// committer/tagger and would otherwise fail on a runner with no global git
+	// config.
+	mustGit(t, root, "config", "user.email", "t@t")
+	mustGit(t, root, "config", "user.name", "t")
 	mustGit(t, root, "add", "-A")
-	mustGit(t, root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init")
+	mustGit(t, root, "commit", "-m", "init")
 	head, _ := run(root, "rev-parse", "HEAD")
 
 	cfg := &modset.Config{
