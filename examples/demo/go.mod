@@ -3,16 +3,16 @@ module demo
 go 1.26
 
 require (
-	github.com/gofabrik/fabrik/assetmapper v0.0.0
-	github.com/gofabrik/fabrik/config v0.0.0
-	github.com/gofabrik/fabrik/flash v0.0.0
-	github.com/gofabrik/fabrik/jobs v0.0.0
-	github.com/gofabrik/fabrik/migrations v0.0.0
-	github.com/gofabrik/fabrik/query v0.0.0
-	github.com/gofabrik/fabrik/router v0.0.0
-	github.com/gofabrik/fabrik/session v0.0.0
-	github.com/gofabrik/fabrik/templates v0.0.0
-	github.com/gofabrik/fabrik/web v0.0.0
+	github.com/gofabrik/fabrik/assetmapper v0.1.0
+	github.com/gofabrik/fabrik/config v0.1.0
+	github.com/gofabrik/fabrik/flash v0.1.0
+	github.com/gofabrik/fabrik/jobs v0.1.0
+	github.com/gofabrik/fabrik/migrations v0.1.0
+	github.com/gofabrik/fabrik/query v0.1.0
+	github.com/gofabrik/fabrik/router v0.1.0
+	github.com/gofabrik/fabrik/session v0.1.0
+	github.com/gofabrik/fabrik/templates v0.1.0
+	github.com/gofabrik/fabrik/web v0.1.0
 	modernc.org/sqlite v1.53.0
 )
 
@@ -31,17 +31,4 @@ require (
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-)
-
-replace (
-	github.com/gofabrik/fabrik/assetmapper => ../../assetmapper
-	github.com/gofabrik/fabrik/config => ../../config
-	github.com/gofabrik/fabrik/flash => ../../flash
-	github.com/gofabrik/fabrik/jobs => ../../jobs
-	github.com/gofabrik/fabrik/migrations => ../../migrations
-	github.com/gofabrik/fabrik/query => ../../query
-	github.com/gofabrik/fabrik/router => ../../router
-	github.com/gofabrik/fabrik/session => ../../session
-	github.com/gofabrik/fabrik/templates => ../../templates
-	github.com/gofabrik/fabrik/web => ../../web
 )

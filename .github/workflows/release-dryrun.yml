@@ -1,0 +1,32 @@
+name: Release dry run
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Build pinned Task
+        run: GOWORK=off go -C internal/tools build -o "$RUNNER_TEMP/task" github.com/go-task/task/v3/cmd/task
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Release dry run at a throwaway version (no tags)
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: '"$RUNNER_TEMP/task" release:dry-run VERSION="v0.999.999-dryrun.$RUN_ID"'

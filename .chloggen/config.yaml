@@ -1,0 +1,20 @@
+change_logs:
+  default: CHANGELOG.md
+default_change_logs:
+  - default
+
+components:
+  - fabrik
+  - assetmapper
+  - config
+  - diag
+  - flash
+  - gen
+  - jobs
+  - migrations
+  - query
+  - router
+  - session
+  - templates
+  - web
+  - build

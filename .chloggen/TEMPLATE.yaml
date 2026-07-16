@@ -1,0 +1,14 @@
+# One of: breaking, deprecation, new_component, enhancement, bug_fix
+change_type: enhancement
+
+# The module or area of concern, e.g. jobs, router, gen, fabrik (the CLI).
+component: fabrik
+
+# A brief description of the change. Surround with quotes ("") if it must start with a backtick (`).
+note: ""
+
+# One or more tracking issues or PR numbers related to the change.
+issues: []
+
+# (Optional) One or more lines of extra detail rendered under the note. Use a pipe (|) for multiline text.
+subtext:

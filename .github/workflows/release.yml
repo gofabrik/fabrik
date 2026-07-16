@@ -1,0 +1,81 @@
+# Prepares a reviewed release PR; tagging remains a separate manual workflow.
+name: Release (prepare)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. v0.2.0'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Dispatch inputs reach scripts only through validated environment variables.
+env:
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          # RELEASE_TOKEN avoids manual approval for CI on the generated PR.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Build pinned Task
+        run: GOWORK=off go -C internal/tools build -o "$RUNNER_TEMP/task" github.com/go-task/task/v3/cmd/task
+      - name: Validate version
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid version: $VERSION"; exit 1
+          fi
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Assert version matches versions.yaml
+        run: |
+          set -euo pipefail
+          got="$(grep -E '^\s+version:' versions.yaml | head -1 | awk '{print $2}')"
+          [ "$VERSION" = "$got" ] || { echo "input $VERSION != versions.yaml $got"; exit 1; }
+
+      - name: Structural verify (multimod)
+        run: '"$RUNNER_TEMP/task" release:verify'
+
+      - name: Prerelease (bump requires, sync go.work, re-lint at the new version)
+        run: '"$RUNNER_TEMP/task" release:prerelease VERSION="$VERSION"'
+
+      - name: Converge go.sum against the candidate proxy and verify -mod=readonly
+        run: '"$RUNNER_TEMP/task" release:converge'
+
+      - name: Collapse changelog fragments
+        run: '"$RUNNER_TEMP/task" changelog:update VERSION="$VERSION"'
+
+      - name: Commit converged go.sum and changelog
+        run: |
+          set -euo pipefail
+          git add -A
+          git commit -m "release: $VERSION (converge go.sum, changelog)"
+          git push --set-upstream origin "prerelease_fabrik_$VERSION"
+
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          gh pr create \
+            --base main \
+            --head "prerelease_fabrik_$VERSION" \
+            --label release \
+            --title "Release $VERSION" \
+            --body "Automated release preparation for $VERSION. Review the CHANGELOG and version/require bumps, then run the Release (tag) workflow on the merge commit."

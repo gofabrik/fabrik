@@ -1,0 +1,7 @@
+change_type: new_component
+component: fabrik
+note: First tagged release of the fabrik framework as a lockstep multi-module set.
+issues: [1]
+subtext: |
+  All modules are versioned and tagged together. Local development uses a
+  committed go.work; published modules resolve one another through real requires.

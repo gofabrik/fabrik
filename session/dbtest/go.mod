@@ -3,7 +3,7 @@ module github.com/gofabrik/fabrik/session/dbtest
 go 1.26
 
 require (
-	github.com/gofabrik/fabrik/session v0.0.0
+	github.com/gofabrik/fabrik/session v0.1.0
 	modernc.org/sqlite v1.53.0
 )
 
@@ -19,5 +19,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/gofabrik/fabrik/session => ..

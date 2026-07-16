@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"text/template"
 )
@@ -18,6 +19,43 @@ import (
 var templatesFS embed.FS
 
 const starterRoot = "templates/starter"
+
+// starterFabrikModules includes dependencies introduced by code generation.
+var starterFabrikModules = []string{
+	"github.com/gofabrik/fabrik/assetmapper",
+	"github.com/gofabrik/fabrik/config",
+	"github.com/gofabrik/fabrik/router",
+	"github.com/gofabrik/fabrik/templates",
+	"github.com/gofabrik/fabrik/web",
+}
+
+var scaffoldVersion = func() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	switch info.Main.Version {
+	case "", "(devel)":
+		return ""
+	default:
+		return info.Main.Version
+	}
+}
+
+type scaffoldVars struct {
+	Module        string
+	EnvPrefix     string
+	FabrikVersion string
+	FabrikModules []string
+}
+
+func scaffoldData(module, version string) scaffoldVars {
+	v := scaffoldVars{Module: module, EnvPrefix: envPrefix(module), FabrikVersion: version}
+	if version != "" {
+		v.FabrikModules = starterFabrikModules
+	}
+	return v
+}
 
 func newCmd(args []string) error {
 	module, args := extractFlag(args, "module")
@@ -38,10 +76,8 @@ func newCmd(args []string) error {
 		return fmt.Errorf("%s already exists", project)
 	}
 
-	data := struct {
-		Module    string
-		EnvPrefix string
-	}{Module: module, EnvPrefix: envPrefix(module)}
+	version := scaffoldVersion()
+	data := scaffoldData(module, version)
 
 	err := fs.WalkDir(templatesFS, starterRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -110,6 +146,12 @@ func newCmd(args []string) error {
 	if _, err := wire(abs); err != nil {
 		return err
 	}
+	// Generated-only dependencies must stay at the CLI's version after the final tidy.
+	if version != "" {
+		if err := repinFabrik(project, version); err != nil {
+			return err
+		}
+	}
 	tidy = exec.Command("go", "mod", "tidy")
 	tidy.Dir = project
 	if out, terr := tidy.CombinedOutput(); terr != nil {
@@ -117,7 +159,23 @@ func newCmd(args []string) error {
 		return fmt.Errorf("created and wired %s, but `go mod tidy` failed; fix and retry", project)
 	}
 
-	fmt.Printf("\nCreated %s. Next:\n  cd %s\n  fabrik run\n", project, project)
+	mode := "resolving fabrik from the workspace"
+	if version != "" {
+		mode = "pinned fabrik " + version
+	}
+	fmt.Printf("\nCreated %s (%s). Next:\n  cd %s\n  fabrik run\n", project, mode, project)
+	return nil
+}
+
+func repinFabrik(dir, version string) error {
+	for _, m := range starterFabrikModules {
+		edit := exec.Command("go", "mod", "edit", "-require="+m+"@"+version)
+		edit.Dir = dir
+		if out, err := edit.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s", out)
+			return fmt.Errorf("re-pin fabrik requires in %s: %w", dir, err)
+		}
+	}
 	return nil
 }
 

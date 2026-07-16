@@ -1,0 +1,97 @@
+# Revalidates and atomically tags a reviewed release merge.
+name: Release (tag)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. v0.2.0'
+        required: true
+      commit:
+        description: 'Merge commit SHA to tag'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: read
+
+# Dispatch inputs reach scripts only through validated environment variables.
+env:
+  VERSION: ${{ inputs.version }}
+  COMMIT: ${{ inputs.commit }}
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Build pinned Task
+        run: GOWORK=off go -C internal/tools build -o "$RUNNER_TEMP/task" github.com/go-task/task/v3/cmd/task
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid version: $VERSION"; exit 1
+          fi
+          # GitHub's merge_commit_sha comparison requires the full SHA.
+          if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "invalid commit (need full 40-char SHA): $COMMIT"; exit 1
+          fi
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Assert the commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$COMMIT" origin/main; then
+            echo "commit $COMMIT is not on main; only merged release commits may be tagged"; exit 1
+          fi
+
+      - name: Verify commit is the merge of a release PR into main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          count=$(gh api "repos/$REPO/commits/$COMMIT/pulls" \
+            | jq --arg c "$COMMIT" '[.[] | select(.merged_at != null and .base.ref == "main" and .merge_commit_sha == $c and (any(.labels[]; .name == "release")))] | length')
+          if [ "$count" -lt 1 ]; then
+            echo "commit $COMMIT is not the merge of a release-labelled PR into main"; exit 1
+          fi
+
+      - name: Assert version agreement (versions.yaml and CHANGELOG top section)
+        run: |
+          set -euo pipefail
+          vy="$(grep -E '^\s+version:' versions.yaml | head -1 | awk '{print $2}')"
+          cl="$(grep -m1 -E '^## ' CHANGELOG.md | awk '{print $2}')"
+          [ "$VERSION" = "$vy" ] || { echo "versions.yaml is $vy, want $VERSION"; exit 1; }
+          [ "$VERSION" = "$cl" ] || { echo "CHANGELOG top is $cl, want $VERSION"; exit 1; }
+
+      - name: Re-validate the exact commit (structural, manifest, go.work, readonly build)
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/task" release:verify
+          "$RUNNER_TEMP/task" manifest:lint
+          "$RUNNER_TEMP/task" workspace:check
+          "$RUNNER_TEMP/task" release:verify-build
+
+      - name: Require a clean working tree
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree changed during verification; refusing to tag"; git status --porcelain; exit 1
+          fi
+
+      - name: Create and push tags
+        run: '"$RUNNER_TEMP/task" release:tag VERSION="$VERSION" COMMIT="$COMMIT"'
