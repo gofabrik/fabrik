@@ -31,6 +31,10 @@ func Plan(cfg *modset.Config) ([]string, error) {
 
 // Create applies all planned tags to commit and optionally pushes them atomically, rejecting version mismatches and conflicting tags.
 func Create(cfg *modset.Config, commit, remote string, push bool) ([]string, error) {
+	want, err := resolveCommit(cfg.Root, commit)
+	if err != nil {
+		return nil, err
+	}
 	if v, err := versionAtCommit(cfg.Root, commit); err != nil {
 		return nil, err
 	} else if v != cfg.Version {
@@ -38,10 +42,6 @@ func Create(cfg *modset.Config, commit, remote string, push bool) ([]string, err
 	}
 
 	tags, err := Plan(cfg)
-	if err != nil {
-		return nil, err
-	}
-	want, err := resolveCommit(cfg.Root, commit)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func tagCommit(dir, tag string) (string, bool) {
 func resolveCommit(dir, commit string) (string, error) {
 	out, err := git(dir, "rev-parse", "--verify", commit+"^{commit}")
 	if err != nil {
-		return "", fmt.Errorf("resolve commit %s: %v\n%s", commit, err, out)
+		return "", fmt.Errorf("resolve commit %s: not found locally; fetch it before tagging: %v\n%s", commit, err, out)
 	}
 	return out, nil
 }
@@ -87,7 +87,7 @@ func resolveCommit(dir, commit string) (string, error) {
 func versionAtCommit(dir, commit string) (string, error) {
 	out, err := git(dir, "show", commit+":versions.yaml")
 	if err != nil {
-		return "", fmt.Errorf("read versions.yaml at %s: %v\n%s", commit, err, out)
+		return "", fmt.Errorf("versions.yaml not found at %s; use the release commit: %v\n%s", commit, err, out)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)

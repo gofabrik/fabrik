@@ -36,12 +36,20 @@ installed.
 3. Review the PR: check the new `CHANGELOG.md` section and the version/require
    bumps. Merge it.
 
-4. Run the **Release (tag)** workflow with the version and merge SHA. It verifies
-   the release merge, candidate proxy, and clean tree before pushing tags.
+4. Tag the merge with the **Release (tag)** workflow using the version and merge
+   SHA. It verifies the release merge, candidate proxy, and clean tree before
+   pushing the tags.
 
-   The workflow calls `task release:tag VERSION=v0.2.0 COMMIT=<merge-sha>`.
-   This command checks only version agreement and tag conflicts, so use it
-   directly only after validating the exact merge commit.
+   For local tagging, fetch the merge commit first:
+
+   ```
+   git checkout main && git pull
+   task release:tag VERSION=v0.2.0 COMMIT=<merge-sha>
+   ```
+
+   The commit must exist locally with a `versions.yaml` matching the current
+   checkout. The task checks version agreement and tag conflicts, but does not
+   verify that the commit is on `main`.
 
 Steps 1-2 can also run as the **Release (prepare)** workflow (Actions tab) with
 the version, which pushes the branch and opens the PR for you.
@@ -73,6 +81,7 @@ Before `v0.1.0` is published:
 - **converge fails**: run `task manifest:fix` for missing requirements, commit,
   and retry.
 - **"tag already exists"**: use a new version.
+- **commit not found locally**: run `git checkout main && git pull`, then retry.
 - **workspace stops building after a bump**: the `go.work` replaces are pinned
   to the version. Regenerate them with `task workspace:sync`.
 
