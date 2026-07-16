@@ -112,6 +112,11 @@ tasks:
     deps: [_build:release]
     cmds: ['{{.RELEASE}} build-proxy {{.DIR | default ".candidate-proxy"}} {{.REV | default "HEAD"}}']
 
+  release:build-binaries:
+    desc: Build reproducible CLI release archives into OUT (default dist) from the candidate proxy
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} build-binaries {{.OUT | default "dist"}}']
+
   release:dry-run:
     # Destructive: use only in a throwaway checkout because this commits version changes and creates a branch.
     desc: 'Full release dry run at a throwaway VERSION (throwaway checkout only)'

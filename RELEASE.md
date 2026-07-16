@@ -37,8 +37,9 @@ installed.
    bumps. Merge it.
 
 4. Tag the merge with the **Release (tag)** workflow using the version and merge
-   SHA. It verifies the release merge, candidate proxy, and clean tree before
-   pushing the tags.
+   SHA. It validates the release commit, builds four CLI archives before
+   tagging, pushes the module tags, and publishes the archives and checksums to
+   the `fabrik/<version>` GitHub release.
 
    For local tagging, fetch the merge commit first:
 
@@ -48,8 +49,9 @@ installed.
    ```
 
    The commit must exist locally with a `versions.yaml` matching the current
-   checkout. The task checks version agreement and tag conflicts, but does not
-   verify that the commit is on `main`.
+   checkout. The task checks version agreement and tag conflicts, but neither
+   verifies `main` membership nor publishes binaries. For local assets, run
+   `task release:build-binaries` before creating the release with `gh`.
 
 Steps 1-2 can also run as the **Release (prepare)** workflow (Actions tab) with
 the version, which pushes the branch and opens the PR for you.
