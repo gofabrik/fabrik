@@ -1,3 +1,7 @@
+github.com/gofabrik/fabrik/diag v0.1.0 h1:Tdl3Ot4R3ZBbLkADG8AIjvGt9VCZfLA8i/7jdFbsrrM=
+github.com/gofabrik/fabrik/diag v0.1.0/go.mod h1:Z1kHb+2Fajje45BSL7D1GVbLPzkIrQqfSuwS0QD6b4g=
+github.com/gofabrik/fabrik/gen v0.1.0 h1:6doI7zFatld3xkQ+W4Bc++3KsiBK8XZvAccGYc8KrUI=
+github.com/gofabrik/fabrik/gen v0.1.0/go.mod h1:Cg3vW4mrAUeWOjt8H3Iy3tfTqmySCtsxfejvLnNmvJ0=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
 github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
 golang.org/x/mod v0.37.0 h1:vF1DjpVEshcIqoEaauuHebaLk1O1forxjxBaVn884JQ=

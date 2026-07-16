@@ -1,2 +1,4 @@
 github.com/go-chi/chi/v5 v5.3.0 h1:halUjDxhshgXHMrao5bB8eNBXo/rnzwr8m5m36glehM=
 github.com/go-chi/chi/v5 v5.3.0/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
+github.com/gofabrik/fabrik/router v0.1.0 h1:+8yt9WDkXLu7V4P6Vl82RKHwwGSyq4pMck9x39OJ6qc=
+github.com/gofabrik/fabrik/router v0.1.0/go.mod h1:PruZ10yCn+5qcXQMIKhMeCq6m01lw6mo67u+Gpyo0mo=
