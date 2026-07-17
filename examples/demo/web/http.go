@@ -27,14 +27,13 @@ type HomePage struct {
 	Flashes  []flash.Message
 }
 
-// Greeting is one recorded visit.
+// Greeting is a recorded greeting.
 type Greeting struct {
 	ID      int64
 	Name    string
 	Created time.Time
 }
 
-// visitCount reads the counter upsert's RETURNING value.
 type visitCount struct {
 	Count int64
 }
@@ -58,23 +57,13 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	name := req.Query("name")
-	if name != "" {
-		if err := h.Session.Save(ctx, shared.Session{Name: name}); err != nil {
-			return nil, err
-		}
-		if err := h.Flash.Add(ctx, "success", "Greeting name updated."); err != nil {
-			return nil, err
-		}
-	} else {
-		s, err := h.Session.Get(ctx)
-		if err != nil {
-			return nil, err
-		}
-		name = s.Name
-		if name == "" {
-			name = "world"
-		}
+	s, err := h.Session.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	name := s.Name
+	if name == "" {
+		name = "world"
 	}
 
 	slog.InfoContext(ctx, "greeting", "name", name)
@@ -86,9 +75,6 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	visits, err := query.One[visitCount](ctx, h.Queries,
 		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0) AS count`)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := h.Queries.Insert(ctx, "greetings", Greeting{Name: name, Created: time.Now()}); err != nil {
 		return nil, err
 	}
 
@@ -109,6 +95,30 @@ type API struct {
 //fabrik:http GET /greet/{name}
 func (a *API) Greet(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(a.Greeter.Greet(r.PathValue("name"))))
+}
+
+type Greetings struct {
+	Session *session.Manager[shared.Session]
+	Flash   *flash.Flash
+	Queries *query.DB
+}
+
+//fabrik:http POST /greet
+func (h *Greetings) Update(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	if err := h.Session.Save(r.Context(), shared.Session{Name: name}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := h.Queries.Insert(r.Context(), "greetings", Greeting{Name: name, Created: time.Now()}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := h.Flash.Add(r.Context(), "success", "Greeting name updated."); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // Docs lists the registered routes.

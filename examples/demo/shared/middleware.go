@@ -14,6 +14,11 @@ func Logged(next http.Handler) http.Handler { return middleware.Logger(next) }
 func Recovered(next http.Handler) http.Handler { return middleware.Recover(next) }
 
 //fabrik:http:middleware
+func CrossOriginMiddleware(c *http.CrossOriginProtection) func(http.Handler) http.Handler {
+	return c.Handler
+}
+
+//fabrik:http:middleware
 func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
 	return m.Middleware
 }

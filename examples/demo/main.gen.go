@@ -26,7 +26,7 @@ func run() error {
 	sharedConfig, err := config.Load[shared.Config](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
 		config.Section("http"),
 	)
 	if err != nil {
@@ -36,7 +36,7 @@ func run() error {
 	sharedDatabase, err := config.Load[shared.Database](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
 		config.Section("database"),
 	)
 	if err != nil {
@@ -46,8 +46,18 @@ func run() error {
 	sharedLog, err := config.Load[shared.Log](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
 		config.Section("log"),
+	)
+	if err != nil {
+		return err
+	}
+
+	sharedCrossOrigin, err := config.Load[shared.CrossOrigin](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
+		config.Section("crossorigin"),
 	)
 	if err != nil {
 		return err
@@ -56,7 +66,7 @@ func run() error {
 	webConfig, err := config.Load[web.Config](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
 		config.Section("greeter"),
 	)
 	if err != nil {
@@ -140,6 +150,16 @@ func run() error {
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
+	webGreetings := &web.Greetings{
+		Session: sharedSessionManager,
+		Flash:   sharedFlash,
+		Queries: sharedQueryDB,
+	}
+
+	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOrigin)
+	if err != nil {
+		return err
+	}
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -153,6 +173,8 @@ func run() error {
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
+	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
+	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
 
@@ -162,6 +184,7 @@ func run() error {
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
+	r.Method("POST", "/greet", webGreetings.Update)
 	r.Method("GET", "/routes", webDocs.List)
 
 	// Jobs

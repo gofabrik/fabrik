@@ -14,3 +14,8 @@ type Database struct {
 type Log struct {
 	Level string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
 }
+
+//fabrik:config crossorigin
+type CrossOrigin struct {
+	TrustedOrigins []string `yaml:"trusted_origins" env:"DEMO_CROSSORIGIN_TRUSTED_ORIGINS"`
+}
