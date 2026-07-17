@@ -4,6 +4,7 @@ vars:
   BIN: '{{.ROOT_DIR}}/.task-bin'
   RELEASE: '{{.ROOT_DIR}}/.task-bin/release -root {{.ROOT_DIR}}'
   CHLOGGEN: '{{.ROOT_DIR}}/.task-bin/chloggen --config {{.ROOT_DIR}}/.chloggen/config.yaml'
+  CHLOGCHECK: '{{.ROOT_DIR}}/.task-bin/chlogcheck --config {{.ROOT_DIR}}/.chloggen/config.yaml'
   MULTIMOD: '{{.ROOT_DIR}}/.task-bin/multimod'
   MODULE_DIRS:
     sh: cd {{.ROOT_DIR}} && go work edit -json | jq -r '.Use[].DiskPath'
@@ -62,9 +63,9 @@ tasks:
     cmds: ['{{.RELEASE}} workspace-check']
 
   changelog:validate:
-    desc: Validate the .chloggen fragments
+    desc: Validate the .chloggen fragments (issue links not required)
     deps: [_build:tools]
-    cmds: ['{{.CHLOGGEN}} validate']
+    cmds: ['{{.CHLOGCHECK}}']
 
   changelog:new:
     desc: Create a new changelog fragment (FILE=<name>)
@@ -150,6 +151,8 @@ tasks:
     status:
       - test -x {{.BIN}}/multimod
       - test -x {{.BIN}}/chloggen
+      - test -x {{.BIN}}/chlogcheck
     cmds:
       - go build -o {{.BIN}}/multimod go.opentelemetry.io/build-tools/multimod
       - go build -o {{.BIN}}/chloggen go.opentelemetry.io/build-tools/chloggen
+      - go build -o {{.BIN}}/chlogcheck ./cmd/chlogcheck
