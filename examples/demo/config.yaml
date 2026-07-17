@@ -1,5 +1,6 @@
 # Demo configuration. Environment overrides: DEMO_HTTP_ADDR,
-# DEMO_LOG_LEVEL, DEMO_GREETER_KIND, DEMO_DATABASE_PATH.
+# DEMO_LOG_LEVEL, DEMO_GREETER_KIND, DEMO_DATABASE_PATH,
+# DEMO_CROSSORIGIN_TRUSTED_ORIGINS.
 http:
   addr: ":8080"
 log:
@@ -9,3 +10,6 @@ greeter:
 
 database:
   path: demo.db
+
+crossorigin:
+  trusted_origins: []

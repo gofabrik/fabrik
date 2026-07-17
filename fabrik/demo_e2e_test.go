@@ -2,10 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +33,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	// Local replacements let the committed demo module build before its dependencies are published.
+	// Local replacements make the copied demo use this checkout's modules.
 	src := copyDemoWithLocalReplaces(t, demoDir, repoRoot)
 	bin := filepath.Join(tmp, "demo-bin")
 	build := exec.Command("go", "build", "-o", bin, ".")
@@ -49,6 +49,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	server.Env = append(os.Environ(),
 		"DEMO_HTTP_ADDR=:"+port,
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
+		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
 	)
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
@@ -56,10 +57,10 @@ func TestDemoEndToEnd(t *testing.T) {
 	defer server.Process.Kill()
 
 	visitRE := regexp.MustCompile(`visit #(\d+)`)
-	// visit returns the visit counter the page rendered (-1 if the server
-	// is not answering yet) and the body.
-	visit := func(name string) (int, string) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%s/?name=%s", port, name))
+	base := "http://localhost:" + port
+	// A -1 count means no response or no parseable counter.
+	visit := func() (int, string) {
+		resp, err := http.Get(base + "/")
 		if err != nil {
 			return -1, ""
 		}
@@ -75,9 +76,8 @@ func TestDemoEndToEnd(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 
-	// Verify synchronous greeting writes before polling asynchronous visits.
 	for {
-		if _, body := visit("one"); body != "" {
+		if _, body := visit(); body != "" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -85,13 +85,21 @@ func TestDemoEndToEnd(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if _, body := visit("two"); !strings.Contains(body, `<li class="greeting">one</li>`) || !strings.Contains(body, `<li class="greeting">two</li>`) {
-		t.Fatalf("greetings are synchronous; the second response should list both:\n%s", body)
+
+	// Greeting inserts are synchronous: two renames appear in the list immediately.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &http.Client{Jar: jar}
+	postGreet(t, c, base, "one")
+	if body := postGreet(t, c, base, "two"); !strings.Contains(body, `<li class="greeting">one</li>`) || !strings.Contains(body, `<li class="greeting">two</li>`) {
+		t.Fatalf("greetings are synchronous; the list should show both:\n%s", body)
 	}
 
 	// Visit counts are eventually consistent because workers update them asynchronously.
 	for {
-		if n, _ := visit("poll"); n >= 2 {
+		if n, _ := visit(); n >= 2 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -100,6 +108,7 @@ func TestDemoEndToEnd(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	sessionFlow(t, port)
+	crossOriginFlow(t, port)
 }
 
 func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {
@@ -137,15 +146,105 @@ func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {
 	return dst
 }
 
+func crossOriginFlow(t *testing.T, port string) {
+	t.Helper()
+	base := "http://localhost:" + port
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+
+	post := func(origin, name string) int {
+		req, err := http.NewRequest(http.MethodPost, base+"/greet", strings.NewReader("name="+name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+			req.Header.Set("Sec-Fetch-Site", "cross-site")
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// A cross-origin unsafe request is rejected before it reaches the handler.
+	if code := post("https://evil.example", "mallory"); code != http.StatusForbidden {
+		t.Fatalf("cross-origin POST /greet must be 403, got %d", code)
+	}
+	// The rejected POST never ran, so it changed no session state.
+	if body := crossOriginGet(t, client, base+"/", ""); strings.Contains(body, "Goodbye, mallory!") {
+		t.Fatalf("rejected cross-origin POST must not rename the session:\n%s", body)
+	}
+	// A request without an Origin header (same-origin / non-browser) is allowed.
+	if code := post("", "sameorigin"); code != http.StatusOK {
+		t.Fatalf("same-origin POST /greet must be 200, got %d", code)
+	}
+	// A configured trusted origin is allowed.
+	if code := post("https://trusted.example", "zoe"); code != http.StatusOK {
+		t.Fatalf("trusted-origin POST /greet must be 200, got %d", code)
+	}
+	// The allowed POST reached the handler and saved the session name.
+	if body := crossOriginGet(t, client, base+"/", ""); !strings.Contains(body, "Goodbye, zoe!") {
+		t.Fatalf("GET / should reflect the trusted POST's saved name:\n%s", body)
+	}
+	// A safe method is always allowed, even cross-origin, and cannot rename.
+	if body := crossOriginGet(t, client, base+"/?name=hacker", "https://evil.example"); !strings.Contains(body, "Goodbye, zoe!") {
+		t.Fatalf("cross-origin GET must be allowed but must not rename the session:\n%s", body)
+	}
+}
+
+func crossOriginGet(t *testing.T, client *http.Client, url, origin string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d:\n%s", url, resp.StatusCode, b)
+	}
+	return string(b)
+}
+
+// postGreet renames via POST /greet and follows the PRG redirect, returning the page.
+func postGreet(t *testing.T, client *http.Client, base, name string) string {
+	t.Helper()
+	resp, err := client.PostForm(base+"/greet", url.Values{"name": {name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /greet = %d:\n%s", resp.StatusCode, b)
+	}
+	return string(b)
+}
+
 func sessionFlow(t *testing.T, port string) {
 	t.Helper()
+	base := "http://localhost:" + port
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := &http.Client{Jar: jar}
 	get := func(c *http.Client, path string) string {
-		resp, err := c.Get("http://localhost:" + port + path)
+		resp, err := c.Get(base + path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,22 +259,26 @@ func sessionFlow(t *testing.T, port string) {
 		return string(b)
 	}
 
-	body := get(client, "/?name=alice")
+	// Renaming is POST-only; the PRG redirect shows the new name and a one-shot flash.
+	body := postGreet(t, client, base, "alice")
 	if !strings.Contains(body, "Goodbye, alice!") {
-		t.Fatalf("rename request should greet alice (config greeter: goodbye):\n%s", body)
-	}
-	if strings.Contains(body, "Greeting name updated.") {
-		t.Fatalf("flash showed on the request that added it - it must ride the commit to the next one:\n%s", body)
-	}
-	body = get(client, "/")
-	if !strings.Contains(body, "Goodbye, alice!") {
-		t.Fatalf("session did not persist the greeting name:\n%s", body)
+		t.Fatalf("POST rename should greet alice (config greeter: goodbye):\n%s", body)
 	}
 	if !strings.Contains(body, "Greeting name updated.") {
-		t.Fatalf("flash message did not round-trip through the store:\n%s", body)
+		t.Fatalf("flash should show on the post-redirect page:\n%s", body)
 	}
-	if body = get(client, "/"); strings.Contains(body, "Greeting name updated.") {
+	if body := get(client, "/"); strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("flash survived being taken:\n%s", body)
+	}
+	if body := get(client, "/"); !strings.Contains(body, "Goodbye, alice!") {
+		t.Fatalf("session did not persist the greeting name:\n%s", body)
+	}
+	// GET is read-only: a query param cannot rename the session.
+	if body := get(client, "/?name=evil"); strings.Contains(body, "Goodbye, evil!") {
+		t.Fatalf("GET must not rename the session:\n%s", body)
+	}
+	if body := get(client, "/"); !strings.Contains(body, "Goodbye, alice!") {
+		t.Fatalf("GET must not have renamed the session:\n%s", body)
 	}
 	if body := get(http.DefaultClient, "/"); !strings.Contains(body, "Goodbye, world!") {
 		t.Fatalf("fresh visitor should get the default greeting:\n%s", body)

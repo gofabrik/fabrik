@@ -54,3 +54,14 @@ func NewSession(db *sql.DB) (*session.Manager[Session], error) {
 func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 	return flash.New(m)
 }
+
+//fabrik:provider
+func NewCrossOrigin(cfg *CrossOrigin) (*http.CrossOriginProtection, error) {
+	p := http.NewCrossOriginProtection()
+	for _, origin := range cfg.TrustedOrigins {
+		if err := p.AddTrustedOrigin(origin); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
+}
