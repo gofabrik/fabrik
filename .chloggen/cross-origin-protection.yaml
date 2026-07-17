@@ -1,0 +1,4 @@
+change_type: enhancement
+component: web
+note: "Add a cross-origin (CSRF) protection example to the demo, wiring net/http.CrossOriginProtection as a global middleware."
+issues: [0]
