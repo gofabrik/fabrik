@@ -109,6 +109,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	}
 	sessionFlow(t, port)
 	crossOriginFlow(t, port)
+	formsFlow(t, port)
 }
 
 func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {
@@ -196,6 +197,56 @@ func crossOriginFlow(t *testing.T, port string) {
 	// A safe method is always allowed, even cross-origin, and cannot rename.
 	if body := crossOriginGet(t, client, base+"/?name=hacker", "https://evil.example"); !strings.Contains(body, "Goodbye, zoe!") {
 		t.Fatalf("cross-origin GET must be allowed but must not rename the session:\n%s", body)
+	}
+}
+
+func formsFlow(t *testing.T, port string) {
+	t.Helper()
+	base := "http://localhost:" + port
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+
+	// GET /greet renders the name form.
+	if body := crossOriginGet(t, client, base+"/greet", ""); !strings.Contains(body, `name="name"`) {
+		t.Fatalf("GET /greet should render the name form:\n%s", body)
+	}
+
+	post := func(name string) (int, string) {
+		resp, err := client.PostForm(base+"/greet", url.Values{"name": {name}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(b)
+	}
+
+	// A blank name re-renders (no redirect) with the "is required" error.
+	if code, b := post(""); code != http.StatusOK || !strings.Contains(b, "is required") {
+		t.Fatalf("blank name should re-render with 'is required', got %d:\n%s", code, b)
+	}
+
+	// A too-long name re-renders with the length error and repopulates the raw input.
+	long := strings.Repeat("x", 21)
+	if code, b := post(long); code != http.StatusOK || !strings.Contains(b, "at most 20 characters") || !strings.Contains(b, `value="`+long+`"`) {
+		t.Fatalf("21-char name should re-render with the length error and repopulate, got %d:\n%s", code, b)
+	}
+
+	// A valid name PRG-redirects with a 303 to /, then the greeting updates.
+	noFollow := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noFollow.PostForm(base+"/greet", url.Values{"name": {"alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
+		t.Fatalf("valid name should 303 to /, got %d Location=%q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if body := crossOriginGet(t, client, base+"/", ""); !strings.Contains(body, "Goodbye, alice!") {
+		t.Fatalf("after the valid post, / should greet alice:\n%s", body)
 	}
 }
 

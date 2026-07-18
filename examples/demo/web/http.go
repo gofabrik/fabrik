@@ -1,16 +1,19 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gofabrik/fabrik/flash"
+	"github.com/gofabrik/fabrik/forms"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
+	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
 
 	"demo/shared"
@@ -97,28 +100,58 @@ func (a *API) Greet(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(a.Greeter.Greet(r.PathValue("name"))))
 }
 
+// GreetInput is the greeting-name form.
+type GreetInput struct {
+	Name string
+}
+
+func (in GreetInput) Validate() validation.Errors {
+	return validation.Check(
+		validation.Field("name", in.Name, validation.Required(), validation.MaxLen(20)),
+	)
+}
+
+// GreetForm is the greeting form's view model.
+type GreetForm struct {
+	Form *forms.Form[GreetInput]
+}
+
+func (GreetForm) Template() string { return "web/greet" }
+
 type Greetings struct {
 	Session *session.Manager[shared.Session]
 	Flash   *flash.Flash
 	Queries *query.DB
 }
 
-//fabrik:http POST /greet
-func (h *Greetings) Update(w http.ResponseWriter, r *http.Request) {
-	name := r.FormValue("name")
-	if err := h.Session.Save(r.Context(), shared.Session{Name: name}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+//fabrik:web GET /greet
+func (h *Greetings) Show(req *web.Request) (web.Response, error) {
+	return web.View(GreetForm{Form: &forms.Form[GreetInput]{}}), nil
+}
+
+//fabrik:web POST /greet
+func (h *Greetings) Update(req *web.Request) (web.Response, error) {
+	form, err := forms.Bind[GreetInput](req.HTTP())
+	if err != nil {
+		if errors.Is(err, forms.ErrBodyTooLarge) {
+			return web.Status(http.StatusRequestEntityTooLarge), nil
+		}
+		return web.Status(http.StatusBadRequest), nil
 	}
-	if _, err := h.Queries.Insert(r.Context(), "greetings", Greeting{Name: name, Created: time.Now()}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	if !form.Valid() {
+		return web.View(GreetForm{Form: form}), nil
 	}
-	if err := h.Flash.Add(r.Context(), "success", "Greeting name updated."); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	ctx := req.Context()
+	if err := h.Session.Save(ctx, shared.Session{Name: form.Data.Name}); err != nil {
+		return nil, err
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	if _, err := h.Queries.Insert(ctx, "greetings", Greeting{Name: form.Data.Name, Created: time.Now()}); err != nil {
+		return nil, err
+	}
+	if err := h.Flash.Add(ctx, "success", "Greeting name updated."); err != nil {
+		return nil, err
+	}
+	return web.Redirect("/"), nil
 }
 
 // Docs lists the registered routes.

@@ -6,12 +6,14 @@ require (
 	github.com/gofabrik/fabrik/assetmapper v0.1.0
 	github.com/gofabrik/fabrik/config v0.1.0
 	github.com/gofabrik/fabrik/flash v0.1.0
+	github.com/gofabrik/fabrik/forms v0.1.0
 	github.com/gofabrik/fabrik/jobs v0.1.0
 	github.com/gofabrik/fabrik/migrations v0.1.0
 	github.com/gofabrik/fabrik/query v0.1.0
 	github.com/gofabrik/fabrik/router v0.1.0
 	github.com/gofabrik/fabrik/session v0.1.0
 	github.com/gofabrik/fabrik/templates v0.1.0
+	github.com/gofabrik/fabrik/validation v0.1.0
 	github.com/gofabrik/fabrik/web v0.1.0
 	modernc.org/sqlite v1.53.0
 )

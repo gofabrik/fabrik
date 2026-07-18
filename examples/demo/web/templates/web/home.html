@@ -5,6 +5,7 @@
   {{ range .Flashes }}<p class="flash flash-{{ .Kind }}">{{ .Text }}</p>
   {{ end }}<h1>{{ .Greeting }}</h1>
   <p>Served at {{ humanizeAge .Started }} of uptime; visit #{{ .Visits }}.</p>
+  <p><a href="/greet">Set greeting</a></p>
   <h2>Recent greetings</h2>
   <ul>
   {{ range .Recent }}<li class="greeting">{{ .Name }}</li>
