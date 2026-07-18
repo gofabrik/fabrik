@@ -5,7 +5,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
@@ -19,15 +25,57 @@ import (
 	"demo/web"
 )
 
-func run() error {
-	ctx := context.Background()
+func run() (err error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var signaled atomic.Bool
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	go func() {
+		<-sigc
+		signaled.Store(true)
+		cancel()
+		<-sigc
+		os.Exit(1)
+	}()
+
+	var shutdownWaits []func(context.Context) error
+	defer func() {
+		cancel()
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer drainCancel()
+		var drainErr error
+		for _, wait := range shutdownWaits {
+			if e := wait(drainCtx); e != nil && drainErr == nil {
+				drainErr = e
+			}
+		}
+		if signaled.Load() && errors.Is(err, context.Canceled) {
+			err = nil
+		}
+		if err == nil {
+			err = drainErr
+		}
+	}()
 
 	// Config
 	sharedConfig, err := config.Load[shared.Config](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
 		config.Section("http"),
+	)
+	if err != nil {
+		return err
+	}
+
+	sharedJobsConfig2, err := config.Load[shared.JobsConfig](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.Section("jobs"),
 	)
 	if err != nil {
 		return err
@@ -36,7 +84,7 @@ func run() error {
 	sharedDatabase, err := config.Load[shared.Database](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
 		config.Section("database"),
 	)
 	if err != nil {
@@ -46,7 +94,7 @@ func run() error {
 	sharedLog, err := config.Load[shared.Log](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
 		config.Section("log"),
 	)
 	if err != nil {
@@ -56,7 +104,7 @@ func run() error {
 	sharedCrossOrigin, err := config.Load[shared.CrossOrigin](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
 		config.Section("crossorigin"),
 	)
 	if err != nil {
@@ -66,7 +114,7 @@ func run() error {
 	webConfig, err := config.Load[web.Config](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
 		config.Section("greeter"),
 	)
 	if err != nil {
@@ -209,10 +257,12 @@ func run() error {
 	}
 
 	// Start: after prepare, before serving
-	if err := shared.StartJobs(ctx, jobsManager); err != nil {
+	jobsDrain, err := jobs.Run(ctx, jobsManager, shared.JobsWorker(sharedJobsConfig2))
+	if err != nil {
 		return err
 	}
+	shutdownWaits = append(shutdownWaits, jobsDrain)
 
 	// Serve
-	return sharedServer.Serve(r)
+	return sharedServer.Serve(ctx, r)
 }

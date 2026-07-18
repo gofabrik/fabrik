@@ -1,8 +1,17 @@
 package shared
 
+import "github.com/gofabrik/fabrik/config"
+
 //fabrik:config http
 type Config struct {
-	Addr string `yaml:"addr" env:"DEMO_HTTP_ADDR" default:":8080"`
+	Addr            string          `yaml:"addr" env:"DEMO_HTTP_ADDR" default:":8080"`
+	ShutdownTimeout config.Duration `yaml:"shutdown_timeout" env:"DEMO_HTTP_SHUTDOWN_TIMEOUT" default:"10s"`
+}
+
+//fabrik:config jobs
+type JobsConfig struct {
+	Concurrency     int             `yaml:"concurrency" env:"DEMO_JOBS_CONCURRENCY" default:"2"`
+	ShutdownTimeout config.Duration `yaml:"shutdown_timeout" env:"DEMO_JOBS_SHUTDOWN_TIMEOUT" default:"15s"`
 }
 
 //fabrik:config database

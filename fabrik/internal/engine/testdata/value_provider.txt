@@ -37,15 +37,55 @@ func (a *API) Get(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() error {
+func run() (err error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var signaled atomic.Bool
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	go func() {
+		<-sigc
+		signaled.Store(true)
+		cancel()
+		<-sigc
+		os.Exit(1)
+	}()
+
+	var shutdownWaits []func(context.Context) error
+	defer func() {
+		cancel()
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer drainCancel()
+		var drainErr error
+		for _, wait := range shutdownWaits {
+			if e := wait(drainCtx); e != nil && drainErr == nil {
+				drainErr = e
+			}
+		}
+		if signaled.Load() && errors.Is(err, context.Canceled) {
+			err = nil
+		}
+		if err == nil {
+			err = drainErr
+		}
+	}()
+
 	// Providers
 	webAPI := web.NewAPI()
 	webConsumer := &web.Consumer{
@@ -64,5 +104,18 @@ func run() error {
 	if p := os.Getenv("PORT"); p != "" {
 		addr = ":" + p
 	}
-	return http.ListenAndServe(addr, r)
+	srv := &http.Server{Addr: addr, Handler: r}
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+	select {
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	return srv.Shutdown(shutdownCtx)
 }

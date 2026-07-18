@@ -28,11 +28,16 @@ func (*Serve) Meta() gen.Meta {
 			"Marks the function that serves the app, replacing the generated " +
 			"`http.ListenAndServe` block. One per app. Parameters may be " +
 			"`http.Handler` or `*router.Router` (both receive the router) and " +
-			"`context.Context`; it must return `error`. On a method, the " +
+			"`context.Context` (the signal-bound root: take it and drain on it for " +
+			"graceful shutdown, bounding `Shutdown` with a timeout such as a " +
+			"`config.Duration` field); it must return `error`. On a method, the " +
 			"receiver struct is wired, so configuration arrives as fields.\n\n" +
-			"```go\n//fabrik:http:server\nfunc Serve(h http.Handler) error {\n" +
-			"\tsrv := &http.Server{Addr: \":8080\", Handler: h, ReadHeaderTimeout: 5 * time.Second}\n" +
-			"\treturn srv.ListenAndServe()\n}\n```",
+			"```go\n//fabrik:http:server\nfunc Serve(ctx context.Context, h http.Handler) error {\n" +
+			"\tsrv := &http.Server{Addr: \":8080\", Handler: h}\n" +
+			"\terrc := make(chan error, 1)\n" +
+			"\tgo func() { errc <- srv.ListenAndServe() }()\n" +
+			"\tselect {\n\tcase err := <-errc:\n\t\treturn err\n\tcase <-ctx.Done():\n\t}\n" +
+			"\treturn srv.Shutdown(context.Background())\n}\n```",
 		Example: "//fabrik:http:server",
 	}
 }
@@ -133,6 +138,13 @@ func (s *Serve) Finish(g *gen.Gen) diag.Diagnostics {
 		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 		osPkg := g.Import("os")
 		httpPkg := g.Import("net/http")
+		ctx := g.Context()
+		// The default server depends on the signal-bound root context.
+		g.RequireShutdownEnvelope()
+		ctxPkg := g.Import("context")
+		errPkg := g.Import("errors")
+		timePkg := g.Import("time")
+		srv := g.Var("srv")
 		g.Node(&gen.Raw{
 			Base:    gen.Base{Phase: gen.PhaseServe},
 			Lines:   []string{`addr := ":8080"`},
@@ -142,14 +154,43 @@ func (s *Serve) Finish(g *gen.Gen) diag.Diagnostics {
 			Base:  gen.Base{Phase: gen.PhaseServe},
 			Lines: []string{fmt.Sprintf(`if p := %s.Getenv("PORT"); p != "" {`, osPkg), `addr = ":" + p`, `}`},
 		})
-		g.Node(&gen.Serve{
+		g.Node(&gen.Raw{
 			Base: gen.Base{Phase: gen.PhaseServe},
-			Expr: httpPkg + ".ListenAndServe(addr, " + r + ")",
+			Lines: []string{
+				fmt.Sprintf("%s := &%s.Server{Addr: addr, Handler: %s}", srv, httpPkg, r),
+				"errc := make(chan error, 1)",
+				fmt.Sprintf("go func() { errc <- %s.ListenAndServe() }()", srv),
+				"select {",
+				"case err := <-errc:",
+				fmt.Sprintf("if %s.Is(err, %s.ErrServerClosed) {", errPkg, httpPkg),
+				"return nil",
+				"}",
+				"return err",
+				fmt.Sprintf("case <-%s.Done():", ctx),
+				"}",
+				fmt.Sprintf("shutdownCtx, shutdownCancel := %s.WithTimeout(%s.Background(), 10*%s.Second)", ctxPkg, ctxPkg, timePkg),
+				"defer shutdownCancel()",
+				fmt.Sprintf("return %s.Shutdown(shutdownCtx)", srv),
+			},
+			Defines: []string{srv},
 		})
 		return nil
 	}
 
 	nd := s.node
+	hasCtx := false
+	for _, p := range nd.params {
+		if p == paramCtx {
+			hasCtx = true
+		}
+	}
+	// A server that cannot observe the root context would prevent coordinated shutdown.
+	if !hasCtx && g.EnvelopeActive() {
+		var ds diag.Diagnostics
+		ds.Error(nd.pos, fmt.Sprintf("//fabrik:http:server %s must accept a context.Context", nd.fn),
+			"this app hosts a background runtime whose graceful shutdown is coordinated on a signal-bound context; add the parameter: func Serve(ctx context.Context, h http.Handler) error")
+		return ds
+	}
 	callee, ds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 	args := make([]string, 0, len(nd.params))
 	for _, p := range nd.params {
@@ -159,6 +200,7 @@ func (s *Serve) Finish(g *gen.Gen) diag.Diagnostics {
 			args = append(args, g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"))
 		case paramCtx:
 			args = append(args, g.Context())
+			g.RequireShutdownEnvelope()
 		}
 	}
 	g.Node(&gen.Serve{

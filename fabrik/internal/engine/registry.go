@@ -26,7 +26,7 @@ func New() []gen.Directive {
 	// Conventional config layers are optional; custom sources belong in providers.
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
-	jobsJob, jobsCron := jobsdir.New()
+	jobsJob, jobsCron, jobsWorker := jobsdir.New()
 	// Registry order is presentation only; lifecycle order comes from Meta.Tier.
 	return []gen.Directive{
 		provider,
@@ -47,6 +47,7 @@ func New() []gen.Directive {
 		migdir.NewMigrations(),
 		jobsJob,
 		jobsCron,
+		jobsWorker,
 		cfg,
 	}
 }

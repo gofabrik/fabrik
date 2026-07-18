@@ -2,11 +2,9 @@ package shared
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/gofabrik/fabrik/templates"
@@ -17,15 +15,12 @@ type Server struct {
 }
 
 //fabrik:http:server
-func (s *Server) Serve(h http.Handler) error {
+func (s *Server) Serve(ctx context.Context, h http.Handler) error {
 	srv := &http.Server{
 		Addr:              s.Config.Addr,
 		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	slog.Info("server listening", "addr", s.Config.Addr)
 
@@ -34,10 +29,13 @@ func (s *Server) Serve(h http.Handler) error {
 
 	select {
 	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
 	case <-ctx.Done():
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.Config.ShutdownTimeout.Duration())
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
 }

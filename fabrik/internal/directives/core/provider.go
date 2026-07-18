@@ -34,8 +34,9 @@ func (*Provider) Meta() gen.Meta {
 		Doc: "**`//fabrik:provider [case=kind]`**\n\n" +
 			"Marks a constructor whose return value is available to generated " +
 			"app code by matching types. Parameters resolve to other " +
-			"providers; `context.Context` parameters receive a shared " +
-			"background context. A second `error` return aborts startup. " +
+			"providers; `context.Context` parameters receive the shared " +
+			"signal-bound application context (cancelled at shutdown). A second " +
+			"`error` return aborts startup. " +
 			"With `case=<kind>`, the constructor is instead one selectable " +
 			"implementation for a `//fabrik:provider:select` interface, " +
 			"matched by its return type and constructed only when the " +
