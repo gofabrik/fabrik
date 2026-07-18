@@ -25,17 +25,10 @@ func MigrateDB(ctx context.Context, db *sql.DB, src migrations.Sources) error {
 	return src.Migrate(ctx, db, migrations.DialectSQLite)
 }
 
-//fabrik:hook start
-func StartJobs(ctx context.Context, mgr *jobs.Manager) error {
-	w, err := jobs.NewWorker(mgr, jobs.WorkerConfig{Concurrency: 2})
-	if err != nil {
-		return err
+//fabrik:jobs:worker
+func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
+	return jobs.RuntimeConfig{
+		Worker:       jobs.WorkerConfig{Concurrency: cfg.Concurrency, ShutdownTimeout: cfg.ShutdownTimeout.Duration()},
+		RunScheduler: true,
 	}
-	// Reconcile schedules after migrations create their schema.
-	if err := mgr.ReconcileSchedules(ctx); err != nil {
-		return err
-	}
-	go func() { _ = w.Start(ctx) }()
-	go func() { _ = mgr.StartScheduler(ctx) }()
-	return nil
 }

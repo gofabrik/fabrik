@@ -1,5 +1,5 @@
 -- The jobs schema, applied through migrations (jobs.SQLiteSchema()), so
--- the store is constructed with AutoCreate: false and StartJobs reconciles
+-- the store is constructed with AutoCreate: false and jobs.Run reconciles
 -- schedules against tables these migrations created.
 CREATE TABLE IF NOT EXISTS jobs (
     id               TEXT    PRIMARY KEY,

@@ -87,6 +87,29 @@ next run. Multiple processes are safe: a CAS picks one winner per tick,
 and each fire advances the schedule and inserts its jobs in one
 transaction.
 
+## Running
+
+```go
+drain, err := jobs.Run(ctx, mgr, jobs.RuntimeConfig{
+	Worker:       jobs.WorkerConfig{Concurrency: 8},
+	RunScheduler: true,
+})
+if err != nil {
+	return err
+}
+<-ctx.Done() // canceled by a shutdown signal
+err = drain(drainCtx)
+```
+
+`Run` starts the worker bound to `ctx` and, when `RunScheduler` is set, reconciles
+schedules and starts the scheduler; it returns a `drain` to call once at shutdown that,
+after `ctx` is cancelled, waits for them to stop within the deadline and returns the first
+non-cancellation error. `Run` **always hosts a worker**, so a producer that only enqueues
+must not call it. In a worker that should not own scheduling, leave `RunScheduler` off:
+reconciliation prunes schedules the process does not declare, so hosting the scheduler is a
+deliberate choice. `Run` composes `NewWorker` + `Start` + `StartScheduler`; use those
+directly when you need finer control.
+
 ## Storage
 
 ```go

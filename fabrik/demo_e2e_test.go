@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -110,6 +111,27 @@ func TestDemoEndToEnd(t *testing.T) {
 	sessionFlow(t, port)
 	crossOriginFlow(t, port)
 	formsFlow(t, port)
+	gracefulShutdown(t, server)
+}
+
+// gracefulShutdown sends SIGTERM and requires a clean exit (status 0): it proves the
+// live-signal path (the envelope reacts, Serve returns, run() returns nil, no panic or
+// hang), not in-flight draining (that is jobs' TestRun_WorkerDrainsInflightOnCancel).
+func gracefulShutdown(t *testing.T, server *exec.Cmd) {
+	t.Helper()
+	if err := server.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("SIGTERM: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- server.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("demo did not exit cleanly on SIGTERM: %v", err)
+		}
+	case <-time.After(35 * time.Second): // generated grace period is 30 seconds
+		t.Fatal("demo did not exit within the grace window after SIGTERM")
+	}
 }
 
 func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {

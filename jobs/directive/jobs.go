@@ -20,10 +20,10 @@ const (
 	jobsContextPath = jobsPath + ".Context"
 )
 
-// New returns the paired jobs directives.
-func New() (*Jobs, *Cron) {
+// New returns the jobs directives, sharing one builder.
+func New() (*Jobs, *Cron, *Worker) {
 	b := &builder{}
-	return &Jobs{b: b}, &Cron{b: b}
+	return &Jobs{b: b}, &Cron{b: b}, &Worker{b: b}
 }
 
 type builder struct {

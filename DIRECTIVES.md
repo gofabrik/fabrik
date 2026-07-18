@@ -184,13 +184,20 @@ func NotFound(w http.ResponseWriter, r *http.Request) { ... }
 
 **`//fabrik:http:server`**
 
-Marks the function that serves the app, replacing the generated `http.ListenAndServe` block. One per app. Parameters may be `http.Handler` or `*router.Router` (both receive the router) and `context.Context`; it must return `error`. On a method, the receiver struct is wired, so configuration arrives as fields.
+Marks the function that serves the app, replacing the generated `http.ListenAndServe` block. One per app. Parameters may be `http.Handler` or `*router.Router` (both receive the router) and `context.Context` (the signal-bound root: take it and drain on it for graceful shutdown, bounding `Shutdown` with a timeout such as a `config.Duration` field); it must return `error`. On a method, the receiver struct is wired, so configuration arrives as fields.
 
 ```go
 //fabrik:http:server
-func Serve(h http.Handler) error {
-	srv := &http.Server{Addr: ":8080", Handler: h, ReadHeaderTimeout: 5 * time.Second}
-	return srv.ListenAndServe()
+func Serve(ctx context.Context, h http.Handler) error {
+	srv := &http.Server{Addr: ":8080", Handler: h}
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	return srv.Shutdown(context.Background())
 }
 ```
 
@@ -230,6 +237,19 @@ Options:
 - `name=`
 - `kind=`
 
+## fabrik:jobs:worker
+
+**`//fabrik:jobs:worker`**
+
+Declared on a package function `func(deps...) jobs.RuntimeConfig` (or `(jobs.RuntimeConfig, error)`): it marks that this binary hosts the jobs worker. The generated `run()` calls `jobs.Run` with the returned config and drains it on shutdown. Dependencies (such as a `*JobsConfig`) are injected like a provider. Requires at least one `//fabrik:job` or `//fabrik:cron`; one per app; a binary that only enqueues jobs omits it. It replaces a hand-written `//fabrik:hook start` that ran `jobs.NewWorker(mgr, ...).Start(ctx)`.
+
+```go
+//fabrik:jobs:worker
+func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
+	return jobs.RuntimeConfig{Worker: jobs.WorkerConfig{Concurrency: cfg.Concurrency}, RunScheduler: true}
+}
+```
+
 ## fabrik:migrations
 
 **`//fabrik:migrations [dir=migrations] [stream=NAME]`**
@@ -251,7 +271,7 @@ Options:
 
 **`//fabrik:provider [case=kind]`**
 
-Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive a shared background context. A second `error` return aborts startup. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
+Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive the shared signal-bound application context (cancelled at shutdown). A second `error` return aborts startup. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
 
 ```go
 //fabrik:provider
