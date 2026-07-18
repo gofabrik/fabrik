@@ -9,6 +9,7 @@ use (
 	./examples/demo
 	./fabrik
 	./flash
+	./forms
 	./gen
 	./jobs
 	./jobs/dbtest
@@ -25,6 +26,7 @@ use (
 	./session/dbtest
 	./templates
 	./templates/directive
+	./validation
 	./web
 	./web/directive
 )
@@ -37,6 +39,7 @@ replace (
 	github.com/gofabrik/fabrik/diag v0.1.0 => ./diag
 	github.com/gofabrik/fabrik/fabrik v0.1.0 => ./fabrik
 	github.com/gofabrik/fabrik/flash v0.1.0 => ./flash
+	github.com/gofabrik/fabrik/forms v0.1.0 => ./forms
 	github.com/gofabrik/fabrik/gen v0.1.0 => ./gen
 	github.com/gofabrik/fabrik/jobs v0.1.0 => ./jobs
 	github.com/gofabrik/fabrik/jobs/directive v0.1.0 => ./jobs/directive
@@ -48,6 +51,7 @@ replace (
 	github.com/gofabrik/fabrik/session v0.1.0 => ./session
 	github.com/gofabrik/fabrik/templates v0.1.0 => ./templates
 	github.com/gofabrik/fabrik/templates/directive v0.1.0 => ./templates/directive
+	github.com/gofabrik/fabrik/validation v0.1.0 => ./validation
 	github.com/gofabrik/fabrik/web v0.1.0 => ./web
 	github.com/gofabrik/fabrik/web/directive v0.1.0 => ./web/directive
 )

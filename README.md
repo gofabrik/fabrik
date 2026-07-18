@@ -90,3 +90,5 @@ together by the CLI:
 - [jobs](jobs/README.md) - background jobs.
 - [session](session/README.md) - typed HTTP sessions with pluggable stores and tokens.
 - [flash](flash/README.md) - one-shot messages stored in sessions.
+- [validation](validation/README.md) - code-based input validation with field-keyed errors.
+- [forms](forms/README.md) - HTTP request binding into typed structs, validated.

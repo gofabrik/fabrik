@@ -9,6 +9,7 @@ components:
   - config
   - diag
   - flash
+  - forms
   - gen
   - jobs
   - migrations
@@ -16,5 +17,6 @@ components:
   - router
   - session
   - templates
+  - validation
   - web
   - build

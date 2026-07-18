@@ -184,7 +184,8 @@ func run() error {
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("POST", "/greet", webGreetings.Update)
+	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
+	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
 	r.Method("GET", "/routes", webDocs.List)
 
 	// Jobs
