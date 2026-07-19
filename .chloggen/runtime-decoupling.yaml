@@ -1,0 +1,14 @@
+# One of: breaking, deprecation, new_component, enhancement, bug_fix
+change_type: breaking
+
+# The module or area of concern, e.g. jobs, router, gen, fabrik (the CLI).
+component: gen
+
+# A brief description of the change. Surround with quotes ("") if it must start with a backtick (`).
+note: "Decouple the HTTP server and jobs worker from the generated runner into named entrypoints inferred from routes and job/cron handlers; remove //fabrik:http:server and //fabrik:jobs:worker."
+
+# One or more tracking issues or PR numbers related to the change.
+issues: [0]
+
+# (Optional) One or more lines of extra detail rendered under the note. Use a pipe (|) for multiline text.
+subtext:

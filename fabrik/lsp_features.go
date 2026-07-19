@@ -15,7 +15,6 @@ import (
 	"github.com/gofabrik/fabrik/gen"
 )
 
-// publishSyntactic reports directive grammar errors from the changed file.
 func (s *lspServer) publishSyntactic(uri string) {
 	text, ok := s.getDoc(uri)
 	if !ok {
@@ -143,7 +142,6 @@ func diagText(d diag.Diagnostic) string {
 	return d.Message + "\n\nhelp: " + d.Help
 }
 
-// sourceFor prefers open-document text over disk.
 func sourceFor(path string, texts map[string]string) string {
 	if t, ok := texts[path]; ok {
 		return t
@@ -184,7 +182,6 @@ func spanRange(src string, pos token.Position) lspRange {
 	}
 }
 
-// utf16Col converts a byte offset in line to a UTF-16 code-unit offset.
 func utf16Col(line string, byteOff int) int {
 	if byteOff > len(line) {
 		byteOff = len(line)
@@ -200,7 +197,6 @@ func utf16Col(line string, byteOff int) int {
 	return n
 }
 
-// byteCol converts a UTF-16 code-unit offset in line to a byte offset.
 func byteCol(line string, utf16Off int) int {
 	n := 0
 	for i, r := range line {
@@ -274,7 +270,6 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 	return argCompletions(meta, args, trailingSpace)
 }
 
-// activeMWChain returns the current middleware= item, if the cursor is inside one.
 func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, bool) {
 	for i := len(args) - 1; i >= 0; i-- {
 		key, val, hasEq := strings.Cut(args[i], "=")
@@ -311,7 +306,6 @@ func isMWAttr(meta gen.Meta, key string) bool {
 	return false
 }
 
-// middlewareCompletions offers the declared //fabrik:http:middleware names.
 func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem {
 	if i := strings.LastIndex(partial, ","); i >= 0 {
 		partial = partial[i+1:]
@@ -359,7 +353,6 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 	return out
 }
 
-// mwCacheEntry caches declared names by file size and modification time.
 type mwCacheEntry struct {
 	size    int64
 	modTime int64
@@ -376,7 +369,6 @@ var mwDirective = func() gen.Directive {
 	return nil
 }()
 
-// middlewareNames returns valid names declared in one file.
 func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) []string {
 	var info iofs.FileInfo
 	if overlayText == "" {
@@ -424,6 +416,9 @@ func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) [
 func directiveCompletions(directives []gen.Directive, partial string) []completionItem {
 	var out []completionItem
 	for _, d := range directives {
+		if d.Meta().Hidden {
+			continue
+		}
 		if partial != "" && !strings.HasPrefix(d.Name(), partial) {
 			continue
 		}
@@ -492,7 +487,6 @@ func argCompletions(meta gen.Meta, args []string, trailingSpace bool) []completi
 	return out
 }
 
-// hover shows directive docs for the name under the cursor.
 func (s *lspServer) hover(uri string, pos lspPosition) any {
 	text, ok := s.getDoc(uri)
 	if !ok {
@@ -513,7 +507,7 @@ func (s *lspServer) hover(uri string, pos lspPosition) any {
 	}
 	name := body[:nameEnd]
 	for _, d := range engine.New() {
-		if d.Name() != name {
+		if d.Name() != name || d.Meta().Hidden {
 			continue
 		}
 		return hoverResult{
@@ -527,7 +521,6 @@ func (s *lspServer) hover(uri string, pos lspPosition) any {
 	return nil
 }
 
-// stripDirective returns a directive body and its start column.
 func stripDirective(line string) (int, string, bool) {
 	i := 0
 	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {

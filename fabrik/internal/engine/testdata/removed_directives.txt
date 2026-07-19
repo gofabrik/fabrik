@@ -1,0 +1,29 @@
+The removed //fabrik:http:server and //fabrik:jobs:worker resolve as unknown
+directives: fabrik is pre-1.0, so removed directives get no migration handling.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http:server
+func Serve(h http.Handler) error { return nil }
+
+//fabrik:jobs:worker
+func Worker() error { return nil }
+-- want/diags --
+error: web/web.go:5:1: unknown directive "fabrik:http:server"
+  help: known: assets, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, job, migrations, provider, provider:select, templates, templates:func, web
+error: web/web.go:8:1: unknown directive "fabrik:jobs:worker"
+  help: known: assets, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, job, migrations, provider, provider:select, templates, templates:func, web

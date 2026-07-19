@@ -36,9 +36,6 @@ func Missing[T any](w http.ResponseWriter, r *http.Request) {}
 
 //fabrik:http:handle /files
 func Files[T any]() http.Handler { return nil }
-
-//fabrik:http:server
-func Serve[T any](h http.Handler) error { return nil }
 -- want/diags --
 error: web/web.go:5:1: handler Index cannot be generic (generated code cannot instantiate type parameters)
   help: declare a concrete handler
@@ -52,5 +49,3 @@ error: web/web.go:19:1: handler Missing cannot be generic (generated code cannot
   help: declare a concrete handler
 error: web/web.go:22:1: handler Files cannot be generic (generated code cannot instantiate type parameters)
   help: declare a concrete handler
-error: web/web.go:25:1: serve function Serve cannot be generic (generated code cannot instantiate type parameters)
-  help: declare a concrete function

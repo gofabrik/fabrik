@@ -25,7 +25,7 @@ func MigrateDB(ctx context.Context, db *sql.DB, src migrations.Sources) error {
 	return src.Migrate(ctx, db, migrations.DialectSQLite)
 }
 
-//fabrik:jobs:worker
+//fabrik:provider
 func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
 	return jobs.RuntimeConfig{
 		Worker:       jobs.WorkerConfig{Concurrency: cfg.Concurrency, ShutdownTimeout: cfg.ShutdownTimeout.Duration()},

@@ -67,7 +67,7 @@ func (*Migrations) Meta() gen.Meta {
 type migNode struct {
 	pos    token.Position
 	dir    string
-	stream string // stream= override
+	stream string
 
 	varName  string
 	pkg      *types.Package
@@ -116,7 +116,7 @@ func validStream(m string) error {
 	return nil
 }
 
-// checkEmbedPattern keeps embedded files aligned with validation.
+// checkEmbedPattern requires all: so validation sees every shipped migration.
 func checkEmbedPattern(a gen.Annotation, dir string, ds *diag.Diagnostics) {
 	found, covered := gen.EmbedCovers(a, "all:"+dir)
 	if covered {
@@ -203,6 +203,7 @@ func (mg *Migrations) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		}
 		b.WriteString("}")
 		v := g.Var("migrationSources")
+		g.RecordVarType(v, migPkg+".Sources")
 		g.Node(&gen.Assign{
 			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
 			Var:  v,

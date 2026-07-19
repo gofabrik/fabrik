@@ -7,9 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,36 +28,19 @@ import (
 func run() (err error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	var signaled atomic.Bool
+	defer func() {
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			err = nil
+		}
+	}()
 	sigc := make(chan os.Signal, 2)
 	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigc)
 	go func() {
 		<-sigc
-		signaled.Store(true)
 		cancel()
 		<-sigc
 		os.Exit(1)
-	}()
-
-	var shutdownWaits []func(context.Context) error
-	defer func() {
-		cancel()
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer drainCancel()
-		var drainErr error
-		for _, wait := range shutdownWaits {
-			if e := wait(drainCtx); e != nil && drainErr == nil {
-				drainErr = e
-			}
-		}
-		if signaled.Load() && errors.Is(err, context.Canceled) {
-			err = nil
-		}
-		if err == nil {
-			err = drainErr
-		}
 	}()
 
 	// Config
@@ -152,6 +135,8 @@ func run() (err error) {
 	migrationSources := migrations.Sources{
 		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
 	}
+	sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
+	sharedHttpServer := shared.NewServer(sharedConfig)
 
 	sharedSqlDB, err := shared.NewDB(sharedDatabase)
 	if err != nil {
@@ -214,10 +199,6 @@ func run() (err error) {
 		Router: r,
 	}
 
-	sharedServer := &shared.Server{
-		Config: sharedConfig,
-	}
-
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
@@ -256,13 +237,50 @@ func run() (err error) {
 		return err
 	}
 
-	// Start: after prepare, before serving
-	jobsDrain, err := jobs.Run(ctx, jobsManager, shared.JobsWorker(sharedJobsConfig2))
+	errc := make(chan error, 2)
+	go func() { errc <- JobWorker(ctx, jobsManager, sharedJobsRuntimeConfig) }()
+	go func() { errc <- HTTPServer(ctx, r, sharedHttpServer) }()
+	var result error
+	for range 2 {
+		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
+			result = e
+			cancel()
+		}
+	}
+	return result
+}
+
+func JobWorker(ctx context.Context, jobsManager *jobs.Manager, sharedJobsRuntimeConfig jobs.RuntimeConfig) error {
+	drain, err := jobs.Run(ctx, jobsManager, sharedJobsRuntimeConfig)
 	if err != nil {
 		return err
 	}
-	shutdownWaits = append(shutdownWaits, jobsDrain)
+	<-ctx.Done()
+	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return drain(drainCtx)
+}
 
-	// Serve
-	return sharedServer.Serve(ctx, r)
+func HTTPServer(ctx context.Context, r *router.Router, sharedHttpServer *http.Server) error {
+	srv := sharedHttpServer
+	srv.Handler = r
+	errc := make(chan error, 1)
+	go func() {
+		if srv.TLSConfig != nil {
+			errc <- srv.ListenAndServeTLS("", "")
+		} else {
+			errc <- srv.ListenAndServe()
+		}
+	}()
+	select {
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return srv.Shutdown(shutdownCtx)
 }

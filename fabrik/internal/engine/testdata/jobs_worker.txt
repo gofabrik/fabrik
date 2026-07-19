@@ -1,8 +1,8 @@
-//fabrik:jobs:worker marks that this binary hosts the jobs worker. The
-generator wraps run() in a signal-driven graceful-shutdown envelope,
-calls jobs.Run with the config the worker function returns, and appends
-its drain to shutdownWaits. With no server, run() blocks on the root
-context until a signal, then the deferred drain stops the worker.
+Declaring a //fabrik:job or //fabrik:cron handler makes the binary host the
+jobs worker: the generator emits a JobWorker entrypoint that calls jobs.Run
+and drains it when the context is canceled. The runtime config is an ordinary
+provider (here returning jobs.RuntimeConfig); with none it defaults to a zero
+jobs.RuntimeConfig.
 -- go.mod --
 module app
 
@@ -36,7 +36,7 @@ type Welcome struct{ UserID int64 }
 //fabrik:job
 func SendWelcome(ctx context.Context, m Welcome) error { return nil }
 
-//fabrik:jobs:worker
+//fabrik:provider
 func Worker() (jobs.RuntimeConfig, error) {
 	return jobs.RuntimeConfig{Worker: jobs.WorkerConfig{Concurrency: 4}, RunScheduler: true}, nil
 }
@@ -51,7 +51,6 @@ import (
 	"errors"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -63,36 +62,19 @@ import (
 func run() (err error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	var signaled atomic.Bool
+	defer func() {
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			err = nil
+		}
+	}()
 	sigc := make(chan os.Signal, 2)
 	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigc)
 	go func() {
 		<-sigc
-		signaled.Store(true)
 		cancel()
 		<-sigc
 		os.Exit(1)
-	}()
-
-	var shutdownWaits []func(context.Context) error
-	defer func() {
-		cancel()
-		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer drainCancel()
-		var drainErr error
-		for _, wait := range shutdownWaits {
-			if e := wait(drainCtx); e != nil && drainErr == nil {
-				drainErr = e
-			}
-		}
-		if signaled.Load() && errors.Is(err, context.Canceled) {
-			err = nil
-		}
-		if err == nil {
-			err = drainErr
-		}
 	}()
 
 	// Providers
@@ -101,6 +83,11 @@ func run() (err error) {
 		return err
 	}
 	jobsManager, err := jobs.New(sharedJobsStore, jobs.Config{})
+	if err != nil {
+		return err
+	}
+
+	sharedJobsRuntimeConfig, err := shared.Worker()
 	if err != nil {
 		return err
 	}
@@ -116,17 +103,25 @@ func run() (err error) {
 		return err
 	}
 
-	// Start: after prepare, before serving
-	jobsRuntime, err := shared.Worker()
-	if err != nil {
-		return err
+	errc := make(chan error, 1)
+	go func() { errc <- JobWorker(ctx, jobsManager, sharedJobsRuntimeConfig) }()
+	var result error
+	for range 1 {
+		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
+			result = e
+			cancel()
+		}
 	}
-	jobsDrain, err := jobs.Run(ctx, jobsManager, jobsRuntime)
-	if err != nil {
-		return err
-	}
-	shutdownWaits = append(shutdownWaits, jobsDrain)
+	return result
+}
 
+func JobWorker(ctx context.Context, jobsManager *jobs.Manager, sharedJobsRuntimeConfig jobs.RuntimeConfig) error {
+	drain, err := jobs.Run(ctx, jobsManager, sharedJobsRuntimeConfig)
+	if err != nil {
+		return err
+	}
 	<-ctx.Done()
-	return nil
+	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return drain(drainCtx)
 }

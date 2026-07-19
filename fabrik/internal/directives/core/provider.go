@@ -58,7 +58,7 @@ type param struct {
 type node struct {
 	pos token.Position
 
-	caseVal string // case=kind: one selected implementation, matched by type
+	caseVal string // case= value: this provider is one candidate in a provider:select group, chosen by return type
 
 	fn         string
 	pkg        *types.Package
@@ -68,7 +68,7 @@ type node struct {
 	fset       *token.FileSet
 	iface      types.Type
 	grp        *selGroup
-	built      bool // lazy build ran
+	built      bool
 }
 
 func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
@@ -105,6 +105,12 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	if sig.TypeParams().Len() > 0 {
 		ds.Error(nd.pos, fmt.Sprintf("provider %s cannot be generic (generated code cannot infer type arguments)", fn.Name()),
 			"declare a concrete constructor")
+		return ds
+	}
+	// Generated code calls the provider as a package-qualified function, so it must be exported.
+	if !fn.Exported() {
+		ds.Error(nd.pos, fmt.Sprintf("//fabrik:provider function %s must be exported", fn.Name()),
+			"capitalize the function name so generated code can call it")
 		return ds
 	}
 
@@ -201,8 +207,6 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 	return ds
 }
 
-// resolveParams builds call arguments for wired parameters: any binding
-// resolves.
 func (p *Provider) resolveParams(g *gen.Gen, params []param) ([]string, diag.Diagnostics) {
 	return resolveArgs(g, p.cfg, params,
 		func(pr param) (string, diag.Diagnostics, bool) {
@@ -214,7 +218,6 @@ func (p *Provider) resolveParams(g *gen.Gen, params []param) ([]string, diag.Dia
 		})
 }
 
-// anchor fills missing diagnostic positions.
 func anchor(ds diag.Diagnostics, pos token.Position) diag.Diagnostics {
 	for i := range ds {
 		if !ds[i].Pos.IsValid() {
@@ -241,9 +244,7 @@ func varBase(pkg *types.Package, t types.Type) string {
 	}
 	name := named.Obj().Name()
 	if tp := named.Obj().Pkg(); tp != nil && tp != pkg && tp.Name() != "" {
-		// A type named after its own package (flash.Flash) collapses
-		// to one word - sharedFlashFlash says nothing sharedFlash
-		// does not.
+		// Repeating a package-qualified type name adds no distinguishing information.
 		if strings.EqualFold(tp.Name(), name) {
 			return pkg.Name() + name
 		}

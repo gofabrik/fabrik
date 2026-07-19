@@ -78,6 +78,7 @@ type Meta struct {
 	Pos      []PosSpec  // required positional arguments, in order
 	Attrs    []AttrSpec // key=value options
 	Tier     EmitTier   // when Emit runs relative to other directives
+	Hidden   bool       // internal directive, omitted from the directive reference
 }
 
 // PosSpec describes one positional argument.

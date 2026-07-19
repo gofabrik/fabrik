@@ -4,8 +4,7 @@ import "github.com/gofabrik/fabrik/config"
 
 //fabrik:config http
 type Config struct {
-	Addr            string          `yaml:"addr" env:"DEMO_HTTP_ADDR" default:":8080"`
-	ShutdownTimeout config.Duration `yaml:"shutdown_timeout" env:"DEMO_HTTP_SHUTDOWN_TIMEOUT" default:"10s"`
+	Addr string `yaml:"addr" env:"DEMO_HTTP_ADDR" default:":8080"`
 }
 
 //fabrik:config jobs

@@ -1,43 +1,18 @@
 package shared
 
 import (
-	"context"
-	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gofabrik/fabrik/templates"
 )
 
-type Server struct {
-	Config *Config
-}
-
-//fabrik:http:server
-func (s *Server) Serve(ctx context.Context, h http.Handler) error {
-	srv := &http.Server{
-		Addr:              s.Config.Addr,
-		Handler:           h,
+//fabrik:provider
+func NewServer(cfg *Config) *http.Server {
+	return &http.Server{
+		Addr:              cfg.Addr,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	slog.Info("server listening", "addr", s.Config.Addr)
-
-	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-
-	select {
-	case err := <-errc:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
 }
 
 // ErrorPages renders the router's miss responses through the app's
