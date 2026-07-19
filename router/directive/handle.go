@@ -181,4 +181,5 @@ func producesHandler(sig *types.Signature) bool {
 func (h *Handle) PrepareNode(n any, g *gen.Gen) {
 	nd := n.(*handleNode)
 	prepareReceiver(g, nd.recv, nd.fset)
+	BindHTTPServer(g)
 }

@@ -152,6 +152,9 @@ func (as *Assets) Check(n any, ty gen.Typed) diag.Diagnostics {
 	return ds
 }
 
+// PrepareNode binds the HTTP server for asset routes.
+func (*Assets) PrepareNode(_ any, g *gen.Gen) { routerdir.BindHTTPServer(g) }
+
 // Emit binds the compiled assets, registers the serving route, and
 // contributes the template helpers, once for all declared trees.
 func (as *Assets) Emit(n any, g *gen.Gen) diag.Diagnostics {

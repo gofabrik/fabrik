@@ -19,13 +19,7 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 	g.Stmt(PhaseConfig, "if os.Getenv(\"FORCE_CANCEL\") != \"\" {\ncancel()\nreturn ctx.Err()\n}")
 	g.Stmt(PhaseConfig, "cfg, err := loadConfig()\nif err != nil {\nreturn err\n}")
 	g.Stmt(PhaseWire, "store := NewStore(cfg)")
-	g.RecordVarType("store", "*Store")
 	g.Stmt(PhasePrepare, "if err := migrate(ctx, store); err != nil {\nreturn err\n}")
-	g.AddEntrypoint("HTTPServer", []string{"store"}, []string{
-		`if os.Getenv("FAIL_SERVER") != "" {`, `return errors.New("server failed")`, `}`,
-		"<-ctx.Done()", "return nil",
-	})
-	g.AddEntrypoint("JobWorker", []string{"store"}, []string{"<-ctx.Done()", "return nil"})
 	g.AddCommand("greetCommand(store)")
 
 	out, err := g.Render()
@@ -111,9 +105,9 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 		t.Errorf("FORCE_CANCEL: code=%d stderr=%q (want exit 130, no error line)", code, se)
 	}
 
-	// The default path runs prepare and cancels peer entrypoints after a failure.
-	if code, _, se := run([]string{}, "FAIL_SERVER=1"); code != 1 || !strings.Contains(se, "MIGRATED") || !strings.Contains(se, "server failed") {
-		t.Errorf("FAIL_SERVER default: code=%d stderr=%q (want prepare + cancellation + exit 1)", code, se)
+	// A bare invocation runs prepare without starting runtimes.
+	if code, _, se := run([]string{}); code != 0 || !strings.Contains(se, "MIGRATED") {
+		t.Errorf("bare run: code=%d stderr=%q (want prepare then exit 0, no serving)", code, se)
 	}
 }
 

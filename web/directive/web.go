@@ -183,4 +183,5 @@ func (w *Web) PrepareNode(n any, g *gen.Gen) {
 	if nd.recv != nil {
 		w.host.PrepareReceiver(g, nd.recv, nd.fset)
 	}
+	routerdir.BindHTTPServer(g)
 }

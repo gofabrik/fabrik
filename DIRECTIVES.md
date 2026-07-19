@@ -29,7 +29,7 @@ Options:
 
 Declared on a package factory `func(deps...) *cli.Command`: the parameters are injected dependencies like a provider, and the function returns a command built with the cli library. The generator resolves the dependencies, calls the factory, and registers the returned command so `app <name>` dispatches to it.
 
-Declaring any `//fabrik:cli:command` makes the generated `run()` dispatch commands: a subcommand runs its factory's command, a bare invocation runs the default (the entrypoints, if any). Because `run()` then returns an exit code, `main` must be `func main() { os.Exit(run()) }`; adding the first command to an app whose `main` still uses `if err := run(); err != nil` will not compile until `main` is updated.
+Declaring any `//fabrik:cli:command` makes the generated `run()` dispatch commands: a subcommand runs its factory's command, while a bare invocation runs prepare and start hooks without starting injected runtimes. HTTP servers and jobs runners must be injected into and started by a command. Because `run()` returns an exit code, `main` must be `func main() { os.Exit(run()) }`; adding the first command to an app whose `main` still uses `if err := run(); err != nil` will not compile until `main` is updated.
 
 ```go
 //fabrik:cli:command
@@ -219,7 +219,7 @@ Options:
 
 Declared on a package function `func(ctx, deps..., msg T) error`: the first parameter is a `context.Context` (or `jobs.Context` for the accessors), the middle parameters are injected dependencies like a provider, and the **last** parameter is the message. One handler on a message type is a command (`Enqueue`), several are an event (`Publish`). All handlers assemble one injected `*jobs.Manager` whose only dependency is a `jobs.Store` provider. `name=` sets the handler id (default: the function name); `kind=` pins the wire kind (default: the message type's module path).
 
-Declaring any `//fabrik:job` or `//fabrik:cron` makes the binary host the jobs worker: the generated `run()` starts `jobs.Run` and drains it on shutdown. The worker's `jobs.RuntimeConfig` is an optional `//fabrik:provider`; with none it defaults to a zero `jobs.RuntimeConfig`. A binary that only enqueues declares no handlers and hosts no worker.
+Declaring any `//fabrik:job` or `//fabrik:cron` binds an injectable `*jobs.Runner`, which a command starts. The worker's `jobs.RuntimeConfig` is an optional `//fabrik:provider`; without one, job-only runners use a zero config and cron handlers enable scheduling. A binary that only enqueues declares no handlers and has no runner.
 
 ```go
 //fabrik:job

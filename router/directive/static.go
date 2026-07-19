@@ -21,6 +21,9 @@ func NewStatic(routes *routeTable) *Static { return &Static{routes: routes} }
 
 func (*Static) Name() string { return "http:static" }
 
+// PrepareNode binds the HTTP server for static routes.
+func (*Static) PrepareNode(_ any, g *gen.Gen) { BindHTTPServer(g) }
+
 func (*Static) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Serve an embedded file tree: /prefix [dir=sub]",

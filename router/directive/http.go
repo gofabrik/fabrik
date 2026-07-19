@@ -255,4 +255,5 @@ func patternError(path string) string {
 func (h *HTTP) PrepareNode(n any, g *gen.Gen) {
 	nd := n.(*node)
 	prepareReceiver(g, nd.recv, nd.fset)
+	BindHTTPServer(g)
 }

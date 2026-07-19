@@ -56,11 +56,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/gofabrik/fabrik/jobs"
 
@@ -68,24 +63,8 @@ import (
 	"app/shared"
 )
 
-func run() (err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	defer func() {
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			err = nil
-		}
-	}()
-	sigc := make(chan os.Signal, 2)
-	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigc)
-	go func() {
-		<-sigc
-		cancel()
-		<-sigc
-		os.Exit(1)
-	}()
-
+func run() error {
+	ctx := context.Background()
 	// Providers
 	sharedJobsStore, err := shared.NewJobStore()
 	if err != nil {
@@ -111,26 +90,5 @@ func run() (err error) {
 	if err := shared.Boot(ctx, jobsManager); err != nil {
 		return err
 	}
-
-	errc := make(chan error, 1)
-	go func() { errc <- JobWorker(ctx, jobsManager) }()
-	var result error
-	for range 1 {
-		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
-			result = e
-			cancel()
-		}
-	}
-	return result
-}
-
-func JobWorker(ctx context.Context, jobsManager *jobs.Manager) error {
-	drain, err := jobs.Run(ctx, jobsManager, jobs.RuntimeConfig{})
-	if err != nil {
-		return err
-	}
-	<-ctx.Done()
-	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return drain(drainCtx)
+	return nil
 }

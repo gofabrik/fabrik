@@ -1,0 +1,11 @@
+# One of: breaking, deprecation, new_component, enhancement, bug_fix
+change_type: breaking
+
+# The module or area of concern, e.g. jobs, router, gen, fabrik (the CLI).
+component: gen
+
+# A brief description of the change. Surround with quotes ("") if it must start with a backtick (`).
+note: "Application startup is now command-owned: a command receives and starts the HTTP server and job runner through dependency injection, so a bare invocation no longer serves and newly generated apps define a run command listening on :8080 by default."
+
+# One or more tracking issues or PR numbers related to the change.
+issues: [0]

@@ -48,7 +48,6 @@ func New() []gen.Directive {
 		jobsJob,
 		jobsCron,
 		clidir.New(),
-		routerdir.NewServe(routes),
 		cfg,
 	}
 }
