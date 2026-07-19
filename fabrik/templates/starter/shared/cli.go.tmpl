@@ -1,0 +1,15 @@
+package shared
+
+import (
+	"github.com/gofabrik/fabrik/cli"
+	"github.com/gofabrik/fabrik/httpserver"
+)
+
+//fabrik:cli:command
+func RunCommand(server *httpserver.Server) *cli.Command {
+	return &cli.Command{
+		Name: "run",
+		Help: "Start the HTTP server",
+		Run:  func(ctx cli.Context) error { return server.Run(ctx) },
+	}
+}

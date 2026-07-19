@@ -65,22 +65,17 @@ type Gen struct {
 
 	materializing []string // active lazy-bind stack
 
-	varTypeExpr map[string]string     // var identifier -> pre-rendered type (explicit)
-	varTypeVal  map[string]types.Type // var identifier -> type, rendered lazily for entrypoint params
-	entrypoints []Entrypoint          // runtime start functions the runner invokes
-	commands    []string
+	commands []string
 }
 
 // New returns an empty Gen.
 func New() *Gen {
 	return &Gen{
-		imports:     map[string]string{},
-		idents:      map[string]bool{},
-		lazyByPath:  map[string]*lazyBind{},
-		pathExprs:   map[string]string{},
-		singletons:  map[string]string{},
-		varTypeExpr: map[string]string{},
-		varTypeVal:  map[string]types.Type{},
+		imports:    map[string]string{},
+		idents:     map[string]bool{},
+		lazyByPath: map[string]*lazyBind{},
+		pathExprs:  map[string]string{},
+		singletons: map[string]string{},
 	}
 }
 
@@ -161,57 +156,7 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
 	}
 	m[name] = expr
-	g.recordVarType(expr, t)
 }
-
-// recordVarType defers type rendering to avoid imports used only by entrypoint parameters.
-func (g *Gen) recordVarType(expr string, t types.Type) {
-	if isIdent(expr) {
-		if _, ok := g.varTypeVal[expr]; !ok {
-			g.varTypeVal[expr] = t
-		}
-	}
-}
-
-// RecordVarType records the type of a variable built outside type-keyed bindings.
-func (g *Gen) RecordVarType(name, typeExpr string) {
-	if _, ok := g.varTypeExpr[name]; !ok {
-		g.varTypeExpr[name] = typeExpr
-	}
-}
-
-func (g *Gen) resolveVarType(name string) (string, bool) {
-	if s, ok := g.varTypeExpr[name]; ok {
-		return s, true
-	}
-	if t, ok := g.varTypeVal[name]; ok {
-		return g.TypeExpr(t), true
-	}
-	return "", false
-}
-
-// Entrypoint describes a runtime function whose Uses become its typed parameters.
-type Entrypoint struct {
-	Name string
-	Uses []string // run() vars the body needs, in parameter order
-	Body []string
-}
-
-// AddEntrypoint registers a runtime start function and deduplicates its parameters.
-func (g *Gen) AddEntrypoint(name string, uses, body []string) {
-	seen := map[string]bool{}
-	dedup := make([]string, 0, len(uses))
-	for _, u := range uses {
-		if !seen[u] {
-			seen[u] = true
-			dedup = append(dedup, u)
-		}
-	}
-	g.entrypoints = append(g.entrypoints, Entrypoint{Name: name, Uses: dedup, Body: body})
-}
-
-// EntrypointCount reports how many runtime start functions are registered.
-func (g *Gen) EntrypointCount() int { return len(g.entrypoints) }
 
 // AddCommand registers a command factory expression evaluated in the generated run scope.
 func (g *Gen) AddCommand(callExpr string) { g.commands = append(g.commands, callExpr) }
@@ -415,41 +360,22 @@ func (g *Gen) Stmt(phase Phase, format string, a ...any) {
 
 // Render assembles and formats main.gen.go.
 func (g *Gen) Render() ([]byte, error) {
-	if len(g.entrypoints) > 0 || len(g.commands) > 0 {
+	hasCmd := len(g.commands) > 0
+	if hasCmd {
 		g.Context()
 	}
-
-	// Resolve entrypoint parameter types before writing imports because rendering types registers their packages.
-	varType := map[string]string{}
-	for _, e := range g.entrypoints {
-		for _, u := range e.Uses {
-			if _, ok := varType[u]; ok {
-				continue
-			}
-			typ, ok := g.resolveVarType(u)
-			if !ok {
-				return nil, fmt.Errorf("gen: entrypoint var %q has no recorded type", u)
-			}
-			varType[u] = typ
-		}
-	}
-
-	hasEntry := len(g.entrypoints) > 0
-	hasCmd := len(g.commands) > 0
-	needsCtx := hasEntry || hasCmd || usesCtx(g.nodes, g.ctxVar)
+	needsCtx := hasCmd || usesCtx(g.nodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
 	ctxPkg := ""
 	if needsCtx {
 		ctxPkg = g.Import("context")
 	}
-	if hasEntry || hasCmd {
+	if hasCmd {
 		g.Import("os")
 		g.Import("os/signal")
 		g.Import("syscall")
 		g.Import("errors")
-	}
-	if hasCmd {
 		g.Import("fmt")
 		g.Import("github.com/gofabrik/fabrik/cli")
 	}
@@ -459,9 +385,6 @@ func (g *Gen) Render() ([]byte, error) {
 	g.writeImports(&b)
 
 	g.writeRun(&b, needsCtx, ctxPkg)
-	for _, e := range g.entrypoints {
-		g.writeEntrypoint(&b, e, varType, ctxPkg)
-	}
 
 	src, err := format.Source(b.Bytes())
 	if err != nil {
@@ -478,36 +401,12 @@ func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
 		g.writeRunCommands(b, ctxPkg)
 		return
 	}
-	ctx := g.ctxVar
-	hasEntry := len(g.entrypoints) > 0
-	if hasEntry {
-		b.WriteString("func run() (err error) {\n")
-		osp := g.Import("os")
-		sigp := g.Import("os/signal")
-		sysp := g.Import("syscall")
-		errPkg := g.Import("errors")
-		fmt.Fprintf(b, "%s, cancel := %s.WithCancel(%s.Background())\n", ctx, ctxPkg, ctxPkg)
-		b.WriteString("defer cancel()\n")
-		// Signal-driven cancellation during startup is a clean shutdown.
-		fmt.Fprintf(b, "defer func() {\nif %s.Is(err, %s.Canceled) && %s.Err() != nil {\nerr = nil\n}\n}()\n", errPkg, ctxPkg, ctx)
-		fmt.Fprintf(b, "sigc := make(chan %s.Signal, 2)\n", osp)
-		fmt.Fprintf(b, "%s.Notify(sigc, %s.Interrupt, %s.SIGTERM)\n", sigp, osp, sysp)
-		fmt.Fprintf(b, "defer %s.Stop(sigc)\n", sigp)
-		fmt.Fprintf(b, "go func() {\n<-sigc\ncancel()\n<-sigc\n%s.Exit(1)\n}()\n\n", osp)
-	} else {
-		b.WriteString("func run() error {\n")
-		if needsCtx {
-			fmt.Fprintf(b, "%s := %s.Background()\n", ctx, ctxPkg)
-		}
+	b.WriteString("func run() error {\n")
+	if needsCtx {
+		fmt.Fprintf(b, "%s := %s.Background()\n", g.ctxVar, ctxPkg)
 	}
-
 	g.emitPhaseNodes(b, g.nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister, PhasePrepare, PhaseStart)
-
-	if hasEntry {
-		g.writeEntrypointRunner(b, ctx, ctxPkg)
-	} else {
-		b.WriteString("return nil\n")
-	}
+	b.WriteString("return nil\n")
 	b.WriteString("}\n\n")
 }
 
@@ -537,16 +436,10 @@ func (g *Gen) writeRunCommands(b *bytes.Buffer, ctxPkg string) {
 	b.WriteString("\n")
 	fmt.Fprintf(b, "root = &%s.Command{\n", clip)
 	fmt.Fprintf(b, "Name: %q,\n", name)
-	hasEntry := len(g.entrypoints) > 0
-	if hasEntry || g.hasNodesInPhases(PhasePrepare, PhaseStart) {
-		fmt.Fprintf(b, "Run: func(cctx %s.Context) error {\n", clip)
+	if g.hasNodesInPhases(PhasePrepare, PhaseStart) {
+		fmt.Fprintf(b, "Run: func(%s.Context) error {\n", clip)
 		g.emitPhaseNodes(b, g.nodes, PhasePrepare, PhaseStart)
-		if hasEntry {
-			b.WriteString("\n")
-			g.writeEntrypointFanout(b, "cctx", ctxPkg)
-		} else {
-			b.WriteString("return nil\n")
-		}
+		b.WriteString("return nil\n")
 		b.WriteString("},\n")
 	}
 	fmt.Fprintf(b, "Subcommands: []*%s.Command{\n", clip)
@@ -562,26 +455,6 @@ func (g *Gen) writeRunCommands(b *bytes.Buffer, ctxPkg string) {
 	b.WriteString("return 1\n}\n")
 	fmt.Fprintf(b, "return root.Exec(%s.Args[1:], %s.WithSignalContext(%s))\n", osp, clip, ctx)
 	b.WriteString("}\n\n")
-}
-
-// writeEntrypointFanout starts entrypoints on a handler-local context and cancels peers after the first non-cancellation error.
-func (g *Gen) writeEntrypointFanout(b *bytes.Buffer, cctx, ctxPkg string) {
-	errPkg := g.Import("errors")
-	n := len(g.entrypoints)
-	fmt.Fprintf(b, "ectx, ecancel := %s.WithCancel(%s)\n", ctxPkg, cctx)
-	b.WriteString("defer ecancel()\n")
-	fmt.Fprintf(b, "errc := make(chan error, %d)\n", n)
-	for _, e := range g.entrypoints {
-		args := append([]string{"ectx"}, e.Uses...)
-		fmt.Fprintf(b, "go func() { errc <- %s(%s) }()\n", e.Name, strings.Join(args, ", "))
-	}
-	b.WriteString("var result error\n")
-	fmt.Fprintf(b, "for range %d {\n", n)
-	fmt.Fprintf(b, "if e := <-errc; e != nil && !%s.Is(e, %s.Canceled) && result == nil {\n", errPkg, ctxPkg)
-	b.WriteString("result = e\n")
-	b.WriteString("ecancel()\n")
-	b.WriteString("}\n}\n")
-	b.WriteString("return result\n")
 }
 
 func (g *Gen) hasNodesInPhases(phases ...Phase) bool {
@@ -605,38 +478,6 @@ func appName(module string) string {
 		return module[i+1:]
 	}
 	return module
-}
-
-// writeEntrypointRunner cancels on the first non-cancellation error and waits for all entrypoints to
-// stop; each bounds its own drain, so the wait needs no timeout.
-func (g *Gen) writeEntrypointRunner(b *bytes.Buffer, ctx, ctxPkg string) {
-	errPkg := g.Import("errors")
-	n := len(g.entrypoints)
-	fmt.Fprintf(b, "\nerrc := make(chan error, %d)\n", n)
-	for _, e := range g.entrypoints {
-		args := append([]string{ctx}, e.Uses...)
-		fmt.Fprintf(b, "go func() { errc <- %s(%s) }()\n", e.Name, strings.Join(args, ", "))
-	}
-	b.WriteString("var result error\n")
-	fmt.Fprintf(b, "for range %d {\n", n)
-	fmt.Fprintf(b, "if e := <-errc; e != nil && !%s.Is(e, %s.Canceled) && result == nil {\n", errPkg, ctxPkg)
-	b.WriteString("result = e\n")
-	b.WriteString("cancel()\n")
-	b.WriteString("}\n}\n")
-	b.WriteString("return result\n")
-}
-
-func (g *Gen) writeEntrypoint(b *bytes.Buffer, e Entrypoint, varType map[string]string, ctxPkg string) {
-	params := []string{g.ctxVar + " " + ctxPkg + ".Context"}
-	for _, u := range e.Uses {
-		params = append(params, u+" "+varType[u])
-	}
-	fmt.Fprintf(b, "func %s(%s) error {\n", e.Name, strings.Join(params, ", "))
-	for _, line := range e.Body {
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	b.WriteString("}\n\n")
 }
 
 func (g *Gen) emitPhaseNodes(b *bytes.Buffer, allNodes []Node, phases ...Phase) {

@@ -37,8 +37,10 @@ func (*Command) Meta() gen.Meta {
 			"with the cli library. The generator resolves the dependencies, calls the factory, " +
 			"and registers the returned command so `app <name>` dispatches to it.\n\n" +
 			"Declaring any `//fabrik:cli:command` makes the generated `run()` dispatch commands: a " +
-			"subcommand runs its factory's command, a bare invocation runs the default (the " +
-			"entrypoints, if any). Because `run()` then returns an exit code, `main` must be " +
+			"subcommand runs its factory's command, while a bare invocation runs prepare and start " +
+			"hooks without starting injected runtimes. HTTP servers and jobs runners must " +
+			"be injected into and started by a command. Because `run()` returns an exit code, " +
+			"`main` must be " +
 			"`func main() { os.Exit(run()) }`; adding the first command to an app whose `main` still " +
 			"uses `if err := run(); err != nil` will not compile until `main` is updated.\n\n" +
 			"```go\n//fabrik:cli:command\nfunc GreetCommand(g *Greeter) *cli.Command { ... }\n```",

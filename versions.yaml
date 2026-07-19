@@ -13,6 +13,7 @@ module-sets:
       - github.com/gofabrik/fabrik/flash
       - github.com/gofabrik/fabrik/forms
       - github.com/gofabrik/fabrik/gen
+      - github.com/gofabrik/fabrik/httpserver
       - github.com/gofabrik/fabrik/jobs
       - github.com/gofabrik/fabrik/jobs/directive
       - github.com/gofabrik/fabrik/migrations

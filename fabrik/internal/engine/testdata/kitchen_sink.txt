@@ -210,14 +210,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
@@ -231,35 +226,9 @@ import (
 	"app/web"
 )
 
-func run() (err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	defer func() {
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			err = nil
-		}
-	}()
-	sigc := make(chan os.Signal, 2)
-	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigc)
-	go func() {
-		<-sigc
-		cancel()
-		<-sigc
-		os.Exit(1)
-	}()
-
+func run() error {
+	ctx := context.Background()
 	// Config
-	sharedConfig, err := config.Load[shared.Config](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("http", "log", "postgres", "store"),
-		config.Section("http"),
-	)
-	if err != nil {
-		return err
-	}
-
 	sharedLog, err := config.Load[shared.Log](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
@@ -286,7 +255,6 @@ func run() (err error) {
 	}
 
 	// Providers
-	sharedHttpServer := shared.NewServer(sharedConfig)
 	migrationSources := migrations.Sources{
 		{Stream: "store", FS: store.Migrations, Dir: "migrations"},
 	}
@@ -373,39 +341,8 @@ func run() (err error) {
 	if err := store.WarmCache(ctx, storePool); err != nil {
 		return err
 	}
-
-	errc := make(chan error, 1)
-	go func() { errc <- HTTPServer(ctx, r, sharedHttpServer) }()
-	var result error
-	for range 1 {
-		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
-			result = e
-			cancel()
-		}
-	}
-	return result
+	return nil
 }
-
-func HTTPServer(ctx context.Context, r *router.Router, sharedHttpServer *http.Server) error {
-	srv := sharedHttpServer
-	srv.Handler = r
-	errc := make(chan error, 1)
-	go func() {
-		if srv.TLSConfig != nil {
-			errc <- srv.ListenAndServeTLS("", "")
-		} else {
-			errc <- srv.ListenAndServe()
-		}
-	}()
-	select {
-	case err := <-errc:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
-}
+-- want/diags --
+warning: shared/config.go:3:1: config struct Config is never used
+  help: inject it into a provider, hook, or handler struct, or remove the directive

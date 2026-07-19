@@ -23,7 +23,9 @@ const starterRoot = "templates/starter"
 // starterFabrikModules includes dependencies introduced by code generation.
 var starterFabrikModules = []string{
 	"github.com/gofabrik/fabrik/assetmapper",
+	"github.com/gofabrik/fabrik/cli",
 	"github.com/gofabrik/fabrik/config",
+	"github.com/gofabrik/fabrik/httpserver",
 	"github.com/gofabrik/fabrik/router",
 	"github.com/gofabrik/fabrik/templates",
 	"github.com/gofabrik/fabrik/web",
@@ -163,7 +165,7 @@ func newCmd(args []string) error {
 	if version != "" {
 		mode = "pinned fabrik " + version
 	}
-	fmt.Printf("\nCreated %s (%s). Next:\n  cd %s\n  fabrik run\n", project, mode, project)
+	fmt.Printf("\nCreated %s (%s). Next:\n  cd %s\n  fabrik run . run\n", project, mode, project)
 	return nil
 }
 

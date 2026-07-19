@@ -7,15 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/config"
+	"github.com/gofabrik/fabrik/httpserver"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
@@ -232,28 +231,17 @@ func run() int {
 
 		root = &cli.Command{
 			Name: "demo",
-			Run: func(cctx cli.Context) error {
+			Run: func(cli.Context) error {
 				// Prepare: after registration, before runtime start
 				if err := shared.MigrateDB(ctx, sharedSqlDB, migrationSources); err != nil {
 					return err
 				}
-
-				ectx, ecancel := context.WithCancel(cctx)
-				defer ecancel()
-				errc := make(chan error, 2)
-				go func() { errc <- JobWorker(ectx, jobsManager, sharedJobsRuntimeConfig) }()
-				go func() { errc <- HTTPServer(ectx, r, sharedHttpServer) }()
-				var result error
-				for range 2 {
-					if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
-						result = e
-						ecancel()
-					}
-				}
-				return result
+				return nil
 			},
 			Subcommands: []*cli.Command{
 				shared.ConfigCommand(sharedConfig, sharedDatabase),
+				shared.RunCommand(httpserver.New(r, sharedHttpServer), jobs.NewRunner(jobsManager, sharedJobsRuntimeConfig)),
+				shared.ServeCommand(httpserver.New(r, sharedHttpServer)),
 			},
 		}
 		return nil
@@ -266,39 +254,4 @@ func run() int {
 		return 1
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func JobWorker(ctx context.Context, jobsManager *jobs.Manager, sharedJobsRuntimeConfig jobs.RuntimeConfig) error {
-	drain, err := jobs.Run(ctx, jobsManager, sharedJobsRuntimeConfig)
-	if err != nil {
-		return err
-	}
-	<-ctx.Done()
-	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return drain(drainCtx)
-}
-
-func HTTPServer(ctx context.Context, r *router.Router, sharedHttpServer *http.Server) error {
-	srv := sharedHttpServer
-	srv.Handler = r
-	errc := make(chan error, 1)
-	go func() {
-		if srv.TLSConfig != nil {
-			errc <- srv.ListenAndServeTLS("", "")
-		} else {
-			errc <- srv.ListenAndServe()
-		}
-	}()
-	select {
-	case err := <-errc:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
 }

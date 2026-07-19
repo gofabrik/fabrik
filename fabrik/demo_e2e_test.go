@@ -45,13 +45,20 @@ func TestDemoEndToEnd(t *testing.T) {
 	}
 
 	port := freePort(t)
-	server := exec.Command(bin)
-	server.Dir = src
-	server.Env = append(os.Environ(),
+	env := append(os.Environ(),
 		"DEMO_HTTP_ADDR=:"+port,
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
 		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
 	)
+	migrate := exec.Command(bin)
+	migrate.Dir = src
+	migrate.Env = env
+	if out, err := migrate.CombinedOutput(); err != nil {
+		t.Fatalf("migrate (bare demo): %v\n%s", err, out)
+	}
+	server := exec.Command(bin, "run")
+	server.Dir = src
+	server.Env = env
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}

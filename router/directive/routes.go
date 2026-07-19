@@ -10,6 +10,32 @@ import (
 	"github.com/gofabrik/fabrik/gen"
 )
 
+const httpserverPath = "github.com/gofabrik/fabrik/httpserver"
+
+// BindHTTPServer lazily binds an HTTP server for the router when the app imports httpserver.
+func BindHTTPServer(g *gen.Gen) {
+	st, ok := g.LookupType(httpserverPath, "Server")
+	if !ok {
+		return
+	}
+	ptr := types.NewPointer(st)
+	if g.HasBinding(ptr, "") {
+		return
+	}
+	g.BindLazy(ptr, "", func() (string, diag.Diagnostics) {
+		var ds diag.Diagnostics
+		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		srvExpr := "nil"
+		if t, ok := g.LookupType("net/http", "Server"); ok {
+			if e, sds, ok := g.Instance(types.NewPointer(t), ""); ok {
+				ds = append(ds, sds...)
+				srvExpr = e
+			}
+		}
+		return g.Import(httpserverPath) + ".New(" + r + ", " + srvExpr + ")", ds
+	})
+}
+
 // routeTable tracks registrations and delegates conflicts to http.ServeMux.
 type routeTable struct {
 	seen    map[string]token.Position
@@ -21,10 +47,6 @@ type routeTable struct {
 func NewRouteTable() *routeTable {
 	return &routeTable{seen: map[string]token.Position{}, scratch: http.NewServeMux()}
 }
-
-// HasRoutes reports whether any route was registered (not just a router created
-// by middleware or a miss handler).
-func (rt *routeTable) HasRoutes() bool { return len(rt.seen) > 0 }
 
 func (rt *routeTable) add(key string, pos token.Position) (diag.Diagnostic, bool) {
 	if first, dup := rt.seen[key]; dup {

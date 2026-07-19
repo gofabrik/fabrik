@@ -39,6 +39,14 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cliDir, err := filepath.Abs("../cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpserverDir, err := filepath.Abs("../httpserver")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	tmp := t.TempDir()
 	if r, err := filepath.EvalSymlinks(tmp); err == nil {
@@ -60,8 +68,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod = append(mod, []byte(fmt.Sprintf(
-		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assetmapper v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/templates v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assetmapper => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/templates => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
-		assetsDir, configDir, routerDir, templateDir, webDir))...)
+		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assetmapper v0.0.0\n\tgithub.com/gofabrik/fabrik/cli v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/httpserver v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/templates v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assetmapper => %s\n\tgithub.com/gofabrik/fabrik/cli => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/httpserver => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/templates => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
+		assetsDir, cliDir, configDir, httpserverDir, routerDir, templateDir, webDir))...)
 	if err := os.WriteFile(gomod, mod, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +107,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	port := freePort(t)
-	server := exec.Command(bin)
+	server := exec.Command(bin, "run")
 	server.Dir = dir
 	server.Env = append(os.Environ(), "HELLO_HTTP_ADDR=:"+port)
 	if err := server.Start(); err != nil {

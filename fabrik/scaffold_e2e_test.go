@@ -22,7 +22,7 @@ func TestScaffoldPinsSurviveRealFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	libs := map[string]string{}
-	for _, m := range []string{"router", "web", "templates", "config", "assetmapper"} {
+	for _, m := range []string{"router", "web", "templates", "config", "assetmapper", "cli", "httpserver"} {
 		libs["github.com/gofabrik/fabrik/"+m] = filepath.Join(repoRoot, m)
 	}
 	proxy := buildScaffoldProxy(t, libs, []string{"v0.1.0", "v0.1.1"})

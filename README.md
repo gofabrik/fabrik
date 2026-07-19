@@ -18,7 +18,7 @@ go install github.com/gofabrik/fabrik/fabrik@latest
 ```sh
 fabrik new hello
 cd hello
-fabrik run
+fabrik run . run
 ```
 
 Then, in another terminal:
@@ -81,6 +81,7 @@ Fabrik is built from small Go libraries that can be used on their own or wired
 together by the CLI:
 
 - [router](router/README.md) - routing and middleware on top of `net/http`.
+- [httpserver](httpserver/README.md) - serve an `http.Handler` with graceful shutdown.
 - [config](config/README.md) - typed YAML configuration with defaults and env overrides.
 - [templates](templates/README.md) - sectioned HTML templates with shared layouts and helpers.
 - [web](web/README.md) - typed HTTP responses and request helpers.

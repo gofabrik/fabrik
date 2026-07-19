@@ -13,6 +13,7 @@ use (
 	./flash
 	./forms
 	./gen
+	./httpserver
 	./jobs
 	./jobs/dbtest
 	./jobs/directive
@@ -45,6 +46,7 @@ replace (
 	github.com/gofabrik/fabrik/flash v0.1.0 => ./flash
 	github.com/gofabrik/fabrik/forms v0.1.0 => ./forms
 	github.com/gofabrik/fabrik/gen v0.1.0 => ./gen
+	github.com/gofabrik/fabrik/httpserver v0.1.0 => ./httpserver
 	github.com/gofabrik/fabrik/jobs v0.1.0 => ./jobs
 	github.com/gofabrik/fabrik/jobs/directive v0.1.0 => ./jobs/directive
 	github.com/gofabrik/fabrik/migrations v0.1.0 => ./migrations

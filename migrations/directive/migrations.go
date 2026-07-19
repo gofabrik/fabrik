@@ -203,7 +203,6 @@ func (mg *Migrations) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		}
 		b.WriteString("}")
 		v := g.Var("migrationSources")
-		g.RecordVarType(v, migPkg+".Sources")
 		g.Node(&gen.Assign{
 			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
 			Var:  v,

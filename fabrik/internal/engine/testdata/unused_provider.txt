@@ -39,37 +39,12 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
-	"context"
-	"errors"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() (err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	defer func() {
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			err = nil
-		}
-	}()
-	sigc := make(chan os.Signal, 2)
-	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigc)
-	go func() {
-		<-sigc
-		cancel()
-		<-sigc
-		os.Exit(1)
-	}()
-
+func run() error {
 	// Providers
 	webUsed := web.NewUsed()
 	webHandlers := &web.Handlers{
@@ -80,43 +55,5 @@ func run() (err error) {
 
 	// Register
 	r.Method("GET", "/", webHandlers.Index)
-
-	errc := make(chan error, 1)
-	go func() { errc <- HTTPServer(ctx, r) }()
-	var result error
-	for range 1 {
-		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
-			result = e
-			cancel()
-		}
-	}
-	return result
-}
-
-func HTTPServer(ctx context.Context, r *router.Router) error {
-	addr := ":8080"
-	if p := os.Getenv("PORT"); p != "" {
-		addr = ":" + p
-	}
-	srv := &http.Server{Addr: addr}
-	srv.Handler = r
-	errc := make(chan error, 1)
-	go func() {
-		if srv.TLSConfig != nil {
-			errc <- srv.ListenAndServeTLS("", "")
-		} else {
-			errc <- srv.ListenAndServe()
-		}
-	}()
-	select {
-	case err := <-errc:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
-	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	return nil
 }
