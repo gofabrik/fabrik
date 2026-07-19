@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/gofabrik/fabrik/assetmapper v0.1.0
 	github.com/gofabrik/fabrik/assetmapper/directive v0.1.0
+	github.com/gofabrik/fabrik/cli/directive v0.1.0
 	github.com/gofabrik/fabrik/config/directive v0.1.0
 	github.com/gofabrik/fabrik/diag v0.1.0
 	github.com/gofabrik/fabrik/gen v0.1.0

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	assetsdir "github.com/gofabrik/fabrik/assetmapper/directive"
+	clidir "github.com/gofabrik/fabrik/cli/directive"
 	configdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
 	"github.com/gofabrik/fabrik/gen"
@@ -46,6 +47,7 @@ func New() []gen.Directive {
 		migdir.NewMigrations(),
 		jobsJob,
 		jobsCron,
+		clidir.New(),
 		routerdir.NewServe(routes),
 		cfg,
 	}

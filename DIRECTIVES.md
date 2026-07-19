@@ -23,6 +23,19 @@ Options:
 
 - `dir=`
 
+## fabrik:cli:command
+
+**`//fabrik:cli:command`**
+
+Declared on a package factory `func(deps...) *cli.Command`: the parameters are injected dependencies like a provider, and the function returns a command built with the cli library. The generator resolves the dependencies, calls the factory, and registers the returned command so `app <name>` dispatches to it.
+
+Declaring any `//fabrik:cli:command` makes the generated `run()` dispatch commands: a subcommand runs its factory's command, a bare invocation runs the default (the entrypoints, if any). Because `run()` then returns an exit code, `main` must be `func main() { os.Exit(run()) }`; adding the first command to an app whose `main` still uses `if err := run(); err != nil` will not compile until `main` is updated.
+
+```go
+//fabrik:cli:command
+func GreetCommand(g *Greeter) *cli.Command { ... }
+```
+
 ## fabrik:config
 
 **`//fabrik:config [section]`**
