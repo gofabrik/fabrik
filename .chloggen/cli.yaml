@@ -1,0 +1,11 @@
+# One of: breaking, deprecation, new_component, enhancement, bug_fix
+change_type: enhancement
+
+# The module or area of concern, e.g. jobs, router, gen, fabrik (the CLI).
+component: fabrik
+
+# A brief description of the change. Surround with quotes ("") if it must start with a backtick (`).
+note: "Add a typed CLI library for building app commands with validated flags and arguments, subcommands, middleware, help, and shell completion, plus a directive that registers command factories from the object graph."
+
+# One or more tracking issues or PR numbers related to the change.
+issues: [0]

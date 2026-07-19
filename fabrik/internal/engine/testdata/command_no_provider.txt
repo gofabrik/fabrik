@@ -1,0 +1,29 @@
+A //fabrik:cli:command whose dependency has no provider is reported at emit time.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+type Missing struct{}
+
+//fabrik:cli:command
+func GreetCommand(m *Missing) *cli.Command {
+	return &cli.Command{Name: "greet"}
+}
+-- want/diags --
+error: shared/shared.go:7:1: no provider for *shared.Missing
+  help: add a //fabrik:provider returning *shared.Missing

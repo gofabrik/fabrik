@@ -3,6 +3,8 @@ go 1.26
 use (
 	./assetmapper
 	./assetmapper/directive
+	./cli
+	./cli/directive
 	./config
 	./config/directive
 	./diag
@@ -34,6 +36,8 @@ use (
 replace (
 	github.com/gofabrik/fabrik/assetmapper v0.1.0 => ./assetmapper
 	github.com/gofabrik/fabrik/assetmapper/directive v0.1.0 => ./assetmapper/directive
+	github.com/gofabrik/fabrik/cli v0.1.0 => ./cli
+	github.com/gofabrik/fabrik/cli/directive v0.1.0 => ./cli/directive
 	github.com/gofabrik/fabrik/config v0.1.0 => ./config
 	github.com/gofabrik/fabrik/config/directive v0.1.0 => ./config/directive
 	github.com/gofabrik/fabrik/diag v0.1.0 => ./diag

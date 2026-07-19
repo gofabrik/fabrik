@@ -68,6 +68,7 @@ type Gen struct {
 	varTypeExpr map[string]string     // var identifier -> pre-rendered type (explicit)
 	varTypeVal  map[string]types.Type // var identifier -> type, rendered lazily for entrypoint params
 	entrypoints []Entrypoint          // runtime start functions the runner invokes
+	commands    []string
 }
 
 // New returns an empty Gen.
@@ -211,6 +212,12 @@ func (g *Gen) AddEntrypoint(name string, uses, body []string) {
 
 // EntrypointCount reports how many runtime start functions are registered.
 func (g *Gen) EntrypointCount() int { return len(g.entrypoints) }
+
+// AddCommand registers a command factory expression evaluated in the generated run scope.
+func (g *Gen) AddCommand(callExpr string) { g.commands = append(g.commands, callExpr) }
+
+// CommandCount reports how many commands are registered.
+func (g *Gen) CommandCount() int { return len(g.commands) }
 
 // BindLazy registers a value that is emitted on first resolution.
 func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Diagnostics)) {
@@ -408,7 +415,7 @@ func (g *Gen) Stmt(phase Phase, format string, a ...any) {
 
 // Render assembles and formats main.gen.go.
 func (g *Gen) Render() ([]byte, error) {
-	if len(g.entrypoints) > 0 {
+	if len(g.entrypoints) > 0 || len(g.commands) > 0 {
 		g.Context()
 	}
 
@@ -428,18 +435,23 @@ func (g *Gen) Render() ([]byte, error) {
 	}
 
 	hasEntry := len(g.entrypoints) > 0
-	needsCtx := hasEntry || usesCtx(g.nodes, g.ctxVar)
+	hasCmd := len(g.commands) > 0
+	needsCtx := hasEntry || hasCmd || usesCtx(g.nodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
 	ctxPkg := ""
 	if needsCtx {
 		ctxPkg = g.Import("context")
 	}
-	if hasEntry {
+	if hasEntry || hasCmd {
 		g.Import("os")
 		g.Import("os/signal")
 		g.Import("syscall")
 		g.Import("errors")
+	}
+	if hasCmd {
+		g.Import("fmt")
+		g.Import("github.com/gofabrik/fabrik/cli")
 	}
 
 	var b bytes.Buffer
@@ -462,6 +474,10 @@ func (g *Gen) Render() ([]byte, error) {
 }
 
 func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
+	if len(g.commands) > 0 {
+		g.writeRunCommands(b, ctxPkg)
+		return
+	}
 	ctx := g.ctxVar
 	hasEntry := len(g.entrypoints) > 0
 	if hasEntry {
@@ -493,6 +509,102 @@ func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
 		b.WriteString("return nil\n")
 	}
 	b.WriteString("}\n\n")
+}
+
+// writeRunCommands emits an integer-returning run that builds the graph before dispatch and defers runtime phases to the default handler.
+func (g *Gen) writeRunCommands(b *bytes.Buffer, ctxPkg string) {
+	ctx := g.ctxVar
+	osp := g.Import("os")
+	sigp := g.Import("os/signal")
+	sysp := g.Import("syscall")
+	errPkg := g.Import("errors")
+	fmtp := g.Import("fmt")
+	clip := g.Import("github.com/gofabrik/fabrik/cli")
+	name := appName(g.module)
+
+	b.WriteString("func run() int {\n")
+	fmt.Fprintf(b, "%s, cancel := %s.WithCancel(%s.Background())\n", ctx, ctxPkg, ctxPkg)
+	b.WriteString("defer cancel()\n")
+	fmt.Fprintf(b, "sigc := make(chan %s.Signal, 2)\n", osp)
+	fmt.Fprintf(b, "%s.Notify(sigc, %s.Interrupt, %s.SIGTERM)\n", sigp, osp, sysp)
+	fmt.Fprintf(b, "defer %s.Stop(sigc)\n", sigp)
+	fmt.Fprintf(b, "go func() {\n<-sigc\ncancel()\n<-sigc\n%s.Exit(1)\n}()\n\n", osp)
+
+	fmt.Fprintf(b, "var root *%s.Command\n", clip)
+	b.WriteString("err := func() error {\n")
+	// Only graph construction runs before CLI dispatch.
+	g.emitPhaseNodes(b, g.nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister)
+	b.WriteString("\n")
+	fmt.Fprintf(b, "root = &%s.Command{\n", clip)
+	fmt.Fprintf(b, "Name: %q,\n", name)
+	hasEntry := len(g.entrypoints) > 0
+	if hasEntry || g.hasNodesInPhases(PhasePrepare, PhaseStart) {
+		fmt.Fprintf(b, "Run: func(cctx %s.Context) error {\n", clip)
+		g.emitPhaseNodes(b, g.nodes, PhasePrepare, PhaseStart)
+		if hasEntry {
+			b.WriteString("\n")
+			g.writeEntrypointFanout(b, "cctx", ctxPkg)
+		} else {
+			b.WriteString("return nil\n")
+		}
+		b.WriteString("},\n")
+	}
+	fmt.Fprintf(b, "Subcommands: []*%s.Command{\n", clip)
+	for _, c := range g.commands {
+		fmt.Fprintf(b, "%s,\n", c)
+	}
+	b.WriteString("},\n}\n")
+	b.WriteString("return nil\n")
+	b.WriteString("}()\n")
+	b.WriteString("if err != nil {\n")
+	fmt.Fprintf(b, "if %s.Is(err, %s.Canceled) && %s.Err() != nil {\nreturn 130\n}\n", errPkg, ctxPkg, ctx)
+	fmt.Fprintf(b, "%s.Fprintln(%s.Stderr, %q, err)\n", fmtp, osp, name+":")
+	b.WriteString("return 1\n}\n")
+	fmt.Fprintf(b, "return root.Exec(%s.Args[1:], %s.WithSignalContext(%s))\n", osp, clip, ctx)
+	b.WriteString("}\n\n")
+}
+
+// writeEntrypointFanout starts entrypoints on a handler-local context and cancels peers after the first non-cancellation error.
+func (g *Gen) writeEntrypointFanout(b *bytes.Buffer, cctx, ctxPkg string) {
+	errPkg := g.Import("errors")
+	n := len(g.entrypoints)
+	fmt.Fprintf(b, "ectx, ecancel := %s.WithCancel(%s)\n", ctxPkg, cctx)
+	b.WriteString("defer ecancel()\n")
+	fmt.Fprintf(b, "errc := make(chan error, %d)\n", n)
+	for _, e := range g.entrypoints {
+		args := append([]string{"ectx"}, e.Uses...)
+		fmt.Fprintf(b, "go func() { errc <- %s(%s) }()\n", e.Name, strings.Join(args, ", "))
+	}
+	b.WriteString("var result error\n")
+	fmt.Fprintf(b, "for range %d {\n", n)
+	fmt.Fprintf(b, "if e := <-errc; e != nil && !%s.Is(e, %s.Canceled) && result == nil {\n", errPkg, ctxPkg)
+	b.WriteString("result = e\n")
+	b.WriteString("ecancel()\n")
+	b.WriteString("}\n}\n")
+	b.WriteString("return result\n")
+}
+
+func (g *Gen) hasNodesInPhases(phases ...Phase) bool {
+	want := map[Phase]bool{}
+	for _, p := range phases {
+		want[p] = true
+	}
+	for _, n := range g.nodes {
+		if want[n.base().Phase] {
+			return true
+		}
+	}
+	return false
+}
+
+func appName(module string) string {
+	if module == "" {
+		return "app"
+	}
+	if i := strings.LastIndexByte(module, '/'); i >= 0 {
+		return module[i+1:]
+	}
+	return module
 }
 
 // writeEntrypointRunner cancels on the first non-cancellation error and waits for all entrypoints to

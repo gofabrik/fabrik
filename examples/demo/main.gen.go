@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
@@ -25,14 +26,9 @@ import (
 	"demo/web"
 )
 
-func run() (err error) {
+func run() int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	defer func() {
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			err = nil
-		}
-	}()
 	sigc := make(chan os.Signal, 2)
 	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigc)
@@ -43,211 +39,233 @@ func run() (err error) {
 		os.Exit(1)
 	}()
 
-	// Config
-	sharedConfig, err := config.Load[shared.Config](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
-		config.Section("http"),
-	)
-	if err != nil {
-		return err
-	}
-
-	sharedJobsConfig2, err := config.Load[shared.JobsConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
-		config.Section("jobs"),
-	)
-	if err != nil {
-		return err
-	}
-
-	sharedDatabase, err := config.Load[shared.Database](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
-		config.Section("database"),
-	)
-	if err != nil {
-		return err
-	}
-
-	sharedLog, err := config.Load[shared.Log](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
-		config.Section("log"),
-	)
-	if err != nil {
-		return err
-	}
-
-	sharedCrossOrigin, err := config.Load[shared.CrossOrigin](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
-		config.Section("crossorigin"),
-	)
-	if err != nil {
-		return err
-	}
-
-	webConfig, err := config.Load[web.Config](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
-		config.Section("greeter"),
-	)
-	if err != nil {
-		return err
-	}
-
-	// Setup: after config, before providers
-	if err := shared.InitLogger(sharedLog); err != nil {
-		return err
-	}
-
-	// Providers
-	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
-		{FS: shared.Assets, Dir: "assets"},
-		{FS: web.Assets, Dir: "assets"},
-	}, nil)
-	if err != nil {
-		return err
-	}
-	appTemplates, err := templates.LoadSources([]templates.Source{
-		{FS: shared.Templates, Dir: "templates"},
-		{FS: web.Templates, Dir: "templates"},
-	}, assetCompiled.FuncMap(), templates.FuncMap{
-		"humanizeAge": shared.HumanizeAge,
-		"shout":       shared.Shout,
-	})
-	if err != nil {
-		return err
-	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-
-	migrationSources := migrations.Sources{
-		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
-	}
-	sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
-	sharedHttpServer := shared.NewServer(sharedConfig)
-
-	sharedSqlDB, err := shared.NewDB(sharedDatabase)
-	if err != nil {
-		return err
-	}
-	sharedQueryDB, err := shared.NewQueries(sharedSqlDB)
-	if err != nil {
-		return err
-	}
-	sharedJobsStore, err := shared.NewJobStore(sharedSqlDB)
-	if err != nil {
-		return err
-	}
-	sharedJobsConfig := shared.NewJobsConfig()
-	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
-	if err != nil {
-		return err
-	}
-	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		return err
-	}
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
-	if err != nil {
-		return err
-	}
-	// web.Greeter, selected by greeter.kind
-	var webGreeter web.Greeter
-	switch webConfig.Kind {
-	case "goodbye":
-		webGreeter = web.NewGoodbyeGreeter()
-	case "hello":
-		webGreeter = web.NewHelloGreeter()
-	default:
-		return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
-	}
-	webHandlers := &web.Handlers{
-		Greeter: webGreeter,
-		Queries: sharedQueryDB,
-		Session: sharedSessionManager,
-		Flash:   sharedFlash,
-		Jobs:    jobsManager,
-	}
-	webAPI := &web.API{
-		Greeter: webGreeter,
-	}
-	webGreetings := &web.Greetings{
-		Session: sharedSessionManager,
-		Flash:   sharedFlash,
-		Queries: sharedQueryDB,
-	}
-
-	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOrigin)
-	if err != nil {
-		return err
-	}
-
-	r := router.New()
-	webDocs := &web.Docs{
-		Router: r,
-	}
-
-	// Middleware
-	r.Use(shared.Logged)
-	r.Use(shared.Recovered)
-	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
-	r.Use(crossOriginMiddlewareMW)
-	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
-	r.Use(sessionMiddlewareMW)
-
-	// Register
-	r.Handle("/assets/", assetCompiled.Handler())
-	r.NotFound(sharedErrorPages.NotFound)
-	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
-	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
-	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
-	r.Method("GET", "/routes", webDocs.List)
-
-	// Jobs
-	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
-		return err
-	}
-	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
-		return web.RecordVisit(c, sharedQueryDB, m)
-	}); err != nil {
-		return err
-	}
-	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
-		return web.PurgeGreetings(c, sharedQueryDB)
-	}); err != nil {
-		return err
-	}
-
-	// Prepare: after registration, before runtime start
-	if err := shared.MigrateDB(ctx, sharedSqlDB, migrationSources); err != nil {
-		return err
-	}
-
-	errc := make(chan error, 2)
-	go func() { errc <- JobWorker(ctx, jobsManager, sharedJobsRuntimeConfig) }()
-	go func() { errc <- HTTPServer(ctx, r, sharedHttpServer) }()
-	var result error
-	for range 2 {
-		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
-			result = e
-			cancel()
+	var root *cli.Command
+	err := func() error {
+		// Config
+		sharedConfig, err := config.Load[shared.Config](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+			config.Section("http"),
+		)
+		if err != nil {
+			return err
 		}
+
+		sharedJobsConfig2, err := config.Load[shared.JobsConfig](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+			config.Section("jobs"),
+		)
+		if err != nil {
+			return err
+		}
+
+		sharedDatabase, err := config.Load[shared.Database](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+			config.Section("database"),
+		)
+		if err != nil {
+			return err
+		}
+
+		sharedLog, err := config.Load[shared.Log](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+			config.Section("log"),
+		)
+		if err != nil {
+			return err
+		}
+
+		sharedCrossOrigin, err := config.Load[shared.CrossOrigin](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+			config.Section("crossorigin"),
+		)
+		if err != nil {
+			return err
+		}
+
+		webConfig, err := config.Load[web.Config](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+			config.Section("greeter"),
+		)
+		if err != nil {
+			return err
+		}
+
+		// Setup: after config, before providers
+		if err := shared.InitLogger(sharedLog); err != nil {
+			return err
+		}
+
+		// Providers
+		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+			{FS: shared.Assets, Dir: "assets"},
+			{FS: web.Assets, Dir: "assets"},
+		}, nil)
+		if err != nil {
+			return err
+		}
+		appTemplates, err := templates.LoadSources([]templates.Source{
+			{FS: shared.Templates, Dir: "templates"},
+			{FS: web.Templates, Dir: "templates"},
+		}, assetCompiled.FuncMap(), templates.FuncMap{
+			"humanizeAge": shared.HumanizeAge,
+			"shout":       shared.Shout,
+		})
+		if err != nil {
+			return err
+		}
+		sharedErrorPages := &shared.ErrorPages{
+			Templates: appTemplates,
+		}
+		adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+
+		migrationSources := migrations.Sources{
+			{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
+		}
+		sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
+		sharedHttpServer := shared.NewServer(sharedConfig)
+
+		sharedSqlDB, err := shared.NewDB(sharedDatabase)
+		if err != nil {
+			return err
+		}
+		sharedQueryDB, err := shared.NewQueries(sharedSqlDB)
+		if err != nil {
+			return err
+		}
+		sharedJobsStore, err := shared.NewJobStore(sharedSqlDB)
+		if err != nil {
+			return err
+		}
+		sharedJobsConfig := shared.NewJobsConfig()
+		sharedSessionManager, err := shared.NewSession(sharedSqlDB)
+		if err != nil {
+			return err
+		}
+		sharedFlash, err := shared.NewFlash(sharedSessionManager)
+		if err != nil {
+			return err
+		}
+		jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+		if err != nil {
+			return err
+		}
+		// web.Greeter, selected by greeter.kind
+		var webGreeter web.Greeter
+		switch webConfig.Kind {
+		case "goodbye":
+			webGreeter = web.NewGoodbyeGreeter()
+		case "hello":
+			webGreeter = web.NewHelloGreeter()
+		default:
+			return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
+		}
+		webHandlers := &web.Handlers{
+			Greeter: webGreeter,
+			Queries: sharedQueryDB,
+			Session: sharedSessionManager,
+			Flash:   sharedFlash,
+			Jobs:    jobsManager,
+		}
+		webAPI := &web.API{
+			Greeter: webGreeter,
+		}
+		webGreetings := &web.Greetings{
+			Session: sharedSessionManager,
+			Flash:   sharedFlash,
+			Queries: sharedQueryDB,
+		}
+
+		sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOrigin)
+		if err != nil {
+			return err
+		}
+
+		r := router.New()
+		webDocs := &web.Docs{
+			Router: r,
+		}
+
+		// Middleware
+		r.Use(shared.Logged)
+		r.Use(shared.Recovered)
+		crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
+		r.Use(crossOriginMiddlewareMW)
+		sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
+		r.Use(sessionMiddlewareMW)
+
+		// Register
+		r.Handle("/assets/", assetCompiled.Handler())
+		r.NotFound(sharedErrorPages.NotFound)
+		r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
+		r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+		r.Method("GET", "/api/greet/{name}", webAPI.Greet)
+		r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
+		r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
+		r.Method("GET", "/routes", webDocs.List)
+
+		// Jobs
+		if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+			return err
+		}
+		if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
+			return web.RecordVisit(c, sharedQueryDB, m)
+		}); err != nil {
+			return err
+		}
+		if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
+			return web.PurgeGreetings(c, sharedQueryDB)
+		}); err != nil {
+			return err
+		}
+
+		root = &cli.Command{
+			Name: "demo",
+			Run: func(cctx cli.Context) error {
+				// Prepare: after registration, before runtime start
+				if err := shared.MigrateDB(ctx, sharedSqlDB, migrationSources); err != nil {
+					return err
+				}
+
+				ectx, ecancel := context.WithCancel(cctx)
+				defer ecancel()
+				errc := make(chan error, 2)
+				go func() { errc <- JobWorker(ectx, jobsManager, sharedJobsRuntimeConfig) }()
+				go func() { errc <- HTTPServer(ectx, r, sharedHttpServer) }()
+				var result error
+				for range 2 {
+					if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
+						result = e
+						ecancel()
+					}
+				}
+				return result
+			},
+			Subcommands: []*cli.Command{
+				shared.ConfigCommand(sharedConfig, sharedDatabase),
+			},
+		}
+		return nil
+	}()
+	if err != nil {
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return 130
+		}
+		fmt.Fprintln(os.Stderr, "demo:", err)
+		return 1
 	}
-	return result
+	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
 func JobWorker(ctx context.Context, jobsManager *jobs.Manager, sharedJobsRuntimeConfig jobs.RuntimeConfig) error {

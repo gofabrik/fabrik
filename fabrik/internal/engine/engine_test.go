@@ -68,6 +68,10 @@ func runFixture(t *testing.T, fixture string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cliDir, err := filepath.Abs("../../../cli")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var wantGen, wantDiags []byte
 	hasGen, hasDiags := false, false
 	for _, f := range ar.Files {
@@ -91,6 +95,7 @@ func runFixture(t *testing.T, fixture string) {
 		data = bytes.ReplaceAll(data, []byte("ASSETSDIR"), []byte(assetsDir))
 		data = bytes.ReplaceAll(data, []byte("MIGRATIONSDIR"), []byte(migrationsDir))
 		data = bytes.ReplaceAll(data, []byte("JOBSDIR"), []byte(jobsDir))
+		data = bytes.ReplaceAll(data, []byte("CLIDIR"), []byte(cliDir))
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}

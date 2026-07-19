@@ -1,0 +1,54 @@
+//fabrik:cli:command rejects anything but an exported, non-variadic package factory
+returning exactly *cli.Command (a lookalike *Command from another package does
+not qualify).
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+func main() {}
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+type Commands struct{}
+
+type Command struct{}
+
+//fabrik:cli:command
+func (c *Commands) Method() *cli.Command { return nil }
+
+//fabrik:cli:command
+func Generic[T any]() *cli.Command { return nil }
+
+//fabrik:cli:command
+func unexported() *cli.Command { return nil }
+
+//fabrik:cli:command
+func Variadic(names ...string) *cli.Command { return nil }
+
+//fabrik:cli:command
+func WrongReturn() error { return nil }
+
+//fabrik:cli:command
+func Lookalike() *Command { return nil }
+-- want/diags --
+error: shared/shared.go:9:1: //fabrik:cli:command must be a package function, not a method
+  help: dependencies are parameters, not receiver fields
+error: shared/shared.go:12:1: //fabrik:cli:command function Generic cannot be generic
+  help: declare a concrete function
+error: shared/shared.go:15:1: //fabrik:cli:command function unexported must be exported
+  help: generated code calls it as a package-qualified symbol; capitalize the name
+error: shared/shared.go:18:1: //fabrik:cli:command function Variadic cannot be variadic
+  help: declare each dependency as its own parameter
+error: shared/shared.go:21:1: command WrongReturn has the wrong signature
+  help: want func(deps...) *cli.Command
+error: shared/shared.go:24:1: command Lookalike has the wrong signature
+  help: want func(deps...) *cli.Command

@@ -24,6 +24,6 @@ func Serve(h http.Handler) error { return nil }
 func Worker() error { return nil }
 -- want/diags --
 error: web/web.go:5:1: unknown directive "fabrik:http:server"
-  help: known: assets, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, job, migrations, provider, provider:select, templates, templates:func, web
+  help: known: assets, cli:command, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, job, migrations, provider, provider:select, templates, templates:func, web
 error: web/web.go:8:1: unknown directive "fabrik:jobs:worker"
-  help: known: assets, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, job, migrations, provider, provider:select, templates, templates:func, web
+  help: known: assets, cli:command, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, job, migrations, provider, provider:select, templates, templates:func, web
