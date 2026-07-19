@@ -178,6 +178,7 @@ func (j *Jobs) Validate(g *gen.Gen) diag.Diagnostics {
 	if len(j.b.jobs) == 0 && len(j.b.crons) == 0 {
 		return ds
 	}
+	// Cron names are static schedule identities.
 	cronSeen := map[string]token.Position{}
 	for _, cn := range j.b.crons {
 		if cn.name == "" {

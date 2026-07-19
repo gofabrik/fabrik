@@ -15,7 +15,8 @@ func NewServer(cfg *Config) *http.Server {
 	}
 }
 
-// ErrorPages renders router miss responses through app templates without replacing their status codes.
+// ErrorPages renders the router's miss responses through the app's
+// template set. Body-only handlers keep the router's status codes.
 type ErrorPages struct {
 	Templates *templates.Set
 }

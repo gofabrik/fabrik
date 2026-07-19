@@ -198,6 +198,7 @@ func isNamedStruct(t types.Type) bool {
 	return ok
 }
 
+// namedOf unwraps t to its named type, through aliases and one pointer.
 func namedOf(t types.Type) *types.Named {
 	t = types.Unalias(t)
 	if p, ok := t.(*types.Pointer); ok {

@@ -85,6 +85,8 @@ func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []m
 	return path, append(refs, own...)
 }
 
+// handlerExpr returns the expression for a handler: pkg.Func for a plain
+// function, or instance.Method through the wired receiver struct.
 func handlerExpr(g *gen.Gen, recv types.Type, pkg *types.Package, fn string, fset *token.FileSet) (string, diag.Diagnostics) {
 	if recv == nil {
 		return g.ImportPkg(pkg) + "." + fn, nil

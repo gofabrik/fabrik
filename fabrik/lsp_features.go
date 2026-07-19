@@ -61,7 +61,8 @@ func (s *lspServer) publishTyped(uri string, gen int) {
 	if err != nil {
 		return
 	}
-	// A newer edit makes these diagnostics stale.
+	// A newer edit may have scheduled a fresh publish while this Wire ran;
+	// publishing now would overwrite current diagnostics with stale ones.
 	s.mu.Lock()
 	stale := s.pubGen[root] != gen
 	s.mu.Unlock()

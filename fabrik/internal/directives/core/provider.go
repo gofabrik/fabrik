@@ -58,7 +58,7 @@ type param struct {
 type node struct {
 	pos token.Position
 
-	caseVal string // selected implementation kind
+	caseVal string // case= value: this provider is one candidate in a provider:select group, chosen by return type
 
 	fn         string
 	pkg        *types.Package
@@ -227,7 +227,12 @@ func anchor(ds diag.Diagnostics, pos token.Position) diag.Diagnostics {
 	return ds
 }
 
-// varBase derives order-independent names from the provider package and, when distinct, the type package.
+// varBase names a provided value: declaring package + type name,
+// with the type's own package between them when the two differ
+// (shared providing query.Dialect -> sharedQueryDialect). The
+// qualification is unconditional, not collision-triggered: name
+// policy must not depend on emission order, and a lone
+// sharedDialect would be exactly as vague as a colliding one.
 func varBase(pkg *types.Package, t types.Type) string {
 	t = types.Unalias(t)
 	if ptr, ok := t.(*types.Pointer); ok {

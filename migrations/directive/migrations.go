@@ -157,6 +157,7 @@ func (mg *Migrations) Check(n any, ty gen.Typed) diag.Diagnostics {
 	return ds
 }
 
+// resolveStreams assigns stable stream names before validation or emission.
 func (mg *Migrations) resolveStreams(g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, d := range mg.decls {
