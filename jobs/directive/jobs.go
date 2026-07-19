@@ -21,16 +21,15 @@ const (
 )
 
 // New returns the jobs directives, sharing one builder.
-func New() (*Jobs, *Cron, *Worker) {
+func New() (*Jobs, *Cron) {
 	b := &builder{}
-	return &Jobs{b: b}, &Cron{b: b}, &Worker{b: b}
+	return &Jobs{b: b}, &Cron{b: b}
 }
 
 type builder struct {
 	jobs       []*jobNode
 	crons      []*cronNode
 	registered bool
-	built      bool
 }
 
 type jobNode struct {
@@ -82,6 +81,11 @@ func (*Jobs) Meta() gen.Meta {
 			"`*jobs.Manager` whose only dependency is a `jobs.Store` provider. " +
 			"`name=` sets the handler id (default: the function name); `kind=` " +
 			"pins the wire kind (default: the message type's module path).\n\n" +
+			"Declaring any `//fabrik:job` or `//fabrik:cron` makes the binary host " +
+			"the jobs worker: the generated `run()` starts `jobs.Run` and drains it " +
+			"on shutdown. The worker's `jobs.RuntimeConfig` is an optional " +
+			"`//fabrik:provider`; with none it defaults to a zero `jobs.RuntimeConfig`. " +
+			"A binary that only enqueues declares no handlers and hosts no worker.\n\n" +
 			"```go\n//fabrik:job\nfunc SendWelcome(ctx context.Context, m WelcomeEmail) error { ... }\n```",
 		Example: "//fabrik:job",
 		Attrs: []gen.AttrSpec{
@@ -174,7 +178,6 @@ func (j *Jobs) Validate(g *gen.Gen) diag.Diagnostics {
 	if len(j.b.jobs) == 0 && len(j.b.crons) == 0 {
 		return ds
 	}
-	// Cron names are static schedule identities.
 	cronSeen := map[string]token.Position{}
 	for _, cn := range j.b.crons {
 		if cn.name == "" {
@@ -186,15 +189,53 @@ func (j *Jobs) Validate(g *gen.Gen) diag.Diagnostics {
 		}
 		cronSeen[cn.name] = cn.pos
 	}
-	if !j.b.built {
-		ds.Warn(j.b.pos(), "jobs are declared but nothing injects *jobs.Manager, so no handler can run",
-			"start a worker from a command that injects *jobs.Manager: jobs.NewWorker(mgr, ...).Start(ctx)")
-	}
 	// A provider-owned manager would be shadowed by the directive binding.
 	if mgr, ok := g.LookupType(jobsPath, "Manager"); ok && g.HasProviderBinding(types.NewPointer(mgr), "") {
 		ds.Error(j.b.pos(), "an app provider returns *jobs.Manager, but //fabrik:job and //fabrik:cron already build and own the manager",
 			"remove that provider; the store and jobs.Config providers still apply")
 	}
+	return ds
+}
+
+// Finish emits JobWorker when handlers exist; without a RuntimeConfig provider, cron handlers enable scheduling.
+func (j *Jobs) Finish(g *gen.Gen) diag.Diagnostics {
+	b := j.b
+	if len(b.jobs) == 0 && len(b.crons) == 0 {
+		return nil
+	}
+	var ds diag.Diagnostics
+	b.ensure(g)
+	mgr, mds, ok := g.InstancePath(managerPath)
+	ds = append(ds, mds...)
+	if !ok {
+		return ds
+	}
+	jobsImport := g.Import(jobsPath)
+	ctxPkg := g.Import("context")
+	timePkg := g.Import("time")
+	ctx := g.Context()
+
+	cfgExpr := jobsImport + ".RuntimeConfig{}"
+	if len(b.crons) > 0 {
+		cfgExpr = jobsImport + ".RuntimeConfig{RunScheduler: true}"
+	}
+	uses := []string{mgr}
+	if t, ok := g.LookupType(jobsPath, "RuntimeConfig"); ok {
+		if expr, cds, ok := g.Instance(t, ""); ok {
+			ds = append(ds, cds...)
+			cfgExpr = expr
+			uses = append(uses, expr)
+		}
+	}
+
+	g.AddEntrypoint("JobWorker", uses, []string{
+		fmt.Sprintf("drain, err := %s.Run(%s, %s, %s)", jobsImport, ctx, mgr, cfgExpr),
+		"if err != nil {", "return err", "}",
+		fmt.Sprintf("<-%s.Done()", ctx),
+		fmt.Sprintf("drainCtx, cancel := %s.WithTimeout(%s.Background(), 30*%s.Second)", ctxPkg, ctxPkg, timePkg),
+		"defer cancel()",
+		"return drain(drainCtx)",
+	})
 	return ds
 }
 
@@ -329,6 +370,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	}
 
 	mgr := g.Var("jobsManager")
+	g.RecordVarType(mgr, "*"+jobsImport+".Manager")
 
 	g.Node(&gen.Raw{
 		Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: b.pos()}},
@@ -375,7 +417,6 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 		})
 	}
 
-	b.built = true
 	return mgr, ds
 }
 

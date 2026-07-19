@@ -13,7 +13,7 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
-// Phase orders generated statements inside run().
+// Phase orders generated statements within run(): construction first, then hooks.
 type Phase int
 
 const (
@@ -24,10 +24,8 @@ const (
 	PhaseRegister                // register generated behavior onto constructed values
 	PhasePrepare                 // prepare hooks: pre-intake work on registered resources
 	PhaseStart                   // start hooks: start background runtime processes
-	PhaseServe                   // start serving, ending with return
 )
 
-// phaseLabels renders run() section headers in lifecycle order.
 var phaseLabels = []struct {
 	phase Phase
 	label string
@@ -39,10 +37,8 @@ var phaseLabels = []struct {
 	{PhaseRegister, "Register"},
 	{PhasePrepare, "Prepare: after registration, before runtime start"},
 	{PhaseStart, "Start: after prepare, before serving"},
-	{PhaseServe, "Serve"},
 }
 
-// lazyBind materializes a binding on first resolution.
 type lazyBind struct {
 	build   func() (string, diag.Diagnostics)
 	owner   string
@@ -69,21 +65,21 @@ type Gen struct {
 
 	materializing []string // active lazy-bind stack
 
-	envelope    bool
-	envWaits    string
-	envCancel   string
-	envSig      string
-	envSignaled string
+	varTypeExpr map[string]string     // var identifier -> pre-rendered type (explicit)
+	varTypeVal  map[string]types.Type // var identifier -> type, rendered lazily for entrypoint params
+	entrypoints []Entrypoint          // runtime start functions the runner invokes
 }
 
 // New returns an empty Gen.
 func New() *Gen {
 	return &Gen{
-		imports:    map[string]string{},
-		idents:     map[string]bool{},
-		lazyByPath: map[string]*lazyBind{},
-		pathExprs:  map[string]string{},
-		singletons: map[string]string{},
+		imports:     map[string]string{},
+		idents:      map[string]bool{},
+		lazyByPath:  map[string]*lazyBind{},
+		pathExprs:   map[string]string{},
+		singletons:  map[string]string{},
+		varTypeExpr: map[string]string{},
+		varTypeVal:  map[string]types.Type{},
 	}
 }
 
@@ -164,7 +160,57 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
 	}
 	m[name] = expr
+	g.recordVarType(expr, t)
 }
+
+// recordVarType defers type rendering to avoid imports used only by entrypoint parameters.
+func (g *Gen) recordVarType(expr string, t types.Type) {
+	if isIdent(expr) {
+		if _, ok := g.varTypeVal[expr]; !ok {
+			g.varTypeVal[expr] = t
+		}
+	}
+}
+
+// RecordVarType records the type of a variable built outside type-keyed bindings.
+func (g *Gen) RecordVarType(name, typeExpr string) {
+	if _, ok := g.varTypeExpr[name]; !ok {
+		g.varTypeExpr[name] = typeExpr
+	}
+}
+
+func (g *Gen) resolveVarType(name string) (string, bool) {
+	if s, ok := g.varTypeExpr[name]; ok {
+		return s, true
+	}
+	if t, ok := g.varTypeVal[name]; ok {
+		return g.TypeExpr(t), true
+	}
+	return "", false
+}
+
+// Entrypoint describes a runtime function whose Uses become its typed parameters.
+type Entrypoint struct {
+	Name string
+	Uses []string // run() vars the body needs, in parameter order
+	Body []string
+}
+
+// AddEntrypoint registers a runtime start function and deduplicates its parameters.
+func (g *Gen) AddEntrypoint(name string, uses, body []string) {
+	seen := map[string]bool{}
+	dedup := make([]string, 0, len(uses))
+	for _, u := range uses {
+		if !seen[u] {
+			seen[u] = true
+			dedup = append(dedup, u)
+		}
+	}
+	g.entrypoints = append(g.entrypoints, Entrypoint{Name: name, Uses: dedup, Body: body})
+}
+
+// EntrypointCount reports how many runtime start functions are registered.
+func (g *Gen) EntrypointCount() int { return len(g.entrypoints) }
 
 // BindLazy registers a value that is emitted on first resolution.
 func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Diagnostics)) {
@@ -231,9 +277,7 @@ func (g *Gen) HasBindingPath(path string) bool {
 	return ok
 }
 
-// InstancePath resolves a path-keyed lazy binding.
-//
-// Diagnosed path builds are not cached.
+// InstancePath resolves a path-keyed lazy binding without caching diagnosed builds.
 func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
 	if expr, ok := g.pathExprs[path]; ok {
 		return expr, nil, true
@@ -249,7 +293,6 @@ func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
 	g.materializing = append(g.materializing, path)
 	prev := g.current
 	g.current = lb.owner
-	// Restore generation state after panics.
 	defer func() {
 		g.current = prev
 		g.materializing = g.materializing[:len(g.materializing)-1]
@@ -262,7 +305,6 @@ func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
 	return expr, ds, true
 }
 
-// materialize runs a type-keyed lazy binding once.
 func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag.Diagnostics, bool) {
 	// Avoid adding imports while formatting cycle diagnostics.
 	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
@@ -273,7 +315,6 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 	g.materializing = append(g.materializing, key)
 	prev := g.current
 	g.current = lb.owner
-	// Restore generation state after panics.
 	defer func() {
 		g.current = prev
 		g.materializing = g.materializing[:len(g.materializing)-1]
@@ -287,7 +328,6 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 	return expr, ds, true
 }
 
-// typeBound reports whether (t, name) already has a type-keyed bind.
 func (g *Gen) typeBound(t types.Type, name string) bool {
 	m, _ := g.binds.At(types.Unalias(t)).(map[string]string)
 	if m == nil {
@@ -297,7 +337,6 @@ func (g *Gen) typeBound(t types.Type, name string) bool {
 	return ok
 }
 
-// cycleDiag reports the active provider cycle ending at key.
 func (g *Gen) cycleDiag(key string) diag.Diagnostic {
 	chain := g.materializing
 	for i, k := range g.materializing {
@@ -359,12 +398,6 @@ func (g *Gen) HasProviderBinding(t types.Type, name string) bool {
 	return false
 }
 
-// HasSingleton reports whether key has been created.
-func (g *Gen) HasSingleton(key string) bool {
-	_, ok := g.singletons[key]
-	return ok
-}
-
 // Stmt appends a Raw node.
 func (g *Gen) Stmt(phase Phase, format string, a ...any) {
 	g.Node(&Raw{
@@ -373,80 +406,139 @@ func (g *Gen) Stmt(phase Phase, format string, a ...any) {
 	})
 }
 
-// RequireShutdownEnvelope enables signal-driven shutdown and returns the generated drain slice identifier.
-func (g *Gen) RequireShutdownEnvelope() string {
-	if !g.envelope {
-		g.envelope = true
+// Render assembles and formats main.gen.go.
+func (g *Gen) Render() ([]byte, error) {
+	if len(g.entrypoints) > 0 {
 		g.Context()
-		g.envWaits = g.Var("shutdownWaits")
-		g.envCancel = g.Var("cancel")
-		g.envSig = g.Var("sigc")
-		g.envSignaled = g.Var("signaled")
-		// Imports must be registered before Render writes the import block.
+	}
+
+	// Resolve entrypoint parameter types before writing imports because rendering types registers their packages.
+	varType := map[string]string{}
+	for _, e := range g.entrypoints {
+		for _, u := range e.Uses {
+			if _, ok := varType[u]; ok {
+				continue
+			}
+			typ, ok := g.resolveVarType(u)
+			if !ok {
+				return nil, fmt.Errorf("gen: entrypoint var %q has no recorded type", u)
+			}
+			varType[u] = typ
+		}
+	}
+
+	hasEntry := len(g.entrypoints) > 0
+	needsCtx := hasEntry || usesCtx(g.nodes, g.ctxVar)
+
+	// Imports must be registered before the import block is written.
+	ctxPkg := ""
+	if needsCtx {
+		ctxPkg = g.Import("context")
+	}
+	if hasEntry {
 		g.Import("os")
 		g.Import("os/signal")
 		g.Import("syscall")
-		g.Import("sync/atomic")
 		g.Import("errors")
-		g.Import("time")
 	}
-	return g.envWaits
-}
 
-// EnvelopeActive reports whether the shutdown envelope has been required by any runtime.
-func (g *Gen) EnvelopeActive() bool { return g.envelope }
-
-func (g *Gen) writeEnvelope(b *bytes.Buffer) {
-	ctx, ctxp := g.ctxVar, g.ctxPkg
-	osp := g.Import("os")
-	sigp := g.Import("os/signal")
-	sysp := g.Import("syscall")
-	atomicp := g.Import("sync/atomic")
-	errp := g.Import("errors")
-	timep := g.Import("time")
-	fmt.Fprintf(b, "%s, %s := %s.WithCancel(%s.Background())\n", ctx, g.envCancel, ctxp, ctxp)
-	fmt.Fprintf(b, "defer %s()\n\n", g.envCancel)
-	fmt.Fprintf(b, "var %s %s.Bool\n", g.envSignaled, atomicp)
-	fmt.Fprintf(b, "%s := make(chan %s.Signal, 2)\n", g.envSig, osp)
-	fmt.Fprintf(b, "%s.Notify(%s, %s.Interrupt, %s.SIGTERM)\n", sigp, g.envSig, osp, sysp)
-	fmt.Fprintf(b, "defer %s.Stop(%s)\n", sigp, g.envSig)
-	fmt.Fprintf(b, "go func() {\n<-%s\n%s.Store(true)\n%s()\n<-%s\n%s.Exit(1)\n}()\n\n",
-		g.envSig, g.envSignaled, g.envCancel, g.envSig, osp)
-	fmt.Fprintf(b, "var %s []func(%s.Context) error\n", g.envWaits, ctxp)
-	fmt.Fprintf(b, "defer func() {\n%s()\n", g.envCancel)
-	fmt.Fprintf(b, "drainCtx, drainCancel := %s.WithTimeout(%s.Background(), 30*%s.Second)\n", ctxp, ctxp, timep)
-	fmt.Fprintf(b, "defer drainCancel()\n")
-	fmt.Fprintf(b, "var drainErr error\n")
-	fmt.Fprintf(b, "for _, wait := range %s {\nif e := wait(drainCtx); e != nil && drainErr == nil {\ndrainErr = e\n}\n}\n", g.envWaits)
-	fmt.Fprintf(b, "if %s.Load() && %s.Is(err, %s.Canceled) {\nerr = nil\n}\n", g.envSignaled, errp, ctxp)
-	fmt.Fprintf(b, "if err == nil {\nerr = drainErr\n}\n")
-	fmt.Fprintf(b, "}()\n")
-}
-
-// Render assembles and formats main.gen.go.
-func (g *Gen) Render() ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("// Code generated by fabrik. DO NOT EDIT.\n// Regenerate with: fabrik wire\n\npackage main\n\n")
 	g.writeImports(&b)
-	if g.envelope {
+
+	g.writeRun(&b, needsCtx, ctxPkg)
+	for _, e := range g.entrypoints {
+		g.writeEntrypoint(&b, e, varType, ctxPkg)
+	}
+
+	src, err := format.Source(b.Bytes())
+	if err != nil {
+		if directive, text, found := g.findUnparsable(); found {
+			return nil, fmt.Errorf("directive %q emitted an unparsable statement:\n%s", directive, text)
+		}
+		return nil, fmt.Errorf("format generated source: %w\n%s", err, b.String())
+	}
+	return src, nil
+}
+
+func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
+	ctx := g.ctxVar
+	hasEntry := len(g.entrypoints) > 0
+	if hasEntry {
 		b.WriteString("func run() (err error) {\n")
+		osp := g.Import("os")
+		sigp := g.Import("os/signal")
+		sysp := g.Import("syscall")
+		errPkg := g.Import("errors")
+		fmt.Fprintf(b, "%s, cancel := %s.WithCancel(%s.Background())\n", ctx, ctxPkg, ctxPkg)
+		b.WriteString("defer cancel()\n")
+		// Signal-driven cancellation during startup is a clean shutdown.
+		fmt.Fprintf(b, "defer func() {\nif %s.Is(err, %s.Canceled) && %s.Err() != nil {\nerr = nil\n}\n}()\n", errPkg, ctxPkg, ctx)
+		fmt.Fprintf(b, "sigc := make(chan %s.Signal, 2)\n", osp)
+		fmt.Fprintf(b, "%s.Notify(sigc, %s.Interrupt, %s.SIGTERM)\n", sigp, osp, sysp)
+		fmt.Fprintf(b, "defer %s.Stop(sigc)\n", sigp)
+		fmt.Fprintf(b, "go func() {\n<-sigc\ncancel()\n<-sigc\n%s.Exit(1)\n}()\n\n", osp)
 	} else {
 		b.WriteString("func run() error {\n")
+		if needsCtx {
+			fmt.Fprintf(b, "%s := %s.Background()\n", ctx, ctxPkg)
+		}
 	}
-	served := false
+
+	g.emitPhaseNodes(b, g.nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister, PhasePrepare, PhaseStart)
+
+	if hasEntry {
+		g.writeEntrypointRunner(b, ctx, ctxPkg)
+	} else {
+		b.WriteString("return nil\n")
+	}
+	b.WriteString("}\n\n")
+}
+
+// writeEntrypointRunner cancels on the first non-cancellation error and waits for all entrypoints to
+// stop; each bounds its own drain, so the wait needs no timeout.
+func (g *Gen) writeEntrypointRunner(b *bytes.Buffer, ctx, ctxPkg string) {
+	errPkg := g.Import("errors")
+	n := len(g.entrypoints)
+	fmt.Fprintf(b, "\nerrc := make(chan error, %d)\n", n)
+	for _, e := range g.entrypoints {
+		args := append([]string{ctx}, e.Uses...)
+		fmt.Fprintf(b, "go func() { errc <- %s(%s) }()\n", e.Name, strings.Join(args, ", "))
+	}
+	b.WriteString("var result error\n")
+	fmt.Fprintf(b, "for range %d {\n", n)
+	fmt.Fprintf(b, "if e := <-errc; e != nil && !%s.Is(e, %s.Canceled) && result == nil {\n", errPkg, ctxPkg)
+	b.WriteString("result = e\n")
+	b.WriteString("cancel()\n")
+	b.WriteString("}\n}\n")
+	b.WriteString("return result\n")
+}
+
+func (g *Gen) writeEntrypoint(b *bytes.Buffer, e Entrypoint, varType map[string]string, ctxPkg string) {
+	params := []string{g.ctxVar + " " + ctxPkg + ".Context"}
+	for _, u := range e.Uses {
+		params = append(params, u+" "+varType[u])
+	}
+	fmt.Fprintf(b, "func %s(%s) error {\n", e.Name, strings.Join(params, ", "))
+	for _, line := range e.Body {
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("}\n\n")
+}
+
+func (g *Gen) emitPhaseNodes(b *bytes.Buffer, allNodes []Node, phases ...Phase) {
+	want := map[Phase]bool{}
+	for _, p := range phases {
+		want[p] = true
+	}
 	first := true
-	if g.envelope {
-		// The envelope must establish the root context before any phase.
-		g.writeEnvelope(&b)
-		first = false
-	} else if g.ctxNeeded {
-		// Context is emitted before sections so every phase can use it.
-		b.WriteString(g.ctxVar + " := " + g.ctxPkg + ".Background()\n")
-		first = false
-	}
 	for _, pl := range phaseLabels {
+		if !want[pl.phase] {
+			continue
+		}
 		var nodes []phaseNode
-		for i, n := range g.nodes {
+		for i, n := range allNodes {
 			if n.base().Phase == pl.phase {
 				nodes = append(nodes, phaseNode{n: n, emit: i})
 			}
@@ -459,7 +551,6 @@ func (g *Gen) Render() ([]byte, error) {
 		}
 		first = false
 		b.WriteString("// " + pl.label + "\n")
-
 		clusters := layoutPhase(nodes)
 		for ci, cluster := range clusters {
 			if ci > 0 && (spacedCluster(cluster) || spacedCluster(clusters[ci-1])) {
@@ -475,30 +566,20 @@ func (g *Gen) Render() ([]byte, error) {
 				}
 			}
 		}
-		if pl.phase == PhaseServe {
-			served = true
-		}
 	}
-	if !served {
-		if !first {
-			b.WriteString("\n")
-		}
-		if g.envelope {
-			// Without a server, the root context keeps the process alive until shutdown.
-			b.WriteString("<-" + g.ctxVar + ".Done()\n")
-		}
-		b.WriteString("return nil\n")
-	}
-	b.WriteString("}\n")
+}
 
-	src, err := format.Source(b.Bytes())
-	if err != nil {
-		if directive, text, found := g.findUnparsable(); found {
-			return nil, fmt.Errorf("directive %q emitted an unparsable statement:\n%s", directive, text)
-		}
-		return nil, fmt.Errorf("format generated source: %w\n%s", err, b.String())
+func usesCtx(nodes []Node, ctxVar string) bool {
+	if ctxVar == "" {
+		return false
 	}
-	return src, nil
+	filter := map[string]bool{ctxVar: true}
+	for _, n := range nodes {
+		if len(uses(n, filter)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // writeImports renders standard, external, and app imports.
@@ -547,7 +628,6 @@ func (g *Gen) importLine(path string) string {
 	return fmt.Sprintf("%s %q", alias, path)
 }
 
-// findUnparsable locates the first node that fails to parse on its own.
 func (g *Gen) findUnparsable() (directive, text string, found bool) {
 	for _, n := range g.nodes {
 		text := strings.Join(renderNode(n), "\n")

@@ -1,0 +1,24 @@
+Generated code calls a provider as a package-qualified function, so an
+unexported provider is rejected.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+func main() {
+	if err := run(); err != nil {
+		panic(err)
+	}
+}
+-- shared/shared.go --
+package shared
+
+type Thing struct{}
+
+//fabrik:provider
+func newThing() *Thing { return &Thing{} }
+-- want/diags --
+error: shared/shared.go:5:1: //fabrik:provider function newThing must be exported
+  help: capitalize the function name so generated code can call it

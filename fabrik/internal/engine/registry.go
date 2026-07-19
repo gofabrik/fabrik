@@ -26,7 +26,7 @@ func New() []gen.Directive {
 	// Conventional config layers are optional; custom sources belong in providers.
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
-	jobsJob, jobsCron, jobsWorker := jobsdir.New()
+	jobsJob, jobsCron := jobsdir.New()
 	// Registry order is presentation only; lifecycle order comes from Meta.Tier.
 	return []gen.Directive{
 		provider,
@@ -40,14 +40,13 @@ func New() []gen.Directive {
 		routerdir.NewNotFound(),
 		routerdir.NewMethodNotAllowed(),
 		webdir.NewWeb(host),
-		routerdir.NewServe(),
 		tpl,
 		tpldir.NewFuncs(tpl),
 		assetsdir.NewAssets(host, tpl),
 		migdir.NewMigrations(),
 		jobsJob,
 		jobsCron,
-		jobsWorker,
+		routerdir.NewServe(routes),
 		cfg,
 	}
 }
@@ -66,6 +65,9 @@ func DirectivesDoc() string {
 	sort.Slice(directives, func(i, j int) bool { return directives[i].Name() < directives[j].Name() })
 	for _, d := range directives {
 		m := d.Meta()
+		if m.Hidden {
+			continue
+		}
 		fmt.Fprintf(&b, "\n## fabrik:%s\n\n", d.Name())
 		fmt.Fprintf(&b, "%s\n", m.Doc)
 		if len(m.Pos) > 0 {
@@ -88,7 +90,6 @@ func DirectivesDoc() string {
 	return b.String()
 }
 
-// valuesNote renders closed enum values or examples.
 func valuesNote(kind gen.ValueKind, values []string) string {
 	if len(values) == 0 {
 		return ""

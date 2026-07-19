@@ -50,7 +50,6 @@ func (*HTTP) Meta() gen.Meta {
 	}
 }
 
-// mwRef is one middleware= reference to a declared middleware name.
 type mwRef struct {
 	name string
 	pos  token.Position
@@ -78,7 +77,6 @@ func (h *HTTP) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	return &node{args: args, pos: a.Pos}, ds
 }
 
-// parseMWRefs splits middleware= into positioned declared-name references.
 func parseMWRefs(a gen.Annotation, mw gen.Arg) ([]mwRef, diag.Diagnostics) {
 	var refs []mwRef
 	var ds diag.Diagnostics
@@ -160,7 +158,6 @@ func (h *HTTP) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	})
 }
 
-// validMethod reports whether m is a non-empty HTTP method token.
 func validMethod(m string) bool {
 	if m == "" {
 		return false
@@ -176,7 +173,6 @@ func validMethod(m string) bool {
 	return true
 }
 
-// isHandlerSignature reports whether sig is func(http.ResponseWriter, *http.Request).
 func isHandlerSignature(sig *types.Signature) bool {
 	p := sig.Params()
 	return p.Len() == 2 && sig.Results().Len() == 0 && !sig.Variadic() &&
@@ -184,13 +180,15 @@ func isHandlerSignature(sig *types.Signature) bool {
 		types.TypeString(p.At(1).Type(), nil) == "*net/http.Request"
 }
 
-// isGenericFunc reports whether fn has direct or receiver type parameters.
 func isGenericFunc(fn *types.Func) bool {
 	sig := fn.Signature()
 	return sig.TypeParams().Len() > 0 || sig.RecvTypeParams().Len() > 0
 }
 
-// isNamedStruct reports whether t is a named struct or a pointer to one.
+func isErrorType(t types.Type) bool {
+	return types.TypeString(types.Unalias(t), nil) == "error"
+}
+
 func isNamedStruct(t types.Type) bool {
 	n := namedOf(t)
 	if n == nil {
@@ -200,7 +198,6 @@ func isNamedStruct(t types.Type) bool {
 	return ok
 }
 
-// namedOf unwraps t to its named type, through aliases and one pointer.
 func namedOf(t types.Type) *types.Named {
 	t = types.Unalias(t)
 	if p, ok := t.(*types.Pointer); ok {

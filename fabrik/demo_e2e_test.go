@@ -114,9 +114,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	gracefulShutdown(t, server)
 }
 
-// gracefulShutdown sends SIGTERM and requires a clean exit (status 0): it proves the
-// live-signal path (the envelope reacts, Serve returns, run() returns nil, no panic or
-// hang), not in-flight draining (that is jobs' TestRun_WorkerDrainsInflightOnCancel).
+// gracefulShutdown requires SIGTERM to produce a clean exit within the generated grace period.
 func gracefulShutdown(t *testing.T, server *exec.Cmd) {
 	t.Helper()
 	if err := server.Process.Signal(syscall.SIGTERM); err != nil {
@@ -196,27 +194,21 @@ func crossOriginFlow(t *testing.T, port string) {
 		return resp.StatusCode
 	}
 
-	// A cross-origin unsafe request is rejected before it reaches the handler.
 	if code := post("https://evil.example", "mallory"); code != http.StatusForbidden {
 		t.Fatalf("cross-origin POST /greet must be 403, got %d", code)
 	}
-	// The rejected POST never ran, so it changed no session state.
 	if body := crossOriginGet(t, client, base+"/", ""); strings.Contains(body, "Goodbye, mallory!") {
 		t.Fatalf("rejected cross-origin POST must not rename the session:\n%s", body)
 	}
-	// A request without an Origin header (same-origin / non-browser) is allowed.
 	if code := post("", "sameorigin"); code != http.StatusOK {
 		t.Fatalf("same-origin POST /greet must be 200, got %d", code)
 	}
-	// A configured trusted origin is allowed.
 	if code := post("https://trusted.example", "zoe"); code != http.StatusOK {
 		t.Fatalf("trusted-origin POST /greet must be 200, got %d", code)
 	}
-	// The allowed POST reached the handler and saved the session name.
 	if body := crossOriginGet(t, client, base+"/", ""); !strings.Contains(body, "Goodbye, zoe!") {
 		t.Fatalf("GET / should reflect the trusted POST's saved name:\n%s", body)
 	}
-	// A safe method is always allowed, even cross-origin, and cannot rename.
 	if body := crossOriginGet(t, client, base+"/?name=hacker", "https://evil.example"); !strings.Contains(body, "Goodbye, zoe!") {
 		t.Fatalf("cross-origin GET must be allowed but must not rename the session:\n%s", body)
 	}
@@ -231,7 +223,6 @@ func formsFlow(t *testing.T, port string) {
 	}
 	client := &http.Client{Jar: jar}
 
-	// GET /greet renders the name form.
 	if body := crossOriginGet(t, client, base+"/greet", ""); !strings.Contains(body, `name="name"`) {
 		t.Fatalf("GET /greet should render the name form:\n%s", body)
 	}
@@ -246,18 +237,15 @@ func formsFlow(t *testing.T, port string) {
 		return resp.StatusCode, string(b)
 	}
 
-	// A blank name re-renders (no redirect) with the "is required" error.
 	if code, b := post(""); code != http.StatusOK || !strings.Contains(b, "is required") {
 		t.Fatalf("blank name should re-render with 'is required', got %d:\n%s", code, b)
 	}
 
-	// A too-long name re-renders with the length error and repopulates the raw input.
 	long := strings.Repeat("x", 21)
 	if code, b := post(long); code != http.StatusOK || !strings.Contains(b, "at most 20 characters") || !strings.Contains(b, `value="`+long+`"`) {
 		t.Fatalf("21-char name should re-render with the length error and repopulate, got %d:\n%s", code, b)
 	}
 
-	// A valid name PRG-redirects with a 303 to /, then the greeting updates.
 	noFollow := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := noFollow.PostForm(base+"/greet", url.Values{"name": {"alice"}})
 	if err != nil {
@@ -293,7 +281,6 @@ func crossOriginGet(t *testing.T, client *http.Client, url, origin string) strin
 	return string(b)
 }
 
-// postGreet renames via POST /greet and follows the PRG redirect, returning the page.
 func postGreet(t *testing.T, client *http.Client, base, name string) string {
 	t.Helper()
 	resp, err := client.PostForm(base+"/greet", url.Values{"name": {name}})

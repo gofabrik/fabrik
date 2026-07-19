@@ -58,6 +58,6 @@ error: web/web.go:20:15: HTTP method "get" must be uppercase (methods are case-s
 error: web/web.go:23:19: //fabrik:provider takes no arguments (got "xyz")
   help: example: //fabrik:provider
 error: web/web.go:26:1: empty directive after "fabrik:"
-  help: expected one of: assets, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:server, http:static, job, jobs:worker, migrations, provider, provider:select, templates, templates:func, web
+  help: expected one of: assets, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, job, migrations, provider, provider:select, templates, templates:func, web
 error: web/web.go:29:1: handler Unknown has the wrong signature
   help: want func(ctx context.Context, deps..., msg T) error

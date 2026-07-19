@@ -50,13 +50,9 @@ package shared
 
 import "net/http"
 
-type Server struct {
-	Config *Config
-}
-
-//fabrik:http:server
-func (s *Server) Serve(h http.Handler) error {
-	return http.ListenAndServe(s.Config.Addr, h)
+//fabrik:provider
+func NewServer(cfg *Config) *http.Server {
+	return &http.Server{Addr: cfg.Addr}
 }
 -- shared/middleware.go --
 package shared
@@ -214,9 +210,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
@@ -230,8 +231,23 @@ import (
 	"app/web"
 )
 
-func run() error {
-	ctx := context.Background()
+func run() (err error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer func() {
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			err = nil
+		}
+	}()
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	go func() {
+		<-sigc
+		cancel()
+		<-sigc
+		os.Exit(1)
+	}()
 
 	// Config
 	sharedConfig, err := config.Load[shared.Config](
@@ -270,6 +286,7 @@ func run() error {
 	}
 
 	// Providers
+	sharedHttpServer := shared.NewServer(sharedConfig)
 	migrationSources := migrations.Sources{
 		{Stream: "store", FS: store.Migrations, Dir: "migrations"},
 	}
@@ -335,10 +352,6 @@ func run() error {
 
 	r := router.New()
 
-	sharedServer := &shared.Server{
-		Config: sharedConfig,
-	}
-
 	// Middleware
 	r.Use(shared.Recovered)
 
@@ -361,6 +374,38 @@ func run() error {
 		return err
 	}
 
-	// Serve
-	return sharedServer.Serve(r)
+	errc := make(chan error, 1)
+	go func() { errc <- HTTPServer(ctx, r, sharedHttpServer) }()
+	var result error
+	for range 1 {
+		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
+			result = e
+			cancel()
+		}
+	}
+	return result
+}
+
+func HTTPServer(ctx context.Context, r *router.Router, sharedHttpServer *http.Server) error {
+	srv := sharedHttpServer
+	srv.Handler = r
+	errc := make(chan error, 1)
+	go func() {
+		if srv.TLSConfig != nil {
+			errc <- srv.ListenAndServeTLS("", "")
+		} else {
+			errc <- srv.ListenAndServe()
+		}
+	}()
+	select {
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return srv.Shutdown(shutdownCtx)
 }

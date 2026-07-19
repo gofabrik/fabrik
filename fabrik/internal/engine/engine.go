@@ -12,16 +12,14 @@ import (
 	"github.com/gofabrik/fabrik/gen"
 )
 
-// Result of a generation run. Src is nil when the diagnostics contain a
-// fatal error.
+// Result contains generated source and diagnostics; Src is nil after a fatal diagnostic.
 type Result struct {
 	Src     []byte
 	MainDir string
 	Diags   diag.Diagnostics
 }
 
-// Wire generates main.gen.go for the module rooted at dir.
-// Overlay contents replace on-disk files during loading.
+// Wire generates main.gen.go for the module rooted at dir, applying overlays in place of on-disk files.
 func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	res, err := load.Load(dir, overlay)
 	if err != nil {
@@ -45,8 +43,7 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 
 	directives := New()
 	if len(overlay) > 0 {
-		// Directives that validate non-Go files must see overlay
-		// contents the way package loading does.
+		// Non-Go validation must use the same overlays as package loading.
 		for _, d := range directives {
 			if t, ok := d.(interface{ SetTreeFS(func(string) fs.FS) }); ok {
 				t.SetTreeFS(func(dir string) fs.FS { return overlayDirFS{dir: dir, overlay: overlay} })
@@ -166,11 +163,14 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	return &Result{Src: src, MainDir: res.MainDir, Diags: diags}, nil
 }
 
-// registryIndex maps directives by name and returns sorted names for diagnostics.
 func registryIndex(directives []gen.Directive) (map[string]gen.Directive, []string) {
 	byName := map[string]gen.Directive{}
 	names := make([]string, 0, len(directives))
 	for _, d := range directives {
+		if d.Meta().Hidden {
+			// Hidden finishers are not user directives, so their names remain unknown.
+			continue
+		}
 		byName[d.Name()] = d
 		names = append(names, d.Name())
 	}
@@ -178,7 +178,6 @@ func registryIndex(directives []gen.Directive) (map[string]gen.Directive, []stri
 	return byName, names
 }
 
-// unknownDirectiveDiag reports an unresolvable directive name.
 func unknownDirectiveDiag(ann gen.Annotation, names []string) diag.Diagnostic {
 	if ann.Name == "" {
 		return diag.Diagnostic{Severity: diag.SevError, Pos: ann.Pos,

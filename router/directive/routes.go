@@ -13,7 +13,7 @@ import (
 // routeTable tracks registrations and delegates conflicts to http.ServeMux.
 type routeTable struct {
 	seen    map[string]token.Position
-	order   []string // deterministic conflict search
+	order   []string // declaration order for deterministic conflict diagnostics
 	scratch *http.ServeMux
 }
 
@@ -22,7 +22,10 @@ func NewRouteTable() *routeTable {
 	return &routeTable{seen: map[string]token.Position{}, scratch: http.NewServeMux()}
 }
 
-// add registers a method pattern or path pattern.
+// HasRoutes reports whether any route was registered (not just a router created
+// by middleware or a miss handler).
+func (rt *routeTable) HasRoutes() bool { return len(rt.seen) > 0 }
+
 func (rt *routeTable) add(key string, pos token.Position) (diag.Diagnostic, bool) {
 	if first, dup := rt.seen[key]; dup {
 		return diag.Diagnostic{Severity: diag.SevError, Pos: pos,
@@ -38,7 +41,6 @@ func (rt *routeTable) add(key string, pos token.Position) (diag.Diagnostic, bool
 	return diag.Diagnostic{}, true
 }
 
-// registers reports whether the pattern registers without conflicting.
 func registers(mux *http.ServeMux, pattern string) (ok bool) {
 	defer func() {
 		if recover() != nil {
@@ -72,7 +74,6 @@ func (rt *routeTable) conflictDiag(key string, pos token.Position) diag.Diagnost
 	}
 }
 
-// effectiveRoute applies the receiver group's prefix and middleware refs.
 func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []mwRef) (string, []mwRef) {
 	var refs []mwRef
 	if recvObj != nil {
@@ -84,8 +85,6 @@ func effectiveRoute(groups *Group, recvObj *types.TypeName, path string, own []m
 	return path, append(refs, own...)
 }
 
-// handlerExpr returns the expression for a handler: pkg.Func for a plain
-// function, or instance.Method through the wired receiver struct.
 func handlerExpr(g *gen.Gen, recv types.Type, pkg *types.Package, fn string, fset *token.FileSet) (string, diag.Diagnostics) {
 	if recv == nil {
 		return g.ImportPkg(pkg) + "." + fn, nil
@@ -94,7 +93,6 @@ func handlerExpr(g *gen.Gen, recv types.Type, pkg *types.Package, fn string, fse
 	return inst + "." + fn, ds
 }
 
-// receiverPtr normalizes a receiver type to its pointer form.
 func receiverPtr(recv types.Type) types.Type {
 	t := types.Unalias(recv)
 	if _, ok := t.(*types.Pointer); !ok {
@@ -113,7 +111,6 @@ func prepareReceiver(g *gen.Gen, recv types.Type, fset *token.FileSet) {
 	registerRouterFieldBinding(g, t)
 }
 
-// registerRouterFieldBinding makes *router.Router injectable.
 func registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 	n := namedOf(t)
 	if n == nil {
