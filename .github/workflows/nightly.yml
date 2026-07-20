@@ -1,0 +1,138 @@
+name: Nightly checks
+
+# Scheduled checks are report-only and run for every module.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.list.outputs.modules }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - id: list
+        name: Module list from go.work plus the tools module
+        run: |
+          set -euo pipefail
+          modules=$(go work edit -json | jq -c '[.Use[].DiskPath] + ["./internal/tools"]')
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.discover.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - id: prep
+        name: Per-module setup
+        run: |
+          set -euo pipefail
+          slug=$(printf '%s' '${{ matrix.module }}' | sed 's#^\./##; s#/#-#g')
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          # The marker preserves evidence that the module job ran even if no check produces output.
+          echo ran > "$GITHUB_WORKSPACE/out/ran"
+          # internal/tools is outside the workspace and requires GOWORK=off.
+          if [ '${{ matrix.module }}' = './internal/tools' ]; then
+            echo "GOWORK=off" >> "$GITHUB_ENV"
+          fi
+      - id: lint
+        name: golangci-lint (lint, static analysis, formatting)
+        continue-on-error: true
+        uses: golangci/golangci-lint-action@d583c34f0599d37dbac4a198b9c83201be380893 # v9.3.0
+        with:
+          version: v2.12.2
+          working-directory: ${{ matrix.module }}
+          args: --issues-exit-code=0 --output.json.path=${{ github.workspace }}/out/lint.json --output.text.path=${{ github.workspace }}/out/lint.txt
+      - name: Record lint outcome
+        if: always()
+        run: printf '%s' '${{ steps.lint.outcome }}' > "$GITHUB_WORKSPACE/out/lint.outcome"
+      - name: govulncheck
+        continue-on-error: true
+        working-directory: ${{ matrix.module }}
+        run: |
+          set +e
+          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -json ./... \
+            > "$GITHUB_WORKSPACE/out/vuln.json" 2> "$GITHUB_WORKSPACE/out/vuln.err"
+          echo $? > "$GITHUB_WORKSPACE/out/vuln.exit"
+      - name: go test
+        continue-on-error: true
+        working-directory: ${{ matrix.module }}
+        run: |
+          set +e
+          go test -json ./... > "$GITHUB_WORKSPACE/out/test.json" 2> "$GITHUB_WORKSPACE/out/test.err"
+          echo $? > "$GITHUB_WORKSPACE/out/test.exit"
+      - name: go mod tidy drift
+        continue-on-error: true
+        working-directory: ${{ matrix.module }}
+        run: |
+          set +e
+          go mod tidy -diff > "$GITHUB_WORKSPACE/out/tidy.txt" 2> "$GITHUB_WORKSPACE/out/tidy.err"
+          echo $? > "$GITHUB_WORKSPACE/out/tidy.exit"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.prep.outputs.slug }}
+          path: out/
+
+  report:
+    needs: [discover, checks]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+      - id: fresh
+        name: Dependency freshness (workspace + tools)
+        run: |
+          set +e
+          go list -m -u -json all > freshness.json 2> freshness.err
+          a=$?
+          (cd internal/tools && GOWORK=off go list -m -u -json all) >> freshness.json 2>> freshness.err
+          b=$?
+          code=0
+          [ "$a" -ne 0 ] && code=$a
+          [ "$b" -ne 0 ] && code=$b
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+      - name: Generate report
+        run: |
+          set -euo pipefail
+          modules=$(printf '%s' '${{ needs.discover.outputs.modules }}' | jq -r 'join(",")')
+          GOWORK=off go -C internal/tools run ./cmd/nightly-report \
+            -artifacts "$GITHUB_WORKSPACE/artifacts" \
+            -modules "$modules" \
+            -freshness "$GITHUB_WORKSPACE/freshness.json" \
+            -freshness-exit "${{ steps.fresh.outputs.exit }}" \
+            -toolchain "$(go version | awk '{print $3}')" \
+            -tools "golangci-lint v2.12.2, govulncheck v1.1.4" \
+            -date "$(date -u +%Y-%m-%d)" \
+            | tee "$GITHUB_STEP_SUMMARY" > report.md
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-report
+          path: |
+            report.md
+            freshness.json
+            freshness.err
