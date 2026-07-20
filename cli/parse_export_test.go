@@ -16,8 +16,6 @@ func TestParseResult_ExportedAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var _ *cli.ParseResult = res // the result type is exported
-
 	if res.Command() != serve {
 		t.Errorf("Command(): resolved wrong command")
 	}

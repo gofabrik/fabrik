@@ -320,7 +320,7 @@ func loadStreams(sources Sources) ([]stream, error) {
 	streams := make([]stream, 0, len(sources))
 	for i, src := range sources {
 		if src.FS == nil {
-			return nil, fmt.Errorf("Sources[%d] (stream %q): nil FS: %w", i, src.Stream, ErrInvalidSource)
+			return nil, fmt.Errorf("nil FS in Sources[%d] (stream %q): %w", i, src.Stream, ErrInvalidSource)
 		}
 		if err := validateCleanRel(src.Dir); err != nil {
 			return nil, fmt.Errorf("Sources[%d].Dir: %v: %w", i, err, ErrInvalidSource)
@@ -435,7 +435,7 @@ func loadApplied(ctx context.Context, q querier) (map[appliedKey]appliedRow, err
 	if err != nil {
 		return nil, fmt.Errorf("query schema_migrations: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only query cleanup; rows.Err reports iteration errors
 
 	applied := map[appliedKey]appliedRow{}
 	for rows.Next() {

@@ -66,8 +66,6 @@ type node struct {
 	returnsErr bool
 	params     []param
 	fset       *token.FileSet
-	iface      types.Type
-	grp        *selGroup
 	built      bool
 }
 

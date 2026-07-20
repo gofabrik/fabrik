@@ -23,8 +23,6 @@ func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Hand
 	return m.Middleware
 }
 
-// NoStore disables client caching.
-//
 //fabrik:http:middleware name=nocache
 func NoStore(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

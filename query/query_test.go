@@ -328,9 +328,11 @@ func (e *fakeExecutor) ExecContext(_ context.Context, q string, args ...any) (sq
 	e.args = append(e.args, args)
 	return fakeResult{lastID: e.lastID}, nil
 }
+
 func (e *fakeExecutor) QueryContext(_ context.Context, _ string, _ ...any) (*sql.Rows, error) {
 	return nil, errors.New("fakeExecutor: QueryContext unused")
 }
+
 func (e *fakeExecutor) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row {
 	return nil
 }
@@ -763,9 +765,11 @@ type erroringExecutor struct{ err error }
 func (e *erroringExecutor) ExecContext(_ context.Context, _ string, _ ...any) (sql.Result, error) {
 	return nil, e.err
 }
+
 func (e *erroringExecutor) QueryContext(_ context.Context, _ string, _ ...any) (*sql.Rows, error) {
 	return nil, e.err
 }
+
 func (e *erroringExecutor) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row {
 	return nil
 }

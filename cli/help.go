@@ -7,6 +7,21 @@ import (
 	"strings"
 )
 
+func writeHelp(w io.Writer, args ...any) {
+	//nolint:errcheck // Help rendering is best-effort and its void API has no error channel.
+	fmt.Fprint(w, args...)
+}
+
+func writeHelpLine(w io.Writer, args ...any) {
+	//nolint:errcheck // Help rendering is best-effort and its void API has no error channel.
+	fmt.Fprintln(w, args...)
+}
+
+func writeHelpf(w io.Writer, format string, args ...any) {
+	//nolint:errcheck // Help rendering is best-effort and its void API has no error channel.
+	fmt.Fprintf(w, format, args...)
+}
+
 // renderHelp renders the final command in path with every inherited flag in known.
 func renderHelp(w io.Writer, path []*Command, known []AnyFlag) {
 	info := detectTermInfo(w)
@@ -23,22 +38,22 @@ func renderHelp(w io.Writer, path []*Command, known []AnyFlag) {
 	for _, a := range cmd.Args {
 		usage += " " + renderArgSlot(a)
 	}
-	fmt.Fprintln(w, info.bold("Usage:"))
-	fmt.Fprintln(w, "  "+usage)
-	fmt.Fprintln(w)
+	writeHelpLine(w, info.bold("Usage:"))
+	writeHelpLine(w, "  "+usage)
+	writeHelpLine(w)
 
 	if cmd.Long != "" {
-		fmt.Fprintln(w, cmd.Long)
-		fmt.Fprintln(w)
+		writeHelpLine(w, cmd.Long)
+		writeHelpLine(w)
 	} else if cmd.Help != "" {
-		fmt.Fprintln(w, cmd.Help)
-		fmt.Fprintln(w)
+		writeHelpLine(w, cmd.Help)
+		writeHelpLine(w)
 	}
 
 	if len(cmd.Args) > 0 {
-		fmt.Fprintln(w, info.bold("Arguments:"))
+		writeHelpLine(w, info.bold("Arguments:"))
 		renderArgs(w, info, cmd.Args)
-		fmt.Fprintln(w)
+		writeHelpLine(w)
 	}
 
 	if hasVisibleFlags(known) {
@@ -46,20 +61,20 @@ func renderHelp(w io.Writer, path []*Command, known []AnyFlag) {
 	}
 
 	if hasVisibleSubcommands(cmd.Subcommands) {
-		fmt.Fprintln(w, info.bold("Commands:"))
+		writeHelpLine(w, info.bold("Commands:"))
 		renderSubcommands(w, cmd.Subcommands)
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "Use \"%s <command> --help\" for more information about a command.\n", names)
-		fmt.Fprintln(w)
+		writeHelpLine(w)
+		writeHelpf(w, "Use \"%s <command> --help\" for more information about a command.\n", names)
+		writeHelpLine(w)
 	}
 
 	if len(cmd.Examples) > 0 {
-		fmt.Fprintln(w, info.bold("Examples:"))
+		writeHelpLine(w, info.bold("Examples:"))
 		for _, ex := range cmd.Examples {
 			if ex.Help != "" {
-				fmt.Fprintf(w, "  # %s\n", ex.Help)
+				writeHelpf(w, "  # %s\n", ex.Help)
 			}
-			fmt.Fprintf(w, "  %s\n\n", ex.Cmd)
+			writeHelpf(w, "  %s\n\n", ex.Cmd)
 		}
 	}
 }
@@ -119,9 +134,9 @@ func renderFlags(w io.Writer, info termInfo, flags []AnyFlag) {
 			continue
 		}
 		if g == "" {
-			fmt.Fprintln(w, info.bold("Flags:"))
+			writeHelpLine(w, info.bold("Flags:"))
 		} else {
-			fmt.Fprintln(w, info.bold(g+":"))
+			writeHelpLine(w, info.bold(g+":"))
 		}
 		sort.SliceStable(fs, func(i, j int) bool {
 			return fs[i].flagName() < fs[j].flagName()
@@ -140,7 +155,7 @@ func renderFlags(w io.Writer, info termInfo, flags []AnyFlag) {
 			prefix := fmt.Sprintf("  %-*s  ", colWidth, left[i])
 			printWrapped(w, prefix, info.width, right)
 		}
-		fmt.Fprintln(w)
+		writeHelpLine(w)
 	}
 }
 
@@ -198,7 +213,7 @@ func renderSubcommands(w io.Writer, subs []*Command) {
 		return visible[i].Name < visible[j].Name
 	})
 	for _, s := range visible {
-		fmt.Fprintf(w, "  %-*s  %s\n", width, s.Name, s.Help)
+		writeHelpf(w, "  %-*s  %s\n", width, s.Name, s.Help)
 	}
 }
 
@@ -227,28 +242,28 @@ func printWrapped(w io.Writer, prefix string, width int, text string) {
 		avail = 20
 	}
 	if text == "" {
-		fmt.Fprintln(w, prefix)
+		writeHelpLine(w, prefix)
 		return
 	}
 	words := strings.Fields(text)
 	if len(words) == 0 {
-		fmt.Fprintln(w, prefix)
+		writeHelpLine(w, prefix)
 		return
 	}
 	indent := strings.Repeat(" ", len(prefix))
-	fmt.Fprint(w, prefix)
+	writeHelp(w, prefix)
 	line := ""
 	for _, word := range words {
 		switch {
 		case line == "":
 			line = word
 		case len(line)+1+len(word) > avail:
-			fmt.Fprintln(w, line)
-			fmt.Fprint(w, indent)
+			writeHelpLine(w, line)
+			writeHelp(w, indent)
 			line = word
 		default:
 			line += " " + word
 		}
 	}
-	fmt.Fprintln(w, line)
+	writeHelpLine(w, line)
 }

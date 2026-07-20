@@ -63,7 +63,7 @@ func (f *Formatter) paint(code, s string) string {
 func (f *Formatter) srcLine(filename string, num int) string {
 	lines, ok := f.src[filename]
 	if !ok {
-		data, err := os.ReadFile(filename)
+		data, err := os.ReadFile(filename) // #nosec G304 -- reads an app/workspace-selected path
 		if err != nil {
 			return ""
 		}
@@ -88,16 +88,17 @@ func (f *Formatter) relPath(p string) string {
 }
 
 // Emit writes a single diagnostic.
-func (f *Formatter) Emit(d diag.Diagnostic) {
+func (f *Formatter) Emit(d diag.Diagnostic) error {
+	w := &errorWriter{out: f.out}
 	label, labelColor := "error", ansiBoldRed
 	if d.Severity == diag.SevWarning {
 		label, labelColor = "warning", ansiBoldYellow
 	}
-	fmt.Fprintf(f.out, "%s: %s\n",
+	w.printf("%s: %s\n",
 		f.paint(labelColor, label),
 		f.paint(ansiBold, d.Message))
 
-	fmt.Fprintf(f.out, "  %s %s:%d:%d\n",
+	w.printf("  %s %s:%d:%d\n",
 		f.paint(ansiBoldBlue, "-->"),
 		f.relPath(d.Pos.Filename), d.Pos.Line, d.Pos.Column)
 
@@ -107,8 +108,8 @@ func (f *Formatter) Emit(d diag.Diagnostic) {
 		pad := strings.Repeat(" ", len(lineNum))
 		bar := f.paint(ansiBoldBlue, "|")
 
-		fmt.Fprintf(f.out, "  %s %s\n", pad, bar)
-		fmt.Fprintf(f.out, "  %s %s %s\n", f.paint(ansiBoldBlue, lineNum), bar, src)
+		w.printf("  %s %s\n", pad, bar)
+		w.printf("  %s %s %s\n", f.paint(ansiBoldBlue, lineNum), bar, src)
 
 		col := d.Pos.Column - 1
 		if col < 0 {
@@ -117,40 +118,55 @@ func (f *Formatter) Emit(d diag.Diagnostic) {
 		caretLen := caretSpanLen(src, col)
 		indent := strings.Repeat(" ", col)
 		carets := strings.Repeat("^", caretLen)
-		fmt.Fprintf(f.out, "  %s %s %s%s\n", pad, bar, indent, f.paint(labelColor, carets))
+		w.printf("  %s %s %s%s\n", pad, bar, indent, f.paint(labelColor, carets))
 
 		if d.Help != "" {
-			fmt.Fprintf(f.out, "  %s %s\n", pad, bar)
-			fmt.Fprintf(f.out, "  %s %s %s: %s\n",
+			w.printf("  %s %s\n", pad, bar)
+			w.printf("  %s %s %s: %s\n",
 				pad,
 				f.paint(ansiBoldBlue, "="),
 				f.paint(ansiBold, "help"),
 				d.Help)
 		}
 	} else if d.Help != "" {
-		fmt.Fprintf(f.out, "  %s %s: %s\n",
+		w.printf("  %s %s: %s\n",
 			f.paint(ansiBoldBlue, "="),
 			f.paint(ansiBold, "help"),
 			d.Help)
 	}
 
-	fmt.Fprintln(f.out)
+	w.printf("\n")
+	return w.err
 }
 
 // Summary writes a trailing one-line summary of the emitted counts.
-func (f *Formatter) Summary(errs, warns int) {
+func (f *Formatter) Summary(errs, warns int) error {
+	w := &errorWriter{out: f.out}
 	switch {
 	case errs > 0:
 		parts := []string{count(errs, "error", "errors")}
 		if warns > 0 {
 			parts = append(parts, count(warns, "warning", "warnings"))
 		}
-		fmt.Fprintf(f.out, "%s: aborting due to %s\n",
+		w.printf("%s: aborting due to %s\n",
 			f.paint(ansiBoldRed, "error"), joinWithAnd(parts))
 	case warns > 0:
-		fmt.Fprintf(f.out, "%s: %s emitted\n",
+		w.printf("%s: %s emitted\n",
 			f.paint(ansiBoldYellow, "warning"), count(warns, "warning", "warnings"))
 	}
+	return w.err
+}
+
+type errorWriter struct {
+	out io.Writer
+	err error
+}
+
+func (w *errorWriter) printf(format string, args ...any) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = fmt.Fprintf(w.out, format, args...)
 }
 
 func count(n int, singular, plural string) string {

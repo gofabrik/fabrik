@@ -91,7 +91,7 @@ func stripHashSegment(rel string) string {
 func isHex(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if !(('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return false
 		}
 	}

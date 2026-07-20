@@ -132,7 +132,7 @@ func (s *SQLiteStore) Insert(ctx context.Context, now time.Time, jobs []Job) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 	out, err := insertTx(ctx, tx, now, jobs)
 	if err != nil {
 		return nil, err
@@ -282,8 +282,9 @@ func (s *SQLiteStore) Claim(ctx context.Context, req ClaimRequest) ([]ClaimedJob
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 
+	// #nosec G202 -- query text contains only fixed SQL and generated placeholders; values remain bound arguments
 	rows, err := tx.QueryContext(ctx, b.String(), args...)
 	if err != nil {
 		return nil, err
@@ -292,12 +293,14 @@ func (s *SQLiteStore) Claim(ctx context.Context, req ClaimRequest) ([]ClaimedJob
 	for rows.Next() {
 		_, cj, err := scanJob(rows)
 		if err != nil {
-			rows.Close()
+			// #nosec G104 -- read-only row cleanup; the scan error is returned
+			rows.Close() //nolint:errcheck // read-only row cleanup; the scan error is returned
 			return nil, err
 		}
 		cands = append(cands, cj)
 	}
-	rows.Close()
+	// #nosec G104 -- read-only row cleanup; iteration errors are checked via rows.Err
+	rows.Close() //nolint:errcheck // read-only row cleanup; iteration errors are checked via rows.Err
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -362,7 +365,7 @@ func (s *SQLiteStore) Complete(ctx context.Context, jobID, workerID string, now 
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 
 	var state, uniqueKey, kind, handler string
 	var cancelReq int
@@ -433,7 +436,7 @@ func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) (int, err
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 
 	rows, err := tx.QueryContext(ctx,
 		"SELECT id, attempt, max_attempts, locked_by, locked_until, cancel_requested FROM jobs WHERE state='running' AND locked_until>0 AND locked_until<=?",
@@ -452,12 +455,14 @@ func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) (int, err
 	for rows.Next() {
 		var e expired
 		if err := rows.Scan(&e.id, &e.attempt, &e.maxAtt, &e.lockedBy, &e.lockedUntil, &e.cancelRequested); err != nil {
-			rows.Close()
+			// #nosec G104 -- read-only row cleanup; the scan error is returned
+			rows.Close() //nolint:errcheck // read-only row cleanup; the scan error is returned
 			return 0, err
 		}
 		list = append(list, e)
 	}
-	rows.Close()
+	// #nosec G104 -- read-only row cleanup; iteration errors are checked via rows.Err
+	rows.Close() //nolint:errcheck // read-only row cleanup; iteration errors are checked via rows.Err
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
@@ -501,6 +506,7 @@ VALUES (?,?,?,?,?,?,?,?)`,
 }
 
 func (s *SQLiteStore) Get(ctx context.Context, id string) (*JobInfo, error) {
+	// #nosec G202 -- jobCols is a fixed internal column list, not user data
 	info, _, err := scanJob(s.db.QueryRowContext(ctx, "SELECT "+jobCols+" FROM jobs WHERE id=?", id))
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
@@ -546,11 +552,12 @@ func (s *SQLiteStore) List(ctx context.Context, f ListFilter) ([]JobInfo, string
 	b.WriteString(" ORDER BY created_at ASC, id ASC LIMIT ?")
 	args = append(args, limit+1)
 
+	// #nosec G202 -- query text contains only fixed SQL and generated placeholders; values remain bound arguments
 	rows, err := s.db.QueryContext(ctx, b.String(), args...)
 	if err != nil {
 		return nil, "", err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only row cleanup; query errors are returned separately
 	var out []JobInfo
 	for rows.Next() {
 		info, _, err := scanJob(rows)
@@ -578,7 +585,7 @@ func (s *SQLiteStore) ListAttempts(ctx context.Context, jobID string, afterAttem
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only row cleanup; query errors are returned separately
 	var out []Attempt
 	for rows.Next() {
 		var a Attempt
@@ -600,7 +607,7 @@ func (s *SQLiteStore) Retry(ctx context.Context, jobID string, now time.Time) er
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 
 	var state, uniqueKey, kind, handler string
 	var attempt, maxAtt int
@@ -658,7 +665,7 @@ func (s *SQLiteStore) Cancel(ctx context.Context, jobID string, now time.Time) (
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 	// Guarded writes handle concurrent state changes before the final read.
 	res, err := tx.ExecContext(ctx,
 		"UPDATE jobs SET state='cancelled', updated_at=? WHERE id=? AND state IN ('pending','available')",
@@ -694,7 +701,7 @@ func (s *SQLiteStore) Delete(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 	// Delete refuses running rows.
 	res, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE id=? AND state<>'running'", jobID)
 	if err != nil {
@@ -733,7 +740,7 @@ func (s *SQLiteStore) ListWorkers(ctx context.Context) ([]WorkerRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only row cleanup; query errors are returned separately
 	var out []WorkerRow
 	for rows.Next() {
 		var w WorkerRow
@@ -766,7 +773,7 @@ func (s *SQLiteStore) ListQueues(ctx context.Context) ([]QueueInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only row cleanup; query errors are returned separately
 	byName := map[string]map[State]int{}
 	var order []string
 	for rows.Next() {
@@ -796,7 +803,7 @@ func (s *SQLiteStore) UpsertSchedule(ctx context.Context, row ScheduleRow) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 
 	var prevSpec string
 	var prevNext int64
@@ -847,7 +854,7 @@ func (s *SQLiteStore) querySchedules(ctx context.Context, query string, args ...
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only row cleanup; query errors are returned separately
 	var out []ScheduleRow
 	for rows.Next() {
 		var r ScheduleRow
@@ -872,7 +879,7 @@ func (s *SQLiteStore) FireSchedule(ctx context.Context, f ScheduleFire) (bool, [
 	if err != nil {
 		return false, nil, err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
 
 	// CAS on last_run_at elects one scheduler per tick.
 	var expected any

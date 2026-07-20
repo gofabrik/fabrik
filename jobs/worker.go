@@ -219,6 +219,7 @@ func (w *Worker) shutdownDrainCtx() (context.Context, context.CancelFunc) {
 		cancel() // already-expired: cancel in-flight immediately
 		return c, func() {}
 	}
+	// #nosec G118 -- the caller receives and owns the shutdown cancellation function
 	return context.WithTimeout(context.Background(), w.cfg.ShutdownTimeout)
 }
 
@@ -270,6 +271,7 @@ func (w *Worker) tryClaim(ctx context.Context) {
 		rs := &runState{}
 		w.active.Store(row.ID, rs)
 		w.wg.Add(1)
+		// #nosec G118 -- claimed jobs use worker-managed cancellation independent of the polling context
 		go w.run(row, rs)
 	}
 }

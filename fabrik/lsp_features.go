@@ -146,7 +146,7 @@ func sourceFor(path string, texts map[string]string) string {
 	if t, ok := texts[path]; ok {
 		return t
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- reads an app/workspace-selected path
 	if err != nil {
 		return ""
 	}
@@ -326,7 +326,8 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 
 	seen := map[string]bool{}
 	var out []completionItem
-	filepath.WalkDir(root, func(path string, d iofs.DirEntry, err error) error {
+	//nolint:errcheck // completion discovery is best-effort and returns partial results
+	filepath.WalkDir(root, func(path string, d iofs.DirEntry, err error) error { // #nosec G104 -- completion discovery is best-effort and returns partial results
 		if err != nil {
 			return nil
 		}

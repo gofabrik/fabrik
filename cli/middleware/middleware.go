@@ -18,6 +18,7 @@ func Recover() cli.Middleware {
 		return func(ctx cli.Context) (err error) {
 			defer func() {
 				if r := recover(); r != nil {
+					//nolint:errcheck // Preserve the recovered panic as the handler error; stack output is best-effort.
 					fmt.Fprintln(ctx.Stderr(), string(debug.Stack()))
 					err = fmt.Errorf("panic: %v", r)
 				}
@@ -36,7 +37,7 @@ func Timeout(d time.Duration) cli.Middleware {
 			}
 			withDeadline, cancel := context.WithTimeout(ctx, d)
 			defer cancel()
-			return next(wrapCtx(ctx, withDeadline))
+			return next(wrapCtx(withDeadline, ctx))
 		}
 	}
 }
@@ -71,8 +72,10 @@ func Logging() cli.Middleware {
 				path += p
 			}
 			if err != nil {
+				//nolint:errcheck // Logging must preserve the wrapped handler's error instead of replacing it with a stderr failure.
 				fmt.Fprintf(ctx.Stderr(), "%s took %s (err: %v)\n", path, time.Since(start), err)
 			} else {
+				//nolint:errcheck // Logging has no error result to preserve when its best-effort stderr write fails.
 				fmt.Fprintf(ctx.Stderr(), "%s took %s\n", path, time.Since(start))
 			}
 			return err
@@ -81,7 +84,7 @@ func Logging() cli.Middleware {
 }
 
 // wrapCtx replaces the embedded [context.Context] while preserving CLI streams and command path.
-func wrapCtx(outer cli.Context, inner context.Context) cli.Context {
+func wrapCtx(inner context.Context, outer cli.Context) cli.Context {
 	return &derivedContext{Context: inner, parent: outer}
 }
 

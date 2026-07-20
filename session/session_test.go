@@ -17,6 +17,7 @@ func serve(t *testing.T, m *Manager[appSession], sid string, handler func(w http
 	t.Helper()
 	req := httptest.NewRequest("GET", "/", nil)
 	if sid != "" {
+		// #nosec G124 -- cookie attributes are caller-configurable
 		req.AddCookie(&http.Cookie{Name: "sid", Value: sid})
 	}
 	rr := httptest.NewRecorder()
@@ -44,9 +45,11 @@ type plainStore struct{ inner Store }
 func (p plainStore) Load(ctx context.Context, sid string) (Record, error) {
 	return p.inner.Load(ctx, sid)
 }
+
 func (p plainStore) Save(ctx context.Context, rec Record) (Record, error) {
 	return p.inner.Save(ctx, rec)
 }
+
 func (p plainStore) Delete(ctx context.Context, sid string) error {
 	return p.inner.Delete(ctx, sid)
 }

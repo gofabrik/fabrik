@@ -36,6 +36,7 @@ func openPG(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	schema := fmt.Sprintf("migtest_%d", time.Now().UnixNano())
+	// #nosec G202 -- generated test schema identifier, not user input
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +49,12 @@ func openPG(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		db.Close()
+		// #nosec G104 -- test database cleanup cannot affect an earlier assertion
+		db.Close() //nolint:errcheck // test database cleanup cannot affect an earlier assertion
+		// #nosec G202 -- generated test schema identifier, not user input
 		_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE")
-		admin.Close()
+		// #nosec G104 -- test administrator cleanup cannot affect an earlier assertion
+		admin.Close() //nolint:errcheck // test administrator cleanup cannot affect an earlier assertion
 	})
 	return db
 }

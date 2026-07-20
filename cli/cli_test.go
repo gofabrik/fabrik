@@ -41,8 +41,8 @@ func TestFlag_LongAndShort(t *testing.T) {
 		Name:  "myapp",
 		Flags: Flags(port, verbose),
 		Run: func(ctx Context) error {
-			fmt.Fprintf(ctx.Stdout(), "port=%d verbose=%v\n", port.Get(ctx), verbose.Get(ctx))
-			return nil
+			_, err := fmt.Fprintf(ctx.Stdout(), "port=%d verbose=%v\n", port.Get(ctx), verbose.Get(ctx))
+			return err
 		},
 	}
 
@@ -111,8 +111,8 @@ func TestFlag_Env(t *testing.T) {
 		Name:  "myapp",
 		Flags: Flags(port),
 		Run: func(ctx Context) error {
-			fmt.Fprintf(ctx.Stdout(), "port=%d\n", port.Get(ctx))
-			return nil
+			_, err := fmt.Fprintf(ctx.Stdout(), "port=%d\n", port.Get(ctx))
+			return err
 		},
 	}
 	_, stdout, _ := exec(t, root, []string{}, withEnv(envOf(map[string]string{"PORT": "7777"})))
@@ -170,8 +170,8 @@ func TestFlag_Slice(t *testing.T) {
 		Name:  "myapp",
 		Flags: Flags(items),
 		Run: func(ctx Context) error {
-			fmt.Fprintln(ctx.Stdout(), strings.Join(items.Get(ctx), ","))
-			return nil
+			_, err := fmt.Fprintln(ctx.Stdout(), strings.Join(items.Get(ctx), ","))
+			return err
 		},
 	}
 	_, stdout, _ := exec(t, root, []string{"--item", "a", "--item", "b", "--item=c"})
@@ -187,11 +187,11 @@ func TestFlag_Lookup_DistinguishesExplicitFromDefault(t *testing.T) {
 		Flags: Flags(to),
 		Run: func(ctx Context) error {
 			if _, set := to.Lookup(ctx); set {
-				fmt.Fprintln(ctx.Stdout(), "set")
-			} else {
-				fmt.Fprintln(ctx.Stdout(), "default")
+				_, err := fmt.Fprintln(ctx.Stdout(), "set")
+				return err
 			}
-			return nil
+			_, err := fmt.Fprintln(ctx.Stdout(), "default")
+			return err
 		},
 	}
 	_, stdout, _ := exec(t, root, []string{})
@@ -281,8 +281,8 @@ func TestArgs_RequiredAndVariadic(t *testing.T) {
 		Name: "ssh",
 		Args: Args(host, extra),
 		Run: func(ctx Context) error {
-			fmt.Fprintf(ctx.Stdout(), "host=%s extra=%v\n", host.Get(ctx), extra.Get(ctx))
-			return nil
+			_, err := fmt.Fprintf(ctx.Stdout(), "host=%s extra=%v\n", host.Get(ctx), extra.Get(ctx))
+			return err
 		},
 	}
 
@@ -334,8 +334,8 @@ func TestArg_OneOf(t *testing.T) {
 		Name: "myapp",
 		Args: Args(mode),
 		Run: func(ctx Context) error {
-			fmt.Fprintln(ctx.Stdout(), mode.Get(ctx))
-			return nil
+			_, err := fmt.Fprintln(ctx.Stdout(), mode.Get(ctx))
+			return err
 		},
 	}
 	if code, stdout, _ := exec(t, root, []string{"staging"}); code != 0 || strings.TrimSpace(stdout) != "staging" {
@@ -409,8 +409,8 @@ func TestArgs_SliceMustBeVariadic(t *testing.T) {
 		Name: "good",
 		Args: Args(rest),
 		Run: func(ctx Context) error {
-			fmt.Fprintln(ctx.Stdout(), strings.Join(rest.Get(ctx), ","))
-			return nil
+			_, err := fmt.Fprintln(ctx.Stdout(), strings.Join(rest.Get(ctx), ","))
+			return err
 		},
 	}
 	if code, stdout, _ := exec(t, good, []string{"a", "b", "c"}); code != 0 || strings.TrimSpace(stdout) != "a,b,c" {
@@ -683,6 +683,7 @@ func TestExec_CustomOnError(t *testing.T) {
 	}
 	code, _, stderr := exec(t, root, []string{},
 		OnError(func(ctx Context, err error) int {
+			//nolint:errcheck // The error renderer must return an exit code and has no channel for a stderr write failure.
 			fmt.Fprintf(ctx.Stderr(), "CUSTOM:%s", err)
 			return 42
 		}),

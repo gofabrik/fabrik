@@ -37,7 +37,7 @@ func TestRealDriverErrorTypesClassify(t *testing.T) {
 	}
 	for _, c := range cases {
 		wrapped := fmt.Errorf("exec: %w", c.err)
-		var probe error = wrapped
+		probe := wrapped
 		got := classifyProbe(t, probe)
 		if !errors.Is(got, c.want) {
 			t.Errorf("classify(%T %v) = %v, want %v", c.err, c.err, got, c.want)
@@ -50,6 +50,7 @@ type errExec struct{ err error }
 func (e *errExec) ExecContext(context.Context, string, ...any) (sql.Result, error) {
 	return nil, e.err
 }
+
 func (e *errExec) QueryContext(context.Context, string, ...any) (*sql.Rows, error) {
 	return nil, e.err
 }
@@ -84,9 +85,11 @@ func openPG(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		db.Close()
+		// #nosec G104 -- test database Close is cleanup
+		db.Close() //nolint:errcheck // test database Close is cleanup
 		_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE")
-		admin.Close()
+		// #nosec G104 -- test admin connection Close is cleanup
+		admin.Close() //nolint:errcheck // test admin connection Close is cleanup
 	})
 	return db
 }

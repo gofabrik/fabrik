@@ -61,7 +61,7 @@ func TestPlanFires(t *testing.T) {
 func TestScheduleEveryEndToEnd(t *testing.T) {
 	m := schedManager(t, NewMemoryStore())
 	var runs atomic.Int32
-	Handle[Email](m, "email", func(Context, Email) error { runs.Add(1); return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { runs.Add(1); return nil }))
 	if err := m.Schedule("poll", Every(20*time.Millisecond), Email{To: "x"}, ScheduleOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestScheduleEveryEndToEnd(t *testing.T) {
 
 func TestScheduleRequiresHandler(t *testing.T) {
 	m := schedManager(t, NewMemoryStore())
-	Register[Email](m, "email")
+	requireNoError(t, Register[Email](m, "email"))
 	if err := m.Schedule("poll", Every(time.Second), Email{}, ScheduleOptions{}); err == nil {
 		t.Fatal("want error scheduling a kind with no handler")
 	}
@@ -86,7 +86,7 @@ func TestScheduleRequiresHandler(t *testing.T) {
 func TestScheduleRejectsInvalidOptions(t *testing.T) {
 	store := NewMemoryStore()
 	m := schedManager(t, store)
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	cases := map[string]ScheduleOptions{
 		"bad queue":     {Queue: "no spaces!"},
 		"neg attempts":  {MaxAttempts: -1},
@@ -110,7 +110,7 @@ func TestScheduleRejectsInvalidOptions(t *testing.T) {
 
 func TestScheduleDuplicateName(t *testing.T) {
 	m := schedManager(t, NewMemoryStore())
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	if err := m.Schedule("poll", Every(time.Minute), Email{}, ScheduleOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestCronAndScheduleShareNameConflict(t *testing.T) {
 	if err := RegisterCron(m, "purge", "0 4 * * *", noop); !errors.Is(err, ErrScheduleAlreadyDeclared) {
 		t.Fatalf("duplicate cron name: got %v, want ErrScheduleAlreadyDeclared", err)
 	}
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	if err := m.Schedule("purge", Every(time.Minute), Email{}, ScheduleOptions{}); !errors.Is(err, ErrScheduleAlreadyDeclared) {
 		t.Fatalf("schedule reusing a cron name: got %v, want ErrScheduleAlreadyDeclared", err)
 	}
@@ -137,16 +137,16 @@ func TestCronAndScheduleShareNameConflict(t *testing.T) {
 func TestReconcileDeletesOrphan(t *testing.T) {
 	store := NewMemoryStore()
 	old := schedManager(t, store)
-	Handle[Email](old, "email", func(Context, Email) error { return nil })
-	old.Schedule("a", Every(time.Minute), Email{}, ScheduleOptions{})
-	old.Schedule("b", Every(time.Minute), Email{}, ScheduleOptions{})
+	requireNoError(t, Handle[Email](old, "email", func(Context, Email) error { return nil }))
+	requireNoError(t, old.Schedule("a", Every(time.Minute), Email{}, ScheduleOptions{}))
+	requireNoError(t, old.Schedule("b", Every(time.Minute), Email{}, ScheduleOptions{}))
 	if err := old.ReconcileSchedules(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	fresh := schedManager(t, store)
-	Handle[Email](fresh, "email", func(Context, Email) error { return nil })
-	fresh.Schedule("a", Every(time.Minute), Email{}, ScheduleOptions{})
+	requireNoError(t, Handle[Email](fresh, "email", func(Context, Email) error { return nil }))
+	requireNoError(t, fresh.Schedule("a", Every(time.Minute), Email{}, ScheduleOptions{}))
 	if err := fresh.ReconcileSchedules(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -159,9 +159,9 @@ func TestReconcileDeletesOrphan(t *testing.T) {
 func TestFireScheduleCASNullFirst(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Now().UTC()
-	store.UpsertSchedule(context.Background(), ScheduleRow{
+	requireNoError(t, store.UpsertSchedule(context.Background(), ScheduleRow{
 		Name: "s", Kind: "email", Spec: "every:1000", NextRunAt: now, UpdatedAt: now,
-	})
+	}))
 	job := Job{Kind: "email", HandlerID: "email", Payload: []byte(`{}`), Queue: "default", MaxAttempts: 1, AvailableAt: now}
 
 	won, res, err := store.FireSchedule(context.Background(), ScheduleFire{
@@ -199,11 +199,13 @@ func TestRegisterCron(t *testing.T) {
 		t.Fatalf("schedule: %+v", rows)
 	}
 	runWorker(t, m, WorkerConfig{})
-	store.Insert(context.Background(), time.Now().UTC(), []Job{{
+	if _, err := store.Insert(context.Background(), time.Now().UTC(), []Job{{
 		Kind: "cron:purge", HandlerID: "purge", Payload: []byte("{}"),
 		Queue: "default", MaxAttempts: 1, AvailableAt: time.Now(),
-	}})
-	eventually(t, func() bool { return ran.Load() }, "cron function ran")
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, ran.Load, "cron function ran")
 }
 
 func TestSingletonCollapsesCatchUp(t *testing.T) {

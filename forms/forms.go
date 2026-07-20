@@ -109,7 +109,7 @@ func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
 // requestValues parses non-JSON submissions.
 func requestValues(r *http.Request, cfg config) (url.Values, error) {
 	if mediaType(r) == "multipart/form-data" {
-		if err := r.ParseMultipartForm(cfg.maxMemory); err != nil {
+		if err := r.ParseMultipartForm(cfg.maxMemory); err != nil { // #nosec G120 -- input is length-bounded above
 			return nil, parseErr(err)
 		}
 		if r.MultipartForm != nil {

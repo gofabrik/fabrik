@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/fabrik/internal/diagfmt"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
 )
@@ -40,25 +41,31 @@ func generate(dir string) (src []byte, out string, err error) {
 	res, err := engine.Wire(dir, nil)
 	if err != nil {
 		if res != nil && len(res.Diags) > 0 {
-			f := diagfmt.NewFormatter(os.Stderr)
-			for _, d := range res.Diags {
-				f.Emit(d)
+			if writeErr := emitDiagnostics(res.Diags); writeErr != nil {
+				return nil, "", writeErr
 			}
-			f.Summary(res.Diags.Counts())
 		}
 		return nil, "", err
 	}
 	if len(res.Diags) > 0 {
-		f := diagfmt.NewFormatter(os.Stderr)
-		for _, d := range res.Diags {
-			f.Emit(d)
+		if err := emitDiagnostics(res.Diags); err != nil {
+			return nil, "", err
 		}
-		f.Summary(res.Diags.Counts())
 		if res.Diags.HasFatal() {
 			return nil, "", errSilent
 		}
 	}
 	return res.Src, filepath.Join(res.MainDir, "main.gen.go"), nil
+}
+
+func emitDiagnostics(diags diag.Diagnostics) error {
+	f := diagfmt.NewFormatter(os.Stderr)
+	for _, d := range diags {
+		if err := f.Emit(d); err != nil {
+			return err
+		}
+	}
+	return f.Summary(diags.Counts())
 }
 
 // wire writes main.gen.go and returns the main package directory.
@@ -67,7 +74,7 @@ func wire(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(out, src, 0o644); err != nil {
+	if err := os.WriteFile(out, src, 0o644); err != nil { // #nosec G306 -- generated Go source is intentionally readable
 		return "", err
 	}
 	if rel, rerr := filepath.Rel(dir, out); rerr == nil {
@@ -93,7 +100,7 @@ func wireCheck(dir string) error {
 	if err != nil {
 		return err
 	}
-	disk, err := os.ReadFile(out)
+	disk, err := os.ReadFile(out) // #nosec G304 -- reads an app/workspace-selected path
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "fabrik: %s does not exist; run fabrik wire\n", out)

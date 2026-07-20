@@ -1,6 +1,7 @@
 package web
 
 import (
+	"demo/shared"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,8 +16,6 @@ import (
 	"github.com/gofabrik/fabrik/session"
 	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
-
-	"demo/shared"
 )
 
 var started = time.Now()
@@ -97,7 +96,8 @@ type API struct {
 
 //fabrik:http GET /greet/{name}
 func (a *API) Greet(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(a.Greeter.Greet(r.PathValue("name"))))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(a.Greeter.Greet(r.PathValue("name")))) // #nosec G705 -- served as text/plain (Content-Type above), so not interpreted as HTML
 }
 
 // GreetInput is the greeting-name form.
@@ -166,6 +166,6 @@ func (d *Docs) List(w http.ResponseWriter, r *http.Request) {
 		if method == "" {
 			method = "ANY"
 		}
-		fmt.Fprintf(w, "%s %s\n", method, rt.Pattern)
+		fmt.Fprintf(w, "%s %s\n", method, rt.Pattern) //nolint:errcheck // response write; nothing to do on client disconnect
 	}
 }

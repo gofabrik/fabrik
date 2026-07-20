@@ -73,7 +73,7 @@ func BoolFlag(name string) *Flag[bool] {
 	return &Flag[bool]{
 		name:   name,
 		isBool: true,
-		parse:  func(s string) (bool, error) { return strconv.ParseBool(s) },
+		parse:  strconv.ParseBool,
 	}
 }
 
@@ -81,7 +81,7 @@ func BoolFlag(name string) *Flag[bool] {
 func DurationFlag(name string) *Flag[time.Duration] {
 	return &Flag[time.Duration]{
 		name:  name,
-		parse: func(s string) (time.Duration, error) { return time.ParseDuration(s) },
+		parse: time.ParseDuration,
 	}
 }
 

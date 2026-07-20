@@ -11,20 +11,22 @@ import (
 )
 
 //fabrik:cli:command
-func ConfigCommand(cfg *Config, db *Database) *cli.Command {
+func ConfigCommand(cfg *HTTPConfig, db *DatabaseConfig) *cli.Command {
 	return &cli.Command{
 		Name: "config",
 		Help: "Print the resolved configuration",
 		Run: func(ctx cli.Context) error {
-			fmt.Fprintf(ctx.Stdout(), "http addr: %s\n", cfg.Addr)
-			fmt.Fprintf(ctx.Stdout(), "database:  %s\n", db.Path)
+			if _, err := fmt.Fprintf(ctx.Stdout(), "http addr: %s\n", cfg.Addr); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(ctx.Stdout(), "database:  %s\n", db.Path); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
 }
 
-// RunCommand returns a command that runs the HTTP server and jobs worker together.
-//
 //fabrik:cli:command
 func RunCommand(server *httpserver.Server, worker *jobs.Runner) *cli.Command {
 	return &cli.Command{

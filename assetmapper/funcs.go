@@ -38,7 +38,7 @@ func FuncMap(m *Mapper, im *Importmap) template.FuncMap {
 			if err != nil {
 				return "", err
 			}
-			return template.HTML(s), nil
+			return template.HTML(s), nil // #nosec G203 -- output produced by the context-escaping importmap renderer
 		},
 		"importmap_nonce": func(nonce string, entrypoints ...string) (template.HTML, error) {
 			s, err := im.RenderWithOptions(m, RenderOptions{
@@ -48,14 +48,14 @@ func FuncMap(m *Mapper, im *Importmap) template.FuncMap {
 			if err != nil {
 				return "", err
 			}
-			return template.HTML(s), nil
+			return template.HTML(s), nil // #nosec G203 -- output produced by the context-escaping importmap renderer
 		},
 		"module_preload_links": func(entrypoints ...string) (template.HTML, error) {
 			s, err := im.ModulePreloadLinks(m, entrypoints...)
 			if err != nil {
 				return "", err
 			}
-			return template.HTML(s), nil
+			return template.HTML(s), nil // #nosec G203 -- output produced by the context-escaping importmap renderer
 		},
 		"module_preload_links_nonce": func(nonce string, entrypoints ...string) (template.HTML, error) {
 			s, err := im.ModulePreloadLinksWithOptions(m, RenderOptions{
@@ -65,7 +65,7 @@ func FuncMap(m *Mapper, im *Importmap) template.FuncMap {
 			if err != nil {
 				return "", err
 			}
-			return template.HTML(s), nil
+			return template.HTML(s), nil // #nosec G203 -- output produced by the context-escaping importmap renderer
 		},
 	}
 }

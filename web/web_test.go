@@ -186,6 +186,7 @@ func TestRedirectSeeOther(t *testing.T) {
 
 func TestCookieAccessors(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
+	// #nosec G124 -- cookie attributes are caller-configurable
 	r.AddCookie(&http.Cookie{Name: "session", Value: "tok"})
 	req := webRequest(t, r)
 	if v, ok := req.Cookie("session"); !ok || v != "tok" {
@@ -229,7 +230,9 @@ type failAfterCommit struct{}
 
 func (failAfterCommit) Respond(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("partial"))
+	if _, err := w.Write([]byte("partial")); err != nil {
+		return err
+	}
 	return errors.New("stream broke")
 }
 
@@ -283,12 +286,14 @@ func TestCommitWriterForwardsFlush(t *testing.T) {
 type flusher struct{}
 
 func (flusher) Respond(w http.ResponseWriter, r *http.Request) error {
-	w.Write([]byte("chunk"))
-	if f, ok := w.(http.Flusher); !ok {
-		return errors.New("writer lost http.Flusher")
-	} else {
-		f.Flush()
+	if _, err := w.Write([]byte("chunk")); err != nil {
+		return err
 	}
+	f, ok := w.(http.Flusher)
+	if !ok {
+		return errors.New("writer lost http.Flusher")
+	}
+	f.Flush()
 	return nil
 }
 
@@ -365,6 +370,7 @@ func TestStripRestoresMiddlewareOwnedState(t *testing.T) {
 	})
 	// Middleware outside Wrap owns response state of its own.
 	outer := func(w http.ResponseWriter, r *http.Request) {
+		// #nosec G124 -- cookie attributes are caller-configurable
 		http.SetCookie(w, &http.Cookie{Name: "refresh", Value: "kept"})
 		w.Header().Set("X-Kind", "middleware")
 		inner(w, r)

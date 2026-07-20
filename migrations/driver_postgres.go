@@ -11,6 +11,7 @@ import (
 // pgAdvisoryLockKey is stable across releases.
 var pgAdvisoryLockKey = func() int64 {
 	h := fnv.New64a()
+	// #nosec G104 -- hash.Hash.Write never errors
 	h.Write([]byte("fabrik/migrations"))
 	return int64(h.Sum64())
 }()
@@ -37,7 +38,7 @@ func (pgDriver) tableExists(ctx context.Context, q querier) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("probe schema_migrations: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only query cleanup; rows.Err reports iteration errors
 	if !rows.Next() {
 		return false, rows.Err()
 	}
@@ -54,7 +55,8 @@ func (pgDriver) openSession(ctx context.Context, db *sql.DB) (session, error) {
 		return nil, fmt.Errorf("acquire connection: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", pgAdvisoryLockKey); err != nil {
-		conn.Close()
+		// #nosec G104 -- connection cleanup after the primary advisory-lock error
+		conn.Close() //nolint:errcheck // cleanup failure does not replace the advisory-lock error
 		return nil, fmt.Errorf("acquire pg advisory lock: %w", err)
 	}
 	return &pgSession{c: conn}, nil
@@ -78,7 +80,7 @@ func (s *pgSession) apply(ctx context.Context, stream string, m migration, inser
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // best-effort cleanup; commit or the operation error determines the result
 	// Argument-free Exec uses the simple query protocol.
 	if _, err := tx.ExecContext(ctx, m.body); err != nil {
 		return err

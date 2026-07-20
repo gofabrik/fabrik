@@ -3,7 +3,7 @@ package shared
 import "github.com/gofabrik/fabrik/config"
 
 //fabrik:config http
-type Config struct {
+type HTTPConfig struct {
 	Addr string `yaml:"addr" env:"DEMO_HTTP_ADDR" default:":8080"`
 }
 
@@ -14,16 +14,16 @@ type JobsConfig struct {
 }
 
 //fabrik:config database
-type Database struct {
+type DatabaseConfig struct {
 	Path string `yaml:"path" env:"DEMO_DATABASE_PATH" default:"demo.db"`
 }
 
 //fabrik:config log
-type Log struct {
+type LogConfig struct {
 	Level string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
 }
 
 //fabrik:config crossorigin
-type CrossOrigin struct {
+type CrossOriginConfig struct {
 	TrustedOrigins []string `yaml:"trusted_origins" env:"DEMO_CROSSORIGIN_TRUSTED_ORIGINS"`
 }

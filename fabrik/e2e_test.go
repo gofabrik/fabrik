@@ -63,18 +63,18 @@ func TestEndToEnd(t *testing.T) {
 
 	// Resolve router imports through the checkout under test.
 	gomod := filepath.Join(dir, "go.mod")
-	mod, err := os.ReadFile(gomod)
+	mod, err := os.ReadFile(gomod) // #nosec G304 -- reads a test-controlled temporary path
 	if err != nil {
 		t.Fatal(err)
 	}
 	mod = append(mod, []byte(fmt.Sprintf(
 		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assetmapper v0.0.0\n\tgithub.com/gofabrik/fabrik/cli v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/httpserver v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/templates v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assetmapper => %s\n\tgithub.com/gofabrik/fabrik/cli => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/httpserver => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/templates => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
 		assetsDir, cliDir, configDir, httpserverDir, routerDir, templateDir, webDir))...)
-	if err := os.WriteFile(gomod, mod, 0o644); err != nil {
+	if err := os.WriteFile(gomod, mod, 0o600); err != nil { // #nosec G703 -- trusted test workspace path
 		t.Fatal(err)
 	}
 	// Populate transitive sums from the local cache.
-	tidy := exec.Command("go", "mod", "tidy")
+	tidy := exec.Command("go", "mod", "tidy") // #nosec G204 -- launches the go toolchain with controlled args
 	tidy.Dir = dir
 	if out, err := tidy.CombinedOutput(); err != nil {
 		t.Fatalf("go mod tidy after pinning: %v\n%s", err, out)
@@ -89,7 +89,7 @@ func TestEndToEnd(t *testing.T) {
 	// modules (e.g. yaml.v3's kr/text) that the offline cache lacks - those
 	// are not build deps. This does not assert the tidy is clean; the build
 	// below is the gate on missing build deps.
-	tidy = exec.Command("go", "mod", "tidy", "-e")
+	tidy = exec.Command("go", "mod", "tidy", "-e") // #nosec G204 -- launches the go toolchain with controlled args
 	tidy.Dir = dir
 	if out, err := tidy.CombinedOutput(); err != nil {
 		t.Fatalf("go mod tidy after wire: %v\n%s", err, out)
@@ -99,7 +99,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	bin := filepath.Join(dir, "hello-bin")
-	build := exec.Command("go", "build", "-o", bin, ".")
+	build := exec.Command("go", "build", "-o", bin, ".") // #nosec G204 -- launches the go toolchain with controlled args
 	build.Dir = dir
 	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -107,21 +107,23 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	port := freePort(t)
-	server := exec.Command(bin, "run")
+	server := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
 	server.Dir = dir
 	server.Env = append(os.Environ(), "HELLO_HTTP_ADDR=:"+port)
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer server.Process.Kill()
+	//nolint:errcheck // best-effort test process cleanup
+	defer server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
 
 	url := fmt.Sprintf("http://localhost:%s/?name=e2e", port)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		resp, err := http.Get(url)
+		resp, err := http.Get(url) // #nosec G107 -- test requests a loopback URL constructed above
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			//nolint:errcheck // response body close after reading is cleanup only
+			resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 			got := string(body)
 			// The scaffold renders through the template set: the page
 			// carries the greeting and the shout helper's title.
@@ -151,7 +153,8 @@ func checkAsset(t *testing.T, port, page string) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", m, err)
 	}
-	defer resp.Body.Close()
+	//nolint:errcheck // response body close after reading is cleanup only
+	defer resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s: status %d", m, resp.StatusCode)
 	}
@@ -165,7 +168,8 @@ func freePort(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	//nolint:errcheck // listener close is test cleanup
+	defer l.Close() // #nosec G104 -- listener close is test cleanup
 	_, port, err := net.SplitHostPort(l.Addr().String())
 	if err != nil {
 		t.Fatal(err)

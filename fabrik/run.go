@@ -26,7 +26,7 @@ func runCmd(args []string) error {
 	}
 
 	goArgs := append([]string{"run", mainPackageArg(abs, mainDir)}, passthrough...)
-	cmd := exec.Command("go", goArgs...)
+	cmd := exec.Command("go", goArgs...) // #nosec G204 G702 -- launches the go toolchain with controlled args and no shell
 	cmd.Dir = abs
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

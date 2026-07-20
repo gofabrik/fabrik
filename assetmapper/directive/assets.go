@@ -55,7 +55,7 @@ func NewAssets(host *routerdir.Host, funcs FuncContributor) *Assets {
 	return &Assets{
 		host:   host,
 		funcs:  funcs,
-		treeFS: func(dir string) fs.FS { return os.DirFS(dir) },
+		treeFS: os.DirFS,
 	}
 }
 

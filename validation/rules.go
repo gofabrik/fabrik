@@ -96,7 +96,7 @@ func Pattern(re *regexp.Regexp) Rule[string] {
 // Min requires value >= n. NaN fails.
 func Min[T cmp.Ordered](n T) Rule[T] {
 	return func(v T) error {
-		if v != v { // NaN
+		if v != v { //nolint:gocritic // v != v is an intentional NaN check
 			return errors.New("must be a valid number")
 		}
 		if v < n {
@@ -109,7 +109,7 @@ func Min[T cmp.Ordered](n T) Rule[T] {
 // Max requires value <= n. NaN fails.
 func Max[T cmp.Ordered](n T) Rule[T] {
 	return func(v T) error {
-		if v != v { // NaN
+		if v != v { //nolint:gocritic // v != v is an intentional NaN check
 			return errors.New("must be a valid number")
 		}
 		if v > n {

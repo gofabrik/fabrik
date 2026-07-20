@@ -107,7 +107,7 @@ func relSlash(root, dir string) (string, error) {
 }
 
 func git(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) // #nosec G204 -- launches git with controlled args, no shell
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err

@@ -40,7 +40,7 @@ func Compile(srcRoots []Root, publicDir string, opts ...BuildOption) (*Manifest,
 		return nil, fmt.Errorf("assetmapper.Compile: %w", err)
 	}
 
-	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+	if err := os.MkdirAll(publicDir, 0o755); err != nil { // #nosec G301 -- served asset, world-readable by design
 		return nil, fmt.Errorf("assetmapper.Compile: create publicDir: %w", err)
 	}
 
@@ -80,7 +80,7 @@ func Compile(srcRoots []Root, publicDir string, opts ...BuildOption) (*Manifest,
 			return nil, cerr
 		}
 		dst := filepath.Join(publicDir, filepath.FromSlash(hashed))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil { // #nosec G301 -- served asset, world-readable by design
 			_ = os.Remove(tmpPath)
 			return nil, fmt.Errorf("assetmapper.Compile: mkdir for %s: %w", logical, err)
 		}
@@ -144,10 +144,10 @@ func Compile(srcRoots []Root, publicDir string, opts ...BuildOption) (*Manifest,
 		hashedNames[logical] = hashed
 
 		dst := filepath.Join(publicDir, filepath.FromSlash(hashed))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil { // #nosec G301 -- served asset, world-readable by design
 			return nil, fmt.Errorf("assetmapper.Compile: mkdir for %s: %w", logical, err)
 		}
-		if err := os.WriteFile(dst, rewritten, 0o644); err != nil {
+		if err := os.WriteFile(dst, rewritten, 0o644); err != nil { // #nosec G306 -- served asset, world-readable by design
 			return nil, fmt.Errorf("assetmapper.Compile: write %s: %w", dst, err)
 		}
 	}
@@ -247,7 +247,7 @@ func streamHashWrite(srcFS fs.FS, srcPath, publicDir string) (hash, tmpPath stri
 		_ = os.Remove(tmpName)
 		return "", "", err
 	}
-	defer src.Close()
+	defer src.Close() //nolint:errcheck // read-only source close cannot affect the completed copy
 
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(tmp, h), src); err != nil {

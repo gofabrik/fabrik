@@ -57,28 +57,38 @@ func (r *Request) SetHeader(key, value string) {
 type CookieOption func(*http.Cookie)
 
 // CookieSecure marks the cookie Secure.
-func CookieSecure() CookieOption { return func(c *http.Cookie) { c.Secure = true } }
+func CookieSecure() CookieOption {
+	// #nosec G124 -- cookie attributes are caller-configurable
+	return func(c *http.Cookie) { c.Secure = true }
+}
 
 // CookieHTTPOnly marks the cookie HttpOnly.
-func CookieHTTPOnly() CookieOption { return func(c *http.Cookie) { c.HttpOnly = true } }
+func CookieHTTPOnly() CookieOption {
+	// #nosec G124 -- cookie attributes are caller-configurable
+	return func(c *http.Cookie) { c.HttpOnly = true }
+}
 
 // CookieMaxAge sets the cookie lifetime.
 func CookieMaxAge(d time.Duration) CookieOption {
+	// #nosec G124 -- cookie attributes are caller-configurable
 	return func(c *http.Cookie) { c.MaxAge = int(d.Seconds()) }
 }
 
 // CookiePath overrides the default "/" path.
 func CookiePath(path string) CookieOption {
+	// #nosec G124 -- cookie attributes are caller-configurable
 	return func(c *http.Cookie) { c.Path = path }
 }
 
 // CookieSameSite sets the SameSite mode.
 func CookieSameSite(mode http.SameSite) CookieOption {
+	// #nosec G124 -- cookie attributes are caller-configurable
 	return func(c *http.Cookie) { c.SameSite = mode }
 }
 
 // SetCookie records a response cookie.
 func (r *Request) SetCookie(name, value string, opts ...CookieOption) {
+	// #nosec G124 -- cookie attributes are caller-configurable
 	c := &http.Cookie{Name: name, Value: value, Path: "/"}
 	for _, opt := range opts {
 		opt(c)
@@ -88,5 +98,6 @@ func (r *Request) SetCookie(name, value string, opts ...CookieOption) {
 
 // ClearCookie records the named cookie's deletion.
 func (r *Request) ClearCookie(name string) {
+	// #nosec G124 -- cookie attributes are caller-configurable
 	r.cookies = append(r.cookies, &http.Cookie{Name: name, Path: "/", MaxAge: -1})
 }

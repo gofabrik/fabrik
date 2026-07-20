@@ -16,6 +16,7 @@ var versionLine = regexp.MustCompile(`(?m)^(\s+version:\s+)\S+`)
 // SetVersion updates versions.yaml while preserving surrounding comments and formatting.
 func SetVersion(root, version string) error {
 	path := filepath.Join(root, "versions.yaml")
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -24,7 +25,7 @@ func SetVersion(root, version string) error {
 		return fmt.Errorf("no module-set version line found in %s", path)
 	}
 	out := versionLine.ReplaceAll(data, []byte("${1}"+version))
-	return os.WriteFile(path, out, 0o644)
+	return os.WriteFile(path, out, 0o600) // #nosec G703 -- path derived from the trusted repo/module layout
 }
 
 // Config combines release metadata with resolved workspace modules.
@@ -88,6 +89,7 @@ func Load(start string) (*Config, error) {
 
 func (c *Config) loadWorkspace() error {
 	workPath := filepath.Join(c.Root, "go.work")
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(workPath)
 	if err != nil {
 		return err
@@ -109,6 +111,7 @@ func (c *Config) loadWorkspace() error {
 
 func modulePath(dir string) (string, error) {
 	gomod := filepath.Join(dir, "go.mod")
+	// #nosec G304 G703 -- reads a trusted build/workspace path
 	data, err := os.ReadFile(gomod)
 	if err != nil {
 		return "", err
@@ -117,6 +120,7 @@ func modulePath(dir string) (string, error) {
 }
 
 func parseVersions(path string) (*versionsFile, error) {
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

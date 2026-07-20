@@ -105,9 +105,11 @@ func BenchmarkParamRouter(b *testing.B) { run(b, buildRouter(), "GET", "/users/4
 func BenchmarkDeepParamStd(b *testing.B) {
 	run(b, buildStd(), "GET", "/users/42/posts/7/comments")
 }
+
 func BenchmarkDeepParamChi(b *testing.B) {
 	run(b, buildChi(), "GET", "/users/42/posts/7/comments")
 }
+
 func BenchmarkDeepParamRouter(b *testing.B) {
 	run(b, buildRouter(), "GET", "/users/42/posts/7/comments")
 }

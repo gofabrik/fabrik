@@ -40,7 +40,7 @@ func buildCmd(args []string) error {
 	}
 	goArgs = append(goArgs, mainPackageArg(abs, mainDir))
 
-	cmd := exec.Command("go", goArgs...)
+	cmd := exec.Command("go", goArgs...) // #nosec G204 -- launches the go toolchain with controlled args
 	cmd.Dir = abs
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

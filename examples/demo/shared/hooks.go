@@ -6,12 +6,11 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
 )
 
 //fabrik:hook setup
-func InitLogger(l *Log) error {
+func InitLogger(l *LogConfig) error {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(l.Level)); err != nil {
 		return err
@@ -23,12 +22,4 @@ func InitLogger(l *Log) error {
 //fabrik:hook prepare
 func MigrateDB(ctx context.Context, db *sql.DB, src migrations.Sources) error {
 	return src.Migrate(ctx, db, migrations.DialectSQLite)
-}
-
-//fabrik:provider
-func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
-	return jobs.RuntimeConfig{
-		Worker:       jobs.WorkerConfig{Concurrency: cfg.Concurrency, ShutdownTimeout: cfg.ShutdownTimeout.Duration()},
-		RunScheduler: true,
-	}
 }

@@ -22,7 +22,10 @@ func openDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		// #nosec G104 -- test database Close is cleanup
+		db.Close() //nolint:errcheck // test database Close is cleanup
+	})
 	return db
 }
 

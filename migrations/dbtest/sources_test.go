@@ -28,7 +28,7 @@ func TestSourcesMigrate_MultiStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only test query cleanup; rows.Err reports iteration errors
 	var got []string
 	for rows.Next() {
 		var m, n string
@@ -42,6 +42,7 @@ func TestSourcesMigrate_MultiStream(t *testing.T) {
 		t.Fatalf("bookkeeping rows = %v", got)
 	}
 	for _, table := range []string{"users", "todos"} {
+		// #nosec G202 -- constant test identifier, not user input
 		if _, err := db.Exec(`SELECT * FROM ` + table); err != nil {
 			t.Errorf("table %s missing: %v", table, err)
 		}

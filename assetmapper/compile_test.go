@@ -63,7 +63,7 @@ func TestCompile_WritesFileContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"]))
+	data, err := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"])) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestCompile_FirstRootWinsShadowing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"]))
+	data, _ := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"])) // #nosec G304 -- reads an app-selected asset path
 	if string(data) != "USER" {
 		t.Errorf("content = %q, want USER (first root wins)", data)
 	}
@@ -254,7 +254,7 @@ func TestCompile_StreamingPathHashesLargeNonJSCSSFile(t *testing.T) {
 	}
 	// Hash must match the same SHA-256-truncated value the
 	// in-memory path would have produced for identical content.
-	got, err := os.ReadFile(filepath.Join(dir, hashed))
+	got, err := os.ReadFile(filepath.Join(dir, hashed)) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,11 +271,11 @@ func TestCompile_RemovesStaleTempFilesFromPriorCrashedRun(t *testing.T) {
 	// .assetmapper-tmp-*.tmp in publicDir. Next Compile should GC it
 	// even though it never interferes with the current run's correctness.
 	dir := t.TempDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	stale := filepath.Join(dir, ".assetmapper-tmp-stale-deadbeef.tmp")
-	if err := os.WriteFile(stale, []byte("zombie"), 0o644); err != nil {
+	if err := os.WriteFile(stale, []byte("zombie"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -291,11 +291,11 @@ func TestCompile_RemovesStaleTempFilesFromPriorCrashedRun(t *testing.T) {
 func TestCompile_StaleTempCleanupIsNarrow(t *testing.T) {
 	// Only assetmapper temp files are removed.
 	dir := t.TempDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	keeper := filepath.Join(dir, ".assetmapper-readme.tmp")
-	if err := os.WriteFile(keeper, []byte("user file"), 0o644); err != nil {
+	if err := os.WriteFile(keeper, []byte("user file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

@@ -64,10 +64,10 @@ func pkgName(modPath string) string {
 
 func write(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -83,9 +83,11 @@ func kinds(findings []Finding) []string {
 func TestAnalyzeConsistent(t *testing.T) {
 	cfg := fixture(t, "v0.1.0", []modSpec{
 		{dir: "b", path: "example.com/b"},
-		{dir: "a", path: "example.com/a",
+		{
+			dir: "a", path: "example.com/a",
 			requires: map[string]string{"example.com/b": "v0.1.0"},
-			imports:  []string{"example.com/b"}},
+			imports:  []string{"example.com/b"},
+		},
 	})
 	findings, err := Analyze(cfg)
 	if err != nil {
@@ -113,9 +115,11 @@ func TestAnalyzeMissingRequire(t *testing.T) {
 func TestAnalyzeWrongVersion(t *testing.T) {
 	cfg := fixture(t, "v0.1.0", []modSpec{
 		{dir: "b", path: "example.com/b"},
-		{dir: "a", path: "example.com/a",
+		{
+			dir: "a", path: "example.com/a",
 			requires: map[string]string{"example.com/b": "v0.0.9"},
-			imports:  []string{"example.com/b"}},
+			imports:  []string{"example.com/b"},
+		},
 	})
 	findings, err := Analyze(cfg)
 	if err != nil {
@@ -128,12 +132,16 @@ func TestAnalyzeWrongVersion(t *testing.T) {
 
 func TestAnalyzeCycle(t *testing.T) {
 	cfg := fixture(t, "v0.1.0", []modSpec{
-		{dir: "a", path: "example.com/a",
+		{
+			dir: "a", path: "example.com/a",
 			requires: map[string]string{"example.com/b": "v0.1.0"},
-			imports:  []string{"example.com/b"}},
-		{dir: "b", path: "example.com/b",
+			imports:  []string{"example.com/b"},
+		},
+		{
+			dir: "b", path: "example.com/b",
 			requires: map[string]string{"example.com/a": "v0.1.0"},
-			imports:  []string{"example.com/a"}},
+			imports:  []string{"example.com/a"},
+		},
 	})
 	findings, err := Analyze(cfg)
 	if err != nil {
@@ -184,10 +192,18 @@ func TestFixAddsNewEdge(t *testing.T) {
 
 func TestFixRefusesCycle(t *testing.T) {
 	cfg := fixture(t, "v0.1.0", []modSpec{
-		{dir: "a", path: "example.com/a",
-			requires: map[string]string{"example.com/b": "v0.1.0"}, imports: []string{"example.com/b"}},
-		{dir: "b", path: "example.com/b",
-			requires: map[string]string{"example.com/a": "v0.1.0"}, imports: []string{"example.com/a"}},
+		{
+			dir:      "a",
+			path:     "example.com/a",
+			requires: map[string]string{"example.com/b": "v0.1.0"},
+			imports:  []string{"example.com/b"},
+		},
+		{
+			dir:      "b",
+			path:     "example.com/b",
+			requires: map[string]string{"example.com/a": "v0.1.0"},
+			imports:  []string{"example.com/a"},
+		},
 	})
 	if _, err := Fix(cfg); err == nil {
 		t.Fatal("Fix must refuse a cyclic graph")

@@ -14,7 +14,7 @@ import (
 )
 
 //fabrik:provider
-func NewDB(cfg *Database) (*sql.DB, error) {
+func NewDB(cfg *DatabaseConfig) (*sql.DB, error) {
 	return sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)")
 }
 
@@ -56,7 +56,7 @@ func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 }
 
 //fabrik:provider
-func NewCrossOrigin(cfg *CrossOrigin) (*http.CrossOriginProtection, error) {
+func NewCrossOrigin(cfg *CrossOriginConfig) (*http.CrossOriginProtection, error) {
 	p := http.NewCrossOriginProtection()
 	for _, origin := range cfg.TrustedOrigins {
 		if err := p.AddTrustedOrigin(origin); err != nil {
@@ -64,4 +64,20 @@ func NewCrossOrigin(cfg *CrossOrigin) (*http.CrossOriginProtection, error) {
 		}
 	}
 	return p, nil
+}
+
+//fabrik:provider
+func NewServer(cfg *HTTPConfig) *http.Server {
+	return &http.Server{
+		Addr:              cfg.Addr,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+}
+
+//fabrik:provider
+func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
+	return jobs.RuntimeConfig{
+		Worker:       jobs.WorkerConfig{Concurrency: cfg.Concurrency, ShutdownTimeout: cfg.ShutdownTimeout.Duration()},
+		RunScheduler: true,
+	}
 }

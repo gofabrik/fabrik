@@ -84,7 +84,9 @@ func (c *Command) Exec(args []string, opts ...ExecOption) int {
 		return 0
 	}
 	if res.version {
-		fmt.Fprintln(ctx.stdout, res.cmd.Version)
+		if _, err := fmt.Fprintln(ctx.stdout, res.cmd.Version); err != nil {
+			return cfg.onError(ctx, err)
+		}
 		return 0
 	}
 
@@ -175,13 +177,16 @@ func DefaultOnError(ctx Context, err error) int {
 	switch {
 	case errors.Is(err, ErrUsage), errors.Is(err, ErrValidation),
 		errors.Is(err, ErrUnknownCmd), errors.Is(err, ErrMissingArg):
+		//nolint:errcheck // The error renderer must return an exit code and has no channel for a stderr write failure.
 		fmt.Fprintf(stderr, "%s: %s\n", prog, displayMessage(err))
 		if cc, ok := ctx.(*cmdContext); ok && len(cc.pathCmds) > 0 {
+			//nolint:errcheck // The error renderer must return an exit code and has no channel for a stderr write failure.
 			fmt.Fprintln(stderr)
 			renderHelp(stderr, cc.pathCmds, cc.knownFlags)
 		}
 		return 2
 	default:
+		//nolint:errcheck // The error renderer must return an exit code and has no channel for a stderr write failure.
 		fmt.Fprintf(stderr, "%s: %s\n", prog, displayMessage(err))
 		return 1
 	}

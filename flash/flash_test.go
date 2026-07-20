@@ -80,6 +80,7 @@ func serve(t *testing.T, m *session.Manager[appSession], sid string, handler fun
 	t.Helper()
 	req := httptest.NewRequest("GET", "/", nil)
 	if sid != "" {
+		// #nosec G124 -- request cookies do not carry response-only security attributes
 		req.AddCookie(&http.Cookie{Name: "sid", Value: sid})
 	}
 	rr := httptest.NewRecorder()

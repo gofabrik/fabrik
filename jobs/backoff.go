@@ -37,13 +37,14 @@ func (b ExponentialBackoff) Next(attempt int) time.Duration {
 		attempt = 1
 	}
 	d := b.Max
-	if shift := uint(attempt - 1); shift < 63 {
+	if shift := attempt - 1; shift < 63 {
 		if cand := b.Base << shift; cand > 0 && cand < b.Max {
 			d = cand
 		}
 	}
 	if b.Jitter > 0 && d > 0 {
 		if span := time.Duration(float64(d) * b.Jitter); span > 0 {
+			// #nosec G404 -- retry jitter, not security-sensitive
 			d = d - span + time.Duration(rand.Int64N(int64(2*span)+1))
 			if d < 0 {
 				d = 0

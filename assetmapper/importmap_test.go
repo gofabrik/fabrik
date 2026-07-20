@@ -252,7 +252,7 @@ func TestImportmap_RenderIsKeySorted(t *testing.T) {
 	apple := strings.Index(first, `"apple"`)
 	mango := strings.Index(first, `"mango"`)
 	zebra := strings.Index(first, `"zebra"`)
-	if !(apple < mango && mango < zebra) {
+	if apple >= mango || mango >= zebra {
 		t.Errorf("keys not sorted; positions: apple=%d mango=%d zebra=%d\noutput:\n%s",
 			apple, mango, zebra, first)
 	}

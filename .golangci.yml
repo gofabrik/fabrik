@@ -1,6 +1,5 @@
 version: "2"
 
-# Exclude revive's exported-comment rule because it overwhelms the report with low-value findings.
 linters:
   default: standard
   enable:
@@ -8,11 +7,20 @@ linters:
     - gocritic
     - revive
     - misspell
+  settings:
+    gosec:
+      # G122 reports false positives for trusted repository walks, and golangci-lint
+      # cannot apply inline //#nosec annotations to this check.
+      excludes: [G122]
   exclusions:
     rules:
+      # exported and package-comments: doc-comment completeness is deliberately not
+      # enforced. unused-parameter: fabrik handler, hook, and directive contracts
+      # require otherwise unused parameters. blank-imports: database/sql driver
+      # imports are standard and self-explanatory.
       - linters:
           - revive
-        text: "^exported:"
+        text: "^(blank-imports|exported|package-comments|unused-parameter):"
 
 # gci conflicts with gofumpt's import ordering.
 formatters:

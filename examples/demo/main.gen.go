@@ -41,7 +41,7 @@ func run() int {
 	var root *cli.Command
 	err := func() error {
 		// Config
-		sharedConfig, err := config.Load[shared.Config](
+		sharedHTTPConfig, err := config.Load[shared.HTTPConfig](
 			config.FileOptional("config.yaml"),
 			config.FileOptional("config.local.yaml"),
 			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
@@ -61,7 +61,7 @@ func run() int {
 			return err
 		}
 
-		sharedDatabase, err := config.Load[shared.Database](
+		sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
 			config.FileOptional("config.yaml"),
 			config.FileOptional("config.local.yaml"),
 			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
@@ -71,7 +71,7 @@ func run() int {
 			return err
 		}
 
-		sharedLog, err := config.Load[shared.Log](
+		sharedLogConfig, err := config.Load[shared.LogConfig](
 			config.FileOptional("config.yaml"),
 			config.FileOptional("config.local.yaml"),
 			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
@@ -81,7 +81,7 @@ func run() int {
 			return err
 		}
 
-		sharedCrossOrigin, err := config.Load[shared.CrossOrigin](
+		sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](
 			config.FileOptional("config.yaml"),
 			config.FileOptional("config.local.yaml"),
 			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
@@ -91,7 +91,7 @@ func run() int {
 			return err
 		}
 
-		webConfig, err := config.Load[web.Config](
+		webGreeterConfig, err := config.Load[web.GreeterConfig](
 			config.FileOptional("config.yaml"),
 			config.FileOptional("config.local.yaml"),
 			config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
@@ -102,7 +102,7 @@ func run() int {
 		}
 
 		// Setup: after config, before providers
-		if err := shared.InitLogger(sharedLog); err != nil {
+		if err := shared.InitLogger(sharedLogConfig); err != nil {
 			return err
 		}
 
@@ -132,10 +132,8 @@ func run() int {
 		migrationSources := migrations.Sources{
 			{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
 		}
-		sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
-		sharedHttpServer := shared.NewServer(sharedConfig)
 
-		sharedSqlDB, err := shared.NewDB(sharedDatabase)
+		sharedSqlDB, err := shared.NewDB(sharedDatabaseConfig)
 		if err != nil {
 			return err
 		}
@@ -162,13 +160,13 @@ func run() int {
 		}
 		// web.Greeter, selected by greeter.kind
 		var webGreeter web.Greeter
-		switch webConfig.Kind {
+		switch webGreeterConfig.Kind {
 		case "goodbye":
 			webGreeter = web.NewGoodbyeGreeter()
 		case "hello":
 			webGreeter = web.NewHelloGreeter()
 		default:
-			return fmt.Errorf("no web.Greeter implementation for %q", webConfig.Kind)
+			return fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind)
 		}
 		webHandlers := &web.Handlers{
 			Greeter: webGreeter,
@@ -186,10 +184,13 @@ func run() int {
 			Queries: sharedQueryDB,
 		}
 
-		sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOrigin)
+		sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 		if err != nil {
 			return err
 		}
+
+		sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+		sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
 
 		r := router.New()
 		webDocs := &web.Docs{
@@ -239,7 +240,7 @@ func run() int {
 				return nil
 			},
 			Subcommands: []*cli.Command{
-				shared.ConfigCommand(sharedConfig, sharedDatabase),
+				shared.ConfigCommand(sharedHTTPConfig, sharedDatabaseConfig),
 				shared.RunCommand(httpserver.New(r, sharedHttpServer), jobs.NewRunner(jobsManager, sharedJobsRuntimeConfig)),
 				shared.ServeCommand(httpserver.New(r, sharedHttpServer)),
 			},

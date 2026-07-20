@@ -84,7 +84,7 @@ type overlayFile struct {
 }
 
 func (f *overlayFile) Stat() (fs.FileInfo, error) {
-	return overlayFileInfo{name: f.name, size: f.Reader.Size()}, nil
+	return overlayFileInfo{name: f.name, size: f.Size()}, nil
 }
 func (f *overlayFile) Close() error { return nil }
 
@@ -104,8 +104,9 @@ func (e overlayDirEntry) Type() fs.FileMode {
 	}
 	return 0
 }
+
 func (e overlayDirEntry) Info() (fs.FileInfo, error) {
-	return overlayFileInfo{name: e.name, size: e.size, dir: e.dir}, nil
+	return overlayFileInfo(e), nil
 }
 
 type overlayFileInfo struct {

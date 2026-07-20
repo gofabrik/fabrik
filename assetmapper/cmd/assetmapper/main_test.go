@@ -19,10 +19,14 @@ func jspmMirror(t *testing.T) *httptest.Server {
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/generate":
-			fmt.Fprintf(w, `{"map":{"imports":{"htmx.org":"%s/npm:htmx.org@2.0.3/htmx.js"},"scopes":{"./":{"idiomorph":"%s/npm:idiomorph@0.3.0/idiomorph.js"}}}}`,
-				srv.URL, srv.URL)
+			if _, err := fmt.Fprintf(w, `{"map":{"imports":{"htmx.org":"%s/npm:htmx.org@2.0.3/htmx.js"},"scopes":{"./":{"idiomorph":"%s/npm:idiomorph@0.3.0/idiomorph.js"}}}}`,
+				srv.URL, srv.URL); err != nil {
+				t.Errorf("write generate response: %v", err)
+			}
 		case strings.HasPrefix(r.URL.Path, "/npm:"):
-			fmt.Fprintf(w, "// %s\nexport default {};\n", r.URL.Path)
+			if _, err := fmt.Fprint(w, "export default {};\n"); err != nil {
+				t.Errorf("write package response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -34,7 +38,7 @@ func jspmMirror(t *testing.T) *httptest.Server {
 func TestRequireRemovePrune(t *testing.T) {
 	srv := jspmMirror(t)
 	dir := filepath.Join(t.TempDir(), "assets")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,7 +56,7 @@ func TestRequireRemovePrune(t *testing.T) {
 			t.Errorf("missing %s after require: %v", f, err)
 		}
 	}
-	im, err := os.ReadFile(filepath.Join(dir, "importmap.json"))
+	im, err := os.ReadFile(filepath.Join(dir, "importmap.json")) // #nosec G304 -- reads an app-selected asset path
 	if err != nil || !strings.Contains(string(im), `"htmx.org"`) {
 		t.Fatalf("importmap.json = %q, %v", im, err)
 	}
@@ -66,7 +70,7 @@ func TestRequireRemovePrune(t *testing.T) {
 	}
 
 	// Prune removes files orphaned by hand-edited importmaps.
-	if err := os.WriteFile(filepath.Join(dir, "importmap.json"), []byte("{}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "importmap.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()
@@ -89,9 +93,13 @@ func TestRequirePartialFailure(t *testing.T) {
 				http.Error(w, "no such package", http.StatusInternalServerError)
 				return
 			}
-			fmt.Fprintf(w, `{"map":{"imports":{"good":"%s/npm:good@1.0.0/good.js"}}}`, srv.URL)
+			if _, err := fmt.Fprintf(w, `{"map":{"imports":{"good":"%s/npm:good@1.0.0/good.js"}}}`, srv.URL); err != nil {
+				t.Errorf("write generate response: %v", err)
+			}
 		case strings.HasPrefix(r.URL.Path, "/npm:"):
-			fmt.Fprint(w, "export default {};\n")
+			if _, err := fmt.Fprint(w, "export default {};\n"); err != nil {
+				t.Errorf("write package response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -99,7 +107,7 @@ func TestRequirePartialFailure(t *testing.T) {
 	defer srv.Close()
 
 	dir := filepath.Join(t.TempDir(), "assets")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -109,7 +117,7 @@ func TestRequirePartialFailure(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "vendor/good.js")); err != nil {
 		t.Fatalf("good's file missing after partial failure: %v", err)
 	}
-	im, err := os.ReadFile(filepath.Join(dir, "importmap.json"))
+	im, err := os.ReadFile(filepath.Join(dir, "importmap.json")) // #nosec G304 -- reads an app-selected asset path
 	if err != nil || !strings.Contains(string(im), `"good"`) {
 		t.Fatalf("good's entry not committed before the failure: %q, %v", im, err)
 	}
@@ -119,7 +127,7 @@ func TestRequirePartialFailure(t *testing.T) {
 func TestRemoveValidatesBeforeDeleting(t *testing.T) {
 	srv := jspmMirror(t)
 	dir := filepath.Join(t.TempDir(), "assets")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
@@ -135,7 +143,7 @@ func TestRemoveValidatesBeforeDeleting(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, "vendor/htmx.org.js")); err != nil {
 			t.Fatalf("valid package was deleted despite %s aborting the batch", why)
 		}
-		im, _ := os.ReadFile(filepath.Join(dir, "importmap.json"))
+		im, _ := os.ReadFile(filepath.Join(dir, "importmap.json")) // #nosec G304 -- reads an app-selected asset path
 		if !strings.Contains(string(im), `"htmx.org"`) {
 			t.Fatalf("valid entry was dropped despite %s aborting the batch", why)
 		}
@@ -143,12 +151,12 @@ func TestRemoveValidatesBeforeDeleting(t *testing.T) {
 	assertUntouched(t, "the typo")
 
 	// Unsafe hand-edited keys fail during batch preflight.
-	im, err := os.ReadFile(filepath.Join(dir, "importmap.json"))
+	im, err := os.ReadFile(filepath.Join(dir, "importmap.json")) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		t.Fatal(err)
 	}
 	evil := strings.Replace(string(im), "{\n", "{\n  \"../evil\": {\"version\": \"1.0.0\"},\n", 1)
-	if err := os.WriteFile(filepath.Join(dir, "importmap.json"), []byte(evil), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "importmap.json"), []byte(evil), 0o600); err != nil { // #nosec G703 -- test writes a crafted importmap to an app-selected path
 		t.Fatal(err)
 	}
 	if err := run([]string{"remove", "-dir", dir, "htmx.org", "../evil"}, &out); err == nil || !strings.Contains(err.Error(), "safe path") {

@@ -33,7 +33,7 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 	}
 	dir := t.TempDir()
 	write := func(name, content string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -50,6 +50,7 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 		t.Fatalf("go mod tidy: %v\n%s", err, b)
 	}
 	bin := filepath.Join(dir, "fixture")
+	// #nosec G204 -- the command and all arguments are controlled by this test
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = dir
 	build.Env = goEnv
@@ -58,6 +59,7 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 	}
 
 	run := func(args []string, env ...string) (int, string, string) {
+		// #nosec G204 -- the binary path and arguments are controlled by this test
 		cmd := exec.Command(bin, args...)
 		cmd.Env = append(os.Environ(), env...)
 		var so, se strings.Builder

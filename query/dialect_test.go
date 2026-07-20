@@ -258,7 +258,7 @@ type valuerOnly struct{ v string }
 
 func (x valuerOnly) Value() (driver.Value, error) { return x.v, nil }
 
-type scannerOnly struct{ v string }
+type scannerOnly struct{}
 
 func (x *scannerOnly) Scan(src any) error { return nil }
 

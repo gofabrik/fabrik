@@ -131,7 +131,7 @@ func (h *compiledHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "asset error", http.StatusInternalServerError)
 		return
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // served asset source close after response copy is cleanup only
 	_, _ = io.Copy(w, f)
 }
 
@@ -328,7 +328,7 @@ func streamHash(fsys fs.FS, p string) (hash string, size int64, err error) {
 	if err != nil {
 		return "", 0, err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // read-only asset close cannot affect the completed hash
 	h := sha256.New()
 	n, err := io.Copy(h, f)
 	if err != nil {

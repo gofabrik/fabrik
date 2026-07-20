@@ -85,8 +85,10 @@ func TestVendor_RequireWritesFileAndImportmapEntry(t *testing.T) {
 	stub := &stubResolver{
 		resolution: &assetmapper.Resolution{
 			Packages: []assetmapper.ResolvedPackage{
-				{Specifier: "react", Version: "18.2.0", Type: "js",
-					URL: "https://example.com/npm:react@18.2.0/index.js"},
+				{
+					Specifier: "react", Version: "18.2.0", Type: "js",
+					URL: "https://example.com/npm:react@18.2.0/index.js",
+				},
 			},
 		},
 		fetched: map[string][]byte{
@@ -101,7 +103,7 @@ func TestVendor_RequireWritesFileAndImportmapEntry(t *testing.T) {
 	}
 
 	// File on disk at vendor/react.js.
-	data, err := os.ReadFile(filepath.Join(vendorDir, "react.js"))
+	data, err := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		t.Fatalf("vendored file missing: %v", err)
 	}
@@ -190,7 +192,7 @@ func TestVendor_RequireRewritesUpstreamURLToBareSpecifier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(vendorDir, "react.js"))
+	data, _ := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
 	got := string(data)
 	if !strings.Contains(got, `"scheduler"`) {
 		t.Errorf("upstream URL not rewritten to bare specifier; got:\n%s", got)
@@ -207,8 +209,10 @@ func TestVendor_RequireSupportsCSSPackages(t *testing.T) {
 	stub := &stubResolver{
 		resolution: &assetmapper.Resolution{
 			Packages: []assetmapper.ResolvedPackage{
-				{Specifier: "normalize", Version: "8.0.1", Type: "css",
-					URL: "https://example.com/npm:normalize@8.0.1/normalize.css"},
+				{
+					Specifier: "normalize", Version: "8.0.1", Type: "css",
+					URL: "https://example.com/npm:normalize@8.0.1/normalize.css",
+				},
 			},
 		},
 		fetched: map[string][]byte{
@@ -264,7 +268,7 @@ func TestVendor_RequireOverwritesExistingEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(vendorDir, "react.js"))
+	data, _ := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
 	if string(data) != "v2" {
 		t.Errorf("file content = %q, want v2 (overwrite)", data)
 	}
@@ -282,8 +286,10 @@ func TestVendor_RemoveDeletesFileAndEntry(t *testing.T) {
 	stub := &stubResolver{
 		resolution: &assetmapper.Resolution{
 			Packages: []assetmapper.ResolvedPackage{
-				{Specifier: "react", Version: "18.2.0", Type: "js",
-					URL: "https://example.com/npm:react@18.2.0/index.js"},
+				{
+					Specifier: "react", Version: "18.2.0", Type: "js",
+					URL: "https://example.com/npm:react@18.2.0/index.js",
+				},
 			},
 		},
 		fetched: map[string][]byte{
@@ -552,7 +558,7 @@ func TestVendor_EndToEnd_WithJSPMResolver(t *testing.T) {
 		}
 	}
 	// React's content has the upstream URL rewritten to a bare specifier.
-	reactOut, _ := os.ReadFile(filepath.Join(vendorDir, "react.js"))
+	reactOut, _ := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
 	if !strings.Contains(string(reactOut), `"scheduler"`) {
 		t.Errorf("react.js not rewritten; got:\n%s", reactOut)
 	}
@@ -580,13 +586,13 @@ func (f *fetchRedirectResolver) Fetch(ctx context.Context, url string) ([]byte, 
 func TestVendor_PruneRemovesOrphanedFiles(t *testing.T) {
 	tmp := t.TempDir()
 	vendorDir := filepath.Join(tmp, "assets", "vendor")
-	if err := os.MkdirAll(vendorDir, 0o755); err != nil {
+	if err := os.MkdirAll(vendorDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	// Three files on disk, only one registered → other two should
 	// be deleted.
 	for _, name := range []string{"react.js", "scheduler.js", "lodash.js"} {
-		if err := os.WriteFile(filepath.Join(vendorDir, name), []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(vendorDir, name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -618,13 +624,13 @@ func TestVendor_PruneHandlesScopedPackages(t *testing.T) {
 	tmp := t.TempDir()
 	vendorDir := filepath.Join(tmp, "assets", "vendor")
 	scoped := filepath.Join(vendorDir, "@radix-ui")
-	if err := os.MkdirAll(scoped, 0o755); err != nil {
+	if err := os.MkdirAll(scoped, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(scoped, "themes.js"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scoped, "themes.js"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(scoped, "icons.js"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(scoped, "icons.js"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	im := assetmapper.NewImportmap()
@@ -650,10 +656,10 @@ func TestVendor_PruneSkipsLocalEntries(t *testing.T) {
 	// file; Prune must not look for one.
 	tmp := t.TempDir()
 	vendorDir := filepath.Join(tmp, "assets", "vendor")
-	if err := os.MkdirAll(vendorDir, 0o755); err != nil {
+	if err := os.MkdirAll(vendorDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(vendorDir, "stray.js"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(vendorDir, "stray.js"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	im := assetmapper.NewImportmap()
@@ -674,11 +680,11 @@ func TestVendor_PruneSkipsLocalEntries(t *testing.T) {
 func TestVendor_PruneEmptyImportmapRemovesEverything(t *testing.T) {
 	tmp := t.TempDir()
 	vendorDir := filepath.Join(tmp, "assets", "vendor")
-	if err := os.MkdirAll(vendorDir, 0o755); err != nil {
+	if err := os.MkdirAll(vendorDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"a.js", "b.js", "c.js"} {
-		if err := os.WriteFile(filepath.Join(vendorDir, name), []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(vendorDir, name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -715,10 +721,10 @@ func TestVendor_PruneCleansUpEmptyDirs(t *testing.T) {
 	tmp := t.TempDir()
 	vendorDir := filepath.Join(tmp, "assets", "vendor")
 	nested := filepath.Join(vendorDir, "deep", "nested", "scope")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	if err := os.MkdirAll(nested, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "orphan.js"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "orphan.js"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -757,7 +763,7 @@ func equalStringSlice(a, b []string) bool {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if a[i] != b[i] { // #nosec G602 -- slices are length-checked before paired indexing
 			return false
 		}
 	}
@@ -798,12 +804,18 @@ func TestVendor_RequireFetchFailure_LeavesNoFilesOnDisk(t *testing.T) {
 	stub := &failingResolver{
 		resolution: &assetmapper.Resolution{
 			Packages: []assetmapper.ResolvedPackage{
-				{Specifier: "react", Version: "18.2.0", Type: "js",
-					URL: "https://example.com/react.js"},
-				{Specifier: "scheduler", Version: "0.23.0", Type: "js",
-					URL: failURL},
-				{Specifier: "lodash", Version: "4.17.0", Type: "js",
-					URL: "https://example.com/lodash.js"},
+				{
+					Specifier: "react", Version: "18.2.0", Type: "js",
+					URL: "https://example.com/react.js",
+				},
+				{
+					Specifier: "scheduler", Version: "0.23.0", Type: "js",
+					URL: failURL,
+				},
+				{
+					Specifier: "lodash", Version: "4.17.0", Type: "js",
+					URL: "https://example.com/lodash.js",
+				},
 			},
 		},
 		fetched: map[string][]byte{
@@ -849,8 +861,10 @@ func TestVendor_RequireFetchFailure_LeavesPriorEntriesIntact(t *testing.T) {
 	seed := &stubResolver{
 		resolution: &assetmapper.Resolution{
 			Packages: []assetmapper.ResolvedPackage{
-				{Specifier: "react", Version: "18.0.0", Type: "js",
-					URL: "https://example.com/react.js"},
+				{
+					Specifier: "react", Version: "18.0.0", Type: "js",
+					URL: "https://example.com/react.js",
+				},
 			},
 		},
 		fetched: map[string][]byte{"https://example.com/react.js": []byte("//react")},
@@ -865,8 +879,10 @@ func TestVendor_RequireFetchFailure_LeavesPriorEntriesIntact(t *testing.T) {
 	v.Resolver = &failingResolver{
 		resolution: &assetmapper.Resolution{
 			Packages: []assetmapper.ResolvedPackage{
-				{Specifier: "newpkg", Version: "1.0.0", Type: "js",
-					URL: "https://example.com/newpkg.js"},
+				{
+					Specifier: "newpkg", Version: "1.0.0", Type: "js",
+					URL: "https://example.com/newpkg.js",
+				},
 			},
 		},
 		failURL: "https://example.com/newpkg.js",

@@ -29,7 +29,7 @@ type Migrations struct {
 
 func NewMigrations() *Migrations {
 	return &Migrations{
-		treeFS: func(dir string) fs.FS { return os.DirFS(dir) },
+		treeFS: os.DirFS,
 	}
 }
 

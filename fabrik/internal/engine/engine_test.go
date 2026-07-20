@@ -30,7 +30,7 @@ func TestFixtures(t *testing.T) {
 }
 
 func runFixture(t *testing.T, fixture string) {
-	data, err := os.ReadFile(fixture)
+	data, err := os.ReadFile(fixture) // #nosec G304 -- reads a test-selected fixture path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func runFixture(t *testing.T, fixture string) {
 			continue
 		}
 		path := filepath.Join(dir, f.Name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		// Fixtures resolve local module checkouts; only generated output imports config.
@@ -101,7 +101,7 @@ func runFixture(t *testing.T, fixture string) {
 		data = bytes.ReplaceAll(data, []byte("JOBSDIR"), []byte(jobsDir))
 		data = bytes.ReplaceAll(data, []byte("CLIDIR"), []byte(cliDir))
 		data = bytes.ReplaceAll(data, []byte("HTTPSERVERDIR"), []byte(httpserverDir))
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -176,7 +176,7 @@ func updateFixture(t *testing.T, fixture string, ar *txtar.Archive, src []byte, 
 		kept = append(kept, txtar.File{Name: "want/diags", Data: []byte(diags)})
 	}
 	ar.Files = kept
-	if err := os.WriteFile(fixture, txtar.Format(ar), 0o644); err != nil {
+	if err := os.WriteFile(fixture, txtar.Format(ar), 0o644); err != nil { // #nosec G306 G703 -- fixture updates preserve conventional source-tree permissions at a trusted repo path
 		t.Fatal(err)
 	}
 	t.Logf("updated %s", fixture)

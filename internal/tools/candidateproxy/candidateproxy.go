@@ -76,11 +76,11 @@ func writeModuleWorktree(outDir, modPath, version, srcDir string, license []byte
 			if err != nil {
 				return err
 			}
-			defer os.RemoveAll(tmp)
+			defer os.RemoveAll(tmp) //nolint:errcheck // cleanup of a temporary module package
 			if err := os.CopyFS(tmp, os.DirFS(srcDir)); err != nil {
 				return err
 			}
-			if err := os.WriteFile(filepath.Join(tmp, "LICENSE"), license, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(tmp, "LICENSE"), license, 0o600); err != nil { // #nosec G703 -- path derived from the trusted repo/module layout
 				return err
 			}
 			pkgDir = tmp
@@ -100,7 +100,7 @@ func writeProxyFiles(outDir, modPath, version string, zipBytes []byte) error {
 		return err
 	}
 	vdir := filepath.Join(outDir, filepath.FromSlash(enc), "@v")
-	if err := os.MkdirAll(vdir, 0o755); err != nil {
+	if err := os.MkdirAll(vdir, 0o750); err != nil {
 		return err
 	}
 	gomod, err := goModFromZip(zipBytes, modPath, version)
@@ -126,7 +126,7 @@ func writeProxyFiles(outDir, modPath, version string, zipBytes []byte) error {
 		{"list", []byte(version + "\n")},
 	}
 	for _, w := range writes {
-		if err := os.WriteFile(filepath.Join(vdir, w.name), w.data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(vdir, w.name), w.data, 0o600); err != nil {
 			return err
 		}
 	}
@@ -145,7 +145,7 @@ func goModFromZip(zipBytes []byte, modPath, version string) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			defer rc.Close()
+			defer rc.Close() //nolint:errcheck // closing a read-only zip entry
 			return io.ReadAll(rc)
 		}
 	}
