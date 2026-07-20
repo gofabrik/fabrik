@@ -23,7 +23,10 @@ func (s *Server) httpServer() *http.Server {
 	if s.Server != nil {
 		return s.Server
 	}
-	return &http.Server{Addr: ":8080"}
+	return &http.Server{
+		Addr:              ":8080",
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 }
 
 // Run returns listener errors, treats [http.ErrServerClosed] as success, and allows 30 seconds for shutdown after cancellation.

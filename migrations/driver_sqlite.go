@@ -30,7 +30,7 @@ func (sqliteDriver) tableExists(ctx context.Context, q querier) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("probe schema_migrations: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only query cleanup; rows.Err reports iteration errors
 	return rows.Next(), rows.Err()
 }
 
@@ -42,12 +42,14 @@ func (sqliteDriver) openSession(ctx context.Context, db *sql.DB) (session, error
 	// BEGIN IMMEDIATE needs a connection-local busy timeout under contention.
 	var current int64
 	if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&current); err != nil {
-		conn.Close()
+		// #nosec G104 -- connection cleanup after the primary busy-timeout query error
+		conn.Close() //nolint:errcheck // cleanup failure does not replace the busy-timeout query error
 		return nil, fmt.Errorf("read SQLite busy_timeout: %w", err)
 	}
 	if current <= 0 {
 		if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
-			conn.Close()
+			// #nosec G104 -- connection cleanup after the primary busy-timeout configuration error
+			conn.Close() //nolint:errcheck // cleanup failure does not replace the configuration error
 			return nil, fmt.Errorf("set SQLite busy_timeout: %w", err)
 		}
 	}

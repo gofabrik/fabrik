@@ -46,6 +46,7 @@ func TestBuildCanonicalArchive(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 
+	// #nosec G304 -- reads a test-controlled temporary path
 	data, err := os.ReadFile(filepath.Join(out,
 		"github.com/gofabrik/fabrik/router/@v/v1.0.0.zip"))
 	if err != nil {
@@ -122,6 +123,7 @@ func TestHashMatchesGoVCSDownload(t *testing.T) {
 	}
 
 	bare := filepath.Join(t.TempDir(), "bare.git")
+	// #nosec G204 -- launches the fixed git binary with controlled test paths
 	if o, err := exec.Command("git", "clone", "--bare", "-q", cfg.Root, bare).CombinedOutput(); err != nil {
 		t.Fatalf("bare clone: %v\n%s", err, o)
 	}
@@ -152,7 +154,7 @@ func goVCSSum(t *testing.T, gitcfg, modver string) string {
 	modcache := t.TempDir()
 	t.Cleanup(func() { makeWritable(modcache) })
 
-	cmd := exec.Command("go", "mod", "download", "-json", modver)
+	cmd := exec.Command("go", "mod", "download", "-json", modver) // #nosec G204 -- test launches the go toolchain with controlled args
 	cmd.Dir = consumer
 	cmd.Env = append(os.Environ(),
 		"GIT_CONFIG_GLOBAL="+gitcfg,
@@ -224,18 +226,26 @@ func TestBuildEscapesUppercaseVersion(t *testing.T) {
 func write(t *testing.T, root, rel, content string) {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func makeWritable(root string) {
-	filepath.WalkDir(root, func(p string, _ os.DirEntry, err error) error {
+	// #nosec G104 -- best-effort cleanup of a temp cache
+	//nolint:errcheck // best-effort cleanup of a temp cache
+	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err == nil {
-			os.Chmod(p, 0o755)
+			mode := os.FileMode(0o600)
+			if d.IsDir() {
+				mode = 0o700
+			}
+			// #nosec G104 -- best-effort cleanup of a temp cache
+			//nolint:errcheck // best-effort cleanup of a temp cache
+			os.Chmod(p, mode) // #nosec G122 -- trusted test path
 		}
 		return nil
 	})
@@ -243,7 +253,7 @@ func makeWritable(root string) {
 
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) // #nosec G204 -- test launches the go toolchain with controlled args
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)

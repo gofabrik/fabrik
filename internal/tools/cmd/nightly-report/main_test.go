@@ -10,11 +10,11 @@ import (
 
 func write(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -28,7 +28,7 @@ func TestLoadFreshness(t *testing.T) {
 		t.Errorf("read failure = %q, want error", s)
 	}
 	f := filepath.Join(t.TempDir(), "fresh.json")
-	if err := os.WriteFile(f, []byte(`{"Path":"golang.org/x/text","Version":"v0.36.0","Update":{"Version":"v0.38.0"}}`), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte(`{"Path":"golang.org/x/text","Version":"v0.36.0","Update":{"Version":"v0.38.0"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	s, ups := loadFreshness(f, 0)

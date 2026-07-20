@@ -79,6 +79,7 @@ func TestClassifyVuln(t *testing.T) {
 }
 
 func TestClassifyTest(t *testing.T) {
+	// #nosec G101 -- test fixture, not a real credential
 	const pass = `{"Action":"run","Package":"p"}
 {"Action":"pass","Package":"p"}
 `
@@ -110,6 +111,9 @@ func TestClassifyTest(t *testing.T) {
 }
 
 func TestClassifyTidy(t *testing.T) {
+	const intraErr = "go: downloading github.com/gofabrik/fabrik/validation v0.1.0\n" +
+		"go: github.com/gofabrik/fabrik/forms imports\n" +
+		"\tgithub.com/gofabrik/fabrik/validation: reading github.com/gofabrik/fabrik/validation/go.mod at revision validation/v0.1.0: unknown revision validation/v0.1.0\n"
 	if got := ClassifyTidy(nil, nil, 0); got != StatusClean {
 		t.Errorf("exit 0 = %q, want clean", got)
 	}
@@ -118,6 +122,36 @@ func TestClassifyTidy(t *testing.T) {
 	}
 	if got := ClassifyTidy(nil, []byte("go: some error\n"), 1); got != StatusError {
 		t.Errorf("error (no diff, exit 1) = %q, want error", got)
+	}
+	// The expected unpublished revision failure makes standalone tidy unchecked.
+	if got := ClassifyTidy(nil, []byte(intraErr), 1); got != StatusUnchecked {
+		t.Errorf("intra-repo tidy failure = %q, want unchecked", got)
+	}
+	// Real drift outranks a trailing intra-repo resolution failure.
+	if got := ClassifyTidy([]byte("--- a/go.mod\n+++ b/go.mod\n"), []byte(intraErr), 1); got != StatusFindings {
+		t.Errorf("drift plus intra-repo failure = %q, want findings", got)
+	}
+	// A wrong intra-repo version pin is a real error, not the expected v0.1.0 failure.
+	wrongVersion := strings.ReplaceAll(intraErr, "v0.1.0", "v0.2.0")
+	if got := ClassifyTidy(nil, []byte(wrongVersion), 1); got != StatusError {
+		t.Errorf("wrong intra-repo version = %q, want error", got)
+	}
+	// An unrelated resolution failure alongside the intra-repo one is still an error,
+	// including one that carries no "unknown revision" phrase.
+	mixed := intraErr + "go: example.com/other@latest: no matching versions for query \"latest\"\n"
+	if got := ClassifyTidy(nil, []byte(mixed), 1); got != StatusError {
+		t.Errorf("mixed intra-repo and unrelated failure = %q, want error", got)
+	}
+	// Nested intra-repo modules produce multi-segment revisions and are still benign.
+	nested := "go: github.com/gofabrik/fabrik/fabrik imports\n" +
+		"\tgithub.com/gofabrik/fabrik/cli/directive: reading github.com/gofabrik/fabrik/cli/directive/go.mod at revision cli/directive/v0.1.0: unknown revision cli/directive/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(nested), 1); got != StatusUnchecked {
+		t.Errorf("nested intra-repo tidy failure = %q, want unchecked", got)
+	}
+	// A leaf line whose module components disagree is not a benign match.
+	mismatch := "\tgithub.com/gofabrik/fabrik/forms: reading github.com/gofabrik/fabrik/validation/go.mod at revision validation/v0.1.0: unknown revision validation/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(mismatch), 1); got != StatusError {
+		t.Errorf("mismatched module components = %q, want error", got)
 	}
 }
 

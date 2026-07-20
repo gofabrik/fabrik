@@ -180,13 +180,17 @@ func registryIndex(directives []gen.Directive) (map[string]gen.Directive, []stri
 
 func unknownDirectiveDiag(ann gen.Annotation, names []string) diag.Diagnostic {
 	if ann.Name == "" {
-		return diag.Diagnostic{Severity: diag.SevError, Pos: ann.Pos,
+		return diag.Diagnostic{
+			Severity: diag.SevError, Pos: ann.Pos,
 			Message: `empty directive after "fabrik:"`,
-			Help:    "expected one of: " + strings.Join(names, ", ")}
+			Help:    "expected one of: " + strings.Join(names, ", "),
+		}
 	}
-	return diag.Diagnostic{Severity: diag.SevError, Pos: ann.Pos,
+	return diag.Diagnostic{
+		Severity: diag.SevError, Pos: ann.Pos,
 		Message: fmt.Sprintf("unknown directive %q", "fabrik:"+ann.Name),
-		Help:    "known: " + strings.Join(names, ", ")}
+		Help:    "known: " + strings.Join(names, ", "),
+	}
 }
 
 // SyntaxDiags parses annotations without type information.

@@ -21,7 +21,7 @@ type Cookie struct {
 	Path     string
 	Domain   string
 	Secure   bool
-	HttpOnly bool
+	HttpOnly bool //nolint:revive // mirrors net/http.Cookie.HttpOnly (public API)
 	SameSite http.SameSite
 }
 
@@ -48,6 +48,7 @@ func (c Cookie) Read(r *http.Request) (string, bool) {
 // Write emits a Set-Cookie header carrying sid. If opts.Expiry is
 // non-zero, both the Expires and MaxAge attributes are set from it.
 func (c Cookie) Write(w http.ResponseWriter, sid string, opts TokenWriteOptions) {
+	// #nosec G124 -- cookie attributes are caller-configurable
 	ck := &http.Cookie{
 		Name:     c.name(),
 		Value:    sid,
@@ -75,6 +76,7 @@ func (c Cookie) Write(w http.ResponseWriter, sid string, opts TokenWriteOptions)
 // already-elapsed expiry, instructing the client to discard the
 // cookie immediately.
 func (c Cookie) Clear(w http.ResponseWriter) {
+	// #nosec G124 -- cookie attributes are caller-configurable
 	http.SetCookie(w, &http.Cookie{
 		Name:     c.name(),
 		Value:    "",

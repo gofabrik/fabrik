@@ -12,12 +12,12 @@ func TestRunner_DrainsInflightBeforeReturning(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var completed atomic.Bool
-	Handle[Email](m, "email", func(Context, Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error {
 		close(started)
 		<-release
 		completed.Store(true)
 		return nil
-	})
+	}))
 	if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
 		t.Fatal(err)
 	}

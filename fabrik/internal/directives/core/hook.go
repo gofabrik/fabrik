@@ -162,9 +162,10 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	}
 
 	phase := gen.PhaseSetup
-	if nd.phase == "prepare" {
+	switch nd.phase {
+	case "prepare":
 		phase = gen.PhasePrepare
-	} else if nd.phase == "start" {
+	case "start":
 		phase = gen.PhaseStart
 	}
 	errStyle := gen.ErrNone

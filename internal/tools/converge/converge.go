@@ -84,6 +84,7 @@ func tidyPass(cfg *modset.Config, dirs []string) error {
 // stripIntraSums removes target-version sums for published modules.
 func stripIntraSums(cfg *modset.Config, dir string) error {
 	p := filepath.Join(dir, "go.sum")
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -103,7 +104,7 @@ func stripIntraSums(cfg *modset.Config, dir string) error {
 		}
 		kept = append(kept, line)
 	}
-	return os.WriteFile(p, []byte(strings.Join(kept, "\n")), 0o644)
+	return os.WriteFile(p, []byte(strings.Join(kept, "\n")), 0o600) // #nosec G703 -- path derived from the trusted repo/module layout
 }
 
 // A fresh cache prevents an older archive at the same version from shadowing rebuilt content.
@@ -114,12 +115,18 @@ func freshProxy(cfg *modset.Config) (proxy, modcache string, cleanup func(), err
 	}
 	modcache, err = os.MkdirTemp("", "candidate-modcache-")
 	if err != nil {
+		// #nosec G104 -- best-effort cleanup after temporary cache creation failed
+		//nolint:errcheck // cleanup after temporary cache creation failed
 		os.RemoveAll(proxy)
 		return "", "", nil, err
 	}
 	cleanup = func() {
 		makeWritable(modcache)
+		// #nosec G104 -- best-effort cleanup of a temporary candidate proxy
+		//nolint:errcheck // cleanup of a temporary candidate proxy
 		os.RemoveAll(proxy)
+		// #nosec G104 -- best-effort cleanup of a temporary module cache
+		//nolint:errcheck // cleanup of a temporary module cache
 		os.RemoveAll(modcache)
 	}
 	if err := candidateproxy.BuildWorktree(cfg, proxy); err != nil {
@@ -143,6 +150,7 @@ func snapshot(dirs []string) ([32]byte, error) {
 	h := sha256.New()
 	for _, dir := range dirs {
 		for _, name := range []string{"go.mod", "go.sum"} {
+			// #nosec G304 -- reads a build/workspace path
 			data, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				if os.IsNotExist(err) {
@@ -150,6 +158,7 @@ func snapshot(dirs []string) ([32]byte, error) {
 				}
 				return [32]byte{}, err
 			}
+			//nolint:errcheck // hash.Hash writes never return an error
 			fmt.Fprintf(h, "%s\x00%d\x00", filepath.Join(dir, name), len(data))
 			h.Write(data)
 		}
@@ -159,9 +168,17 @@ func snapshot(dirs []string) ([32]byte, error) {
 
 // Go's module cache is read-only by default.
 func makeWritable(root string) {
-	filepath.WalkDir(root, func(p string, _ os.DirEntry, err error) error {
+	// #nosec G104 -- best-effort cleanup of a temp cache
+	//nolint:errcheck // best-effort cleanup of a temp cache
+	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err == nil {
-			os.Chmod(p, 0o755)
+			mode := os.FileMode(0o600)
+			if d.IsDir() {
+				mode = 0o700
+			}
+			// #nosec G104 -- best-effort cleanup of a temp cache
+			//nolint:errcheck // best-effort cleanup of a temp cache
+			os.Chmod(p, mode) // #nosec G122 -- trusted build path
 		}
 		return nil
 	})

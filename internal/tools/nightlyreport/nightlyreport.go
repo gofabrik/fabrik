@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -15,10 +16,11 @@ import (
 type Status string
 
 const (
-	StatusClean    Status = "clean"
-	StatusFindings Status = "findings"
-	StatusError    Status = "error"
-	StatusNotRun   Status = "not run"
+	StatusClean     Status = "clean"
+	StatusFindings  Status = "findings"
+	StatusError     Status = "error"
+	StatusNotRun    Status = "not run"
+	StatusUnchecked Status = "unchecked"
 )
 
 // Resolve distinguishes jobs that did not run from checks with missing output.
@@ -134,15 +136,52 @@ func ClassifyTest(data []byte, testExit int) Status {
 	return StatusClean
 }
 
-// ClassifyTidy classifies `go mod tidy -diff` output as clean, drift, or an error.
+// intraRepoLeaf matches the leaf error line go mod tidy prints when it cannot
+// resolve an intra-repo module at its unpublished v0.1.0 revision. The three
+// captured module names must agree (RE2 has no backreferences), which the caller
+// checks, so a malformed line with differing modules is not treated as benign.
+var intraRepoLeaf = regexp.MustCompile(`^github\.com/gofabrik/fabrik/([^ :]+): reading github\.com/gofabrik/fabrik/([^ ]+)/go\.mod at revision ([^ ]+)/v0\.1\.0: unknown revision [^ ]+/v0\.1\.0$`)
+
+// ClassifyTidy classifies `go mod tidy -diff` output as clean, drift, unchecked, or an error.
 func ClassifyTidy(diff, stderr []byte, tidyExit int) Status {
 	if tidyExit == 0 {
 		return StatusClean
 	}
+	// Real drift takes precedence: a non-empty diff is actionable regardless of a
+	// later resolution failure.
 	if len(bytes.TrimSpace(diff)) > 0 {
 		return StatusFindings
 	}
+	// Modules that require unpublished intra-repo modules (resolved only via
+	// go.work) cannot be tidied standalone; go mod tidy fails fetching them. That is
+	// unchecked, not a false error, but only when every resolution error is exactly
+	// that expected v0.1.0 failure, so a wrong-version pin or any unrelated failure
+	// still surfaces as an error.
+	if tidyErrorsAllIntraRepo(stderr) {
+		return StatusUnchecked
+	}
 	return StatusError
+}
+
+// tidyErrorsAllIntraRepo reports whether go mod tidy's failure is exactly one or
+// more intra-repo v0.1.0 resolution errors and nothing else.
+func tidyErrorsAllIntraRepo(stderr []byte) bool {
+	found := false
+	for _, raw := range bytes.Split(stderr, []byte("\n")) {
+		line := strings.TrimSpace(string(raw))
+		if line == "" ||
+			strings.HasPrefix(line, "go: downloading ") ||
+			strings.HasPrefix(line, "go: finding ") ||
+			strings.HasSuffix(line, " imports") {
+			continue
+		}
+		m := intraRepoLeaf.FindStringSubmatch(strings.TrimPrefix(line, "go: "))
+		if m == nil || m[1] != m[2] || m[2] != m[3] {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // Update is a dependency with a newer version available.
@@ -327,7 +366,7 @@ func Render(results []ModuleResult, freshness Status, updates []Update, meta Met
 	truncated := false
 	for _, r := range results {
 		for _, d := range details(r) {
-			if d.status != StatusFindings && d.status != StatusError {
+			if d.status != StatusFindings && d.status != StatusError && d.status != StatusUnchecked {
 				continue
 			}
 			block, full := detailBlock(r.Module, d.check, d.status, d.detail, budget-b.Len()-len(truncNote))
@@ -400,6 +439,8 @@ func cell(s Status) string {
 		return "`error`"
 	case StatusNotRun:
 		return "not run"
+	case StatusUnchecked:
+		return "unchecked"
 	default:
 		return string(s) // Preserve unexpected values.
 	}

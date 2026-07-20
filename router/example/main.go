@@ -17,8 +17,10 @@ package main
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gofabrik/fabrik/router"
@@ -32,10 +34,12 @@ func main() {
 	// A plain "/" is a subtree match and would hide the custom 404.
 	r.Get("/{$}", text("hello from fabrik/router\n"))
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "user %s\n", req.PathValue("id"))
+		//nolint:errcheck // An HTTP handler cannot report a response write failure after the response has started.
+		fmt.Fprintf(w, "user %s\n", html.EscapeString(req.PathValue("id"))) // #nosec G104 -- http.Handler cannot report a write failure after the response starts.
 	})
 	r.Post("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "updated user %s\n", req.PathValue("id"))
+		//nolint:errcheck // An HTTP handler cannot report a response write failure after the response has started.
+		fmt.Fprintf(w, "updated user %s\n", html.EscapeString(req.PathValue("id"))) // #nosec G104 -- http.Handler cannot report a write failure after the response starts.
 	})
 
 	r.Route("/api", func(r *router.Scope) {
@@ -49,20 +53,30 @@ func main() {
 
 	// Custom miss handlers default to 404/405 and preserve ServeMux's Allow header.
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "nothing at %s\n", req.URL.Path)
+		//nolint:errcheck // An HTTP handler cannot report a response write failure after the response has started.
+		fmt.Fprintf(w, "nothing at %s\n", html.EscapeString(req.URL.Path)) // #nosec G104 -- http.Handler cannot report a write failure after the response starts.
 	})
 	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "%s not allowed (try: %s)\n", req.Method, w.Header().Get("Allow"))
+		//nolint:errcheck // An HTTP handler cannot report a response write failure after the response has started.
+		fmt.Fprintf(w, "%s not allowed (try: %s)\n", html.EscapeString(req.Method), w.Header().Get("Allow")) // #nosec G104 -- http.Handler cannot report a write failure after the response starts.
 	})
 
 	log.Println("listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func reportsRouter() *router.Router {
 	r := router.New()
 	r.Get("/reports/{quarter}", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "org %s report for %s\n", req.PathValue("org"), req.PathValue("quarter"))
+		//nolint:errcheck // An HTTP handler cannot report a response write failure after the response has started.
+		// #nosec G104 -- http.Handler cannot report a write failure after the response starts.
+		fmt.Fprintf(w, "org %s report for %s\n",
+			html.EscapeString(req.PathValue("org")), html.EscapeString(req.PathValue("quarter")))
 	})
 	return r
 }
@@ -71,7 +85,9 @@ func logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, req)
-		log.Printf("%s %s (%s)", req.Method, req.URL.Path, time.Since(start))
+		method := strings.ReplaceAll(strings.ReplaceAll(req.Method, "\r", `\r`), "\n", `\n`)
+		path := strings.ReplaceAll(strings.ReplaceAll(req.URL.Path, "\r", `\r`), "\n", `\n`)
+		log.Printf("%s %s (%s)", method, path, time.Since(start))
 	})
 }
 
@@ -98,5 +114,8 @@ func requireAuth(next http.Handler) http.Handler {
 }
 
 func text(s string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, s) }
+	return func(w http.ResponseWriter, _ *http.Request) {
+		//nolint:errcheck // An HTTP handler cannot report a response write failure after the response has started.
+		fmt.Fprint(w, s) // #nosec G104 -- http.Handler cannot report a write failure after the response starts.
+	}
 }

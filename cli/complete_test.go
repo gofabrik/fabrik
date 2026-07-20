@@ -1,11 +1,18 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func TestTimeFlag_ParsesRFC3339(t *testing.T) {
 	when := TimeFlag("when")
@@ -56,6 +63,25 @@ func TestCompletion_ScriptsEmitNonEmpty(t *testing.T) {
 				t.Errorf("%s script should call back via __complete, got %q", shell, stdout)
 			}
 		})
+	}
+}
+
+func TestCompletion_ReportsWriteError(t *testing.T) {
+	writeErr := errors.New("write failed")
+	root := &Command{Name: "myapp", Run: func(Context) error { return nil }}
+	var reported error
+	code, _, _ := exec(t, root, []string{"completion", "bash"},
+		WithStdout(failingWriter{err: writeErr}),
+		OnError(func(_ Context, err error) int {
+			reported = err
+			return 42
+		}),
+	)
+	if code != 42 {
+		t.Fatalf("want write failure exit code 42, got %d", code)
+	}
+	if !errors.Is(reported, writeErr) {
+		t.Fatalf("want reported error %v, got %v", writeErr, reported)
 	}
 }
 
@@ -340,8 +366,8 @@ func TestParse_FlagAfterPositional_NonVariadic(t *testing.T) {
 		Flags: Flags(port),
 		Args:  Args(host),
 		Run: func(ctx Context) error {
-			fmt.Fprintf(ctx.Stdout(), "host=%s port=%d\n", host.Get(ctx), port.Get(ctx))
-			return nil
+			_, err := fmt.Fprintf(ctx.Stdout(), "host=%s port=%d\n", host.Get(ctx), port.Get(ctx))
+			return err
 		},
 	}
 	code, stdout, stderr := exec(t, root, []string{"example.com", "--port", "9090"})

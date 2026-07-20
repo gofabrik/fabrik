@@ -44,15 +44,17 @@ type routeTable struct {
 }
 
 // NewRouteTable returns the route table for one run.
-func NewRouteTable() *routeTable {
+func NewRouteTable() *routeTable { //nolint:revive // intentionally opaque table, constructed cross-module via :=
 	return &routeTable{seen: map[string]token.Position{}, scratch: http.NewServeMux()}
 }
 
 func (rt *routeTable) add(key string, pos token.Position) (diag.Diagnostic, bool) {
 	if first, dup := rt.seen[key]; dup {
-		return diag.Diagnostic{Severity: diag.SevError, Pos: pos,
-			Message: fmt.Sprintf("duplicate route %s", key),
-			Help:    fmt.Sprintf("first declared at %s", first),
+		return diag.Diagnostic{
+			Severity: diag.SevError,
+			Pos:      pos,
+			Message:  fmt.Sprintf("duplicate route %s", key),
+			Help:     fmt.Sprintf("first declared at %s", first),
 		}, false
 	}
 	if !registers(rt.scratch, key) {

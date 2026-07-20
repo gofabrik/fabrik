@@ -105,7 +105,7 @@ func checkWhere(fn, where string) error {
 		case '?':
 			if i+1 < len(where) {
 				next := where[i+1]
-				if next == '&' || (next == '|' && !(i+2 < len(where) && where[i+2] == '|')) {
+				if next == '&' || (next == '|' && (i+2 >= len(where) || where[i+2] != '|')) {
 					return fmt.Errorf("%s: where contains the JSONB ?%c operator - write-helper where treats every unquoted ? as a placeholder; use raw SQL for JSONB operators", fn, next)
 				}
 				// Numbered placeholders conflict with the helper's

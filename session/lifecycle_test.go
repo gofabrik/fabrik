@@ -198,7 +198,7 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 	}
 
 	// Destroy deletes the old record before inserting the new one.
-	var deleteIdx, saveIdx = -1, -1
+	deleteIdx, saveIdx := -1, -1
 	for i, op := range store.opLog() {
 		if op == "delete:"+sid && deleteIdx < 0 {
 			deleteIdx = i
@@ -858,6 +858,7 @@ func TestCommitSurvivesCanceledRequestContext(t *testing.T) {
 	sid := establish(t, m, h, "v")
 
 	req := httptest.NewRequest("GET", "/", nil)
+	// #nosec G124 -- cookie attributes are caller-configurable
 	req.AddCookie(&http.Cookie{Name: "sid", Value: sid})
 	cctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(cctx)
@@ -900,6 +901,7 @@ func TestHijackAfterWriteIsAllowed(t *testing.T) {
 	sid := establish(t, m, h, "v")
 
 	req := httptest.NewRequest("GET", "/", nil)
+	// #nosec G124 -- cookie attributes are caller-configurable
 	req.AddCookie(&http.Cookie{Name: "sid", Value: sid})
 	hr := &hijackRecorder{ResponseRecorder: httptest.NewRecorder()}
 	m.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -911,7 +913,8 @@ func TestHijackAfterWriteIsAllowed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("hijack after WriteHeader = %v, want success", err)
 		}
-		conn.Close()
+		// #nosec G104 -- hijacked test connection Close is cleanup
+		conn.Close() //nolint:errcheck // hijacked test connection Close is cleanup
 	})).ServeHTTP(hr, req)
 	if !hr.hijacked {
 		t.Fatal("underlying connection was never hijacked")

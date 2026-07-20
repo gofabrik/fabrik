@@ -47,18 +47,20 @@ func completionCmd(root *Command) *Command {
 		injected: true,
 		Args:     Args(shellArg),
 		Run: func(ctx Context) error {
+			var script string
 			switch s := shellArg.Get(ctx); s {
 			case "bash":
-				fmt.Fprint(ctx.Stdout(), bashCompletion(root.Name))
+				script = bashCompletion(root.Name)
 			case "zsh":
-				fmt.Fprint(ctx.Stdout(), zshCompletion(root.Name))
+				script = zshCompletion(root.Name)
 			case "fish":
-				fmt.Fprint(ctx.Stdout(), fishCompletion(root.Name))
+				script = fishCompletion(root.Name)
 			default:
 				// OneOf and this switch must accept the same shell set.
 				return fmt.Errorf("internal: no emitter wired up for shell %q", s)
 			}
-			return nil
+			_, err := fmt.Fprint(ctx.Stdout(), script)
+			return err
 		},
 	}
 }
@@ -146,7 +148,13 @@ func runComplete(ctx Context, root *Command, partial []string) error {
 	}
 	w := walkPath(root, rest)
 
-	emit := func(s string) { fmt.Fprintln(ctx.Stdout(), s) }
+	var writeErr error
+	emit := func(s string) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintln(ctx.Stdout(), s)
+	}
 	emitCandidates := func(fn CompleteFn, valPrefix, displayPrefix string) {
 		if fn == nil {
 			return
@@ -170,16 +178,16 @@ func runComplete(ctx Context, root *Command, partial []string) error {
 							emit("--" + name + "=" + c)
 						}
 					}
-					return nil
+					return writeErr
 				}
 				emitCandidates(f.flagCompleter(), valPrefix, "--"+name+"=")
-				return nil
+				return writeErr
 			}
 		}
 
 		if w.pendingFlag != nil {
 			emitCandidates(w.pendingFlag.flagCompleter(), cur, "")
-			return nil
+			return writeErr
 		}
 
 		if strings.HasPrefix(cur, "--") {
@@ -192,7 +200,7 @@ func runComplete(ctx Context, root *Command, partial []string) error {
 					emit("--" + f.flagName())
 				}
 			}
-			return nil
+			return writeErr
 		}
 		if cur == "-" {
 			for _, f := range w.known {
@@ -204,7 +212,7 @@ func runComplete(ctx Context, root *Command, partial []string) error {
 				}
 				emit("--" + f.flagName())
 			}
-			return nil
+			return writeErr
 		}
 	}
 
@@ -229,7 +237,7 @@ func runComplete(ctx Context, root *Command, partial []string) error {
 			emitCandidates(last.argCompleter(), cur, "")
 		}
 	}
-	return nil
+	return writeErr
 }
 
 // lookupFlagToken resolves long, short, and inline-value forms during completion traversal.

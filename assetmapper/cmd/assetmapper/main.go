@@ -31,7 +31,7 @@ func main() {
 
 func run(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: assetmapper <require|remove|prune> [-dir assets] args...")
+		return errors.New("usage: assetmapper <require|remove|prune> [-dir assets] [args]")
 	}
 	sub, rest := args[0], args[1:]
 
@@ -41,7 +41,7 @@ func run(args []string, out io.Writer) error {
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	if _, err := os.Stat(*dir); err != nil {
+	if _, err := os.Stat(*dir); err != nil { // #nosec G703 -- validates the user-selected asset directory
 		return fmt.Errorf("asset directory %q does not exist (pass -dir)", *dir)
 	}
 
@@ -61,7 +61,7 @@ func run(args []string, out io.Writer) error {
 	switch sub {
 	case "require":
 		if fs.NArg() == 0 {
-			return errors.New("usage: assetmapper require [-dir assets] <package>[@version]...")
+			return errors.New("usage: assetmapper require [-dir assets] <package>[@version] [more packages]")
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
@@ -81,7 +81,7 @@ func run(args []string, out io.Writer) error {
 
 	case "remove":
 		if fs.NArg() == 0 {
-			return errors.New("usage: assetmapper remove [-dir assets] <specifier>...")
+			return errors.New("usage: assetmapper remove [-dir assets] <specifier> [more specifiers]")
 		}
 		// Preflight the batch before deleting any files.
 		paths := make([]string, fs.NArg())
@@ -101,9 +101,9 @@ func run(args []string, out io.Writer) error {
 			if err := os.Remove(paths[i]); err != nil && !os.IsNotExist(err) {
 				return err
 			}
-			fmt.Fprintf(out, "removed %s\n", spec)
+			fmt.Fprintf(out, "removed %s\n", spec) //nolint:errcheck // CLI stdout status output is best-effort
 		}
-		fmt.Fprintln(out, "run `assetmapper prune` to delete orphaned transitive files")
+		fmt.Fprintln(out, "run `assetmapper prune` to delete orphaned transitive files") //nolint:errcheck // CLI stdout status output is best-effort
 		return nil
 
 	case "prune":
@@ -112,10 +112,10 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 		for _, rel := range removed {
-			fmt.Fprintf(out, "pruned %s\n", rel)
+			fmt.Fprintf(out, "pruned %s\n", rel) //nolint:errcheck // CLI stdout status output is best-effort
 		}
 		if len(removed) == 0 {
-			fmt.Fprintln(out, "nothing to prune")
+			fmt.Fprintln(out, "nothing to prune") //nolint:errcheck // CLI stdout status output is best-effort
 		}
 		return nil
 
@@ -163,6 +163,6 @@ func reportChanged(out io.Writer, im *assetmapper.Importmap, before map[string]a
 		if prev, ok := before[k]; ok && prev == e {
 			continue
 		}
-		fmt.Fprintf(out, "vendored %s %s\n", k, e.Version)
+		fmt.Fprintf(out, "vendored %s %s\n", k, e.Version) //nolint:errcheck // CLI stdout status output is best-effort
 	}
 }

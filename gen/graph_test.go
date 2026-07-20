@@ -184,7 +184,7 @@ func TestPanickingBuildLeavesStateClean(t *testing.T) {
 		return "v", nil
 	})
 	func() {
-		defer func() { recover() }() // the engine's guard does this
+		defer func() { _ = recover() }() // This mirrors the engine's panic guard.
 		g.InstancePath("*x.Panicky")
 	}()
 	if g.current != "outer" {

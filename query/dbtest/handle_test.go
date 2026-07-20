@@ -20,6 +20,7 @@ type fakeExec struct{}
 func (fakeExec) QueryContext(context.Context, string, ...any) (*sql.Rows, error) {
 	return nil, nil
 }
+
 func (fakeExec) ExecContext(context.Context, string, ...any) (sql.Result, error) {
 	return nil, nil
 }

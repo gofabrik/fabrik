@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func TestCookie_WriteAndRead(t *testing.T) {
 	c := Cookie{Name: "sid", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode}
 	w := httptest.NewRecorder()
@@ -76,38 +82,48 @@ func TestCookie_CustomPathAndDomainSurviveSetCookie(t *testing.T) {
 func TestCookie_PathScopingViaCookieJar(t *testing.T) {
 	// End-to-end through net/http/cookiejar: a cookie set with
 	// Path=/api must be sent on /api/x but withheld from /other.
-	mgr, _ := New[cart](Config{
+	mgr, err := New[cart](Config{
 		Store:          NewMemoryStore(),
 		Token:          Cookie{Name: "sid", Path: "/api"},
 		AbsoluteExpiry: time.Hour,
 		IdleExpiry:     time.Minute,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler := mgr.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Always touch the session so the cookie ships.
-		mgr.Update(r.Context(), func(c *cart) error { return nil })
+		if err := mgr.Update(r.Context(), func(c *cart) error { return nil }); err != nil {
+			t.Errorf("update session: %v", err)
+		}
 	}))
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Jar: jar}
+	client := &http.Client{
+		Jar: jar,
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, r)
+			return rec.Result(), nil
+		}),
+	}
+	baseURL := &url.URL{Scheme: "http", Host: "session.test"}
 
 	// First request to /api/login establishes the cookie at Path=/api.
-	resp, err := client.Get(srv.URL + "/api/login")
+	resp, err := client.Get(baseURL.ResolveReference(&url.URL{Path: "/api/login"}).String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	// #nosec G104 -- response body Close is read cleanup
+	resp.Body.Close() //nolint:errcheck // response body Close is read cleanup
 
-	u, _ := url.Parse(srv.URL)
-	scoped := jar.Cookies(&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/api/anything"})
+	scoped := jar.Cookies(&url.URL{Scheme: baseURL.Scheme, Host: baseURL.Host, Path: "/api/anything"})
 	if len(scoped) != 1 || scoped[0].Name != "sid" {
 		t.Errorf("jar should hold the sid cookie under /api, got %v", scoped)
 	}
-	outside := jar.Cookies(&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/other"})
+	outside := jar.Cookies(&url.URL{Scheme: baseURL.Scheme, Host: baseURL.Host, Path: "/other"})
 	if len(outside) != 0 {
 		t.Errorf("Path=/api cookie leaked to /other: %v", outside)
 	}

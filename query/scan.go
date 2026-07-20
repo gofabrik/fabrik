@@ -23,7 +23,7 @@ func All[T any](ctx context.Context, db Executor, query string, args ...any) ([]
 	if err != nil {
 		return nil, classify(err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read errors are reported by rows.Err; Close is cleanup
 
 	plan, err := newScanPlan(typ, rows)
 	if err != nil {
@@ -57,7 +57,7 @@ func One[T any](ctx context.Context, db Executor, query string, args ...any) (T,
 	if err != nil {
 		return zero, classify(err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read errors are reported by rows.Err; Close is cleanup
 
 	plan, err := newScanPlan(typ, rows)
 	if err != nil {

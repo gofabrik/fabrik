@@ -198,7 +198,7 @@ func (s *SQLiteStore) ListByUser(ctx context.Context, userID string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: list user %s: %w", userID, err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read errors are reported by rows.Err; Close is cleanup
 	var sids []string
 	for rows.Next() {
 		var sid string
@@ -217,6 +217,7 @@ func (s *SQLiteStore) RevokeByUser(ctx context.Context, userID string, except ..
 	if len(except) > 0 {
 		placeholders := strings.Repeat("?,", len(except))
 		placeholders = placeholders[:len(placeholders)-1]
+		// #nosec G202 -- builds placeholders/identifiers, not user data
 		query += ` AND sid NOT IN (` + placeholders + `)`
 		for _, sid := range except {
 			args = append(args, sid)
@@ -244,7 +245,7 @@ func (s *SQLiteStore) Scan(ctx context.Context, fn func(sid string) bool) error 
 	if err != nil {
 		return fmt.Errorf("sqlitestore: scan: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read errors are reported by rows.Err; Close is cleanup
 	for rows.Next() {
 		var sid string
 		if err := rows.Scan(&sid); err != nil {

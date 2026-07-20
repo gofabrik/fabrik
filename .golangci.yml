@@ -8,11 +8,18 @@ linters:
     - gocritic
     - revive
     - misspell
+  settings:
+    gosec:
+      # G122 reports false positives for trusted repository walks, and golangci-lint
+      # cannot apply inline //#nosec annotations to this check.
+      excludes: [G122]
   exclusions:
     rules:
+      # Fabrik handler, hook, and directive contracts require otherwise unused
+      # parameters.
       - linters:
           - revive
-        text: "^exported:"
+        text: "^(exported|unused-parameter):"
 
 # gci conflicts with gofumpt's import ordering.
 formatters:

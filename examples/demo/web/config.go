@@ -1,6 +1,7 @@
+// Package web implements the demo's web layer.
 package web
 
 //fabrik:config greeter
-type Config struct {
+type GreeterConfig struct {
 	Kind string `yaml:"kind" env:"DEMO_GREETER_KIND" default:"hello"`
 }

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/gofabrik/fabrik/migrations"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,7 +24,10 @@ func openDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		// #nosec G104 -- test database cleanup cannot affect an earlier assertion
+		db.Close() //nolint:errcheck // test database cleanup cannot affect an earlier assertion
+	})
 	return db
 }
 
@@ -57,7 +60,7 @@ func TestMigrate_AppliesInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only test query cleanup; rows.Err reports iteration errors
 
 	var got []string
 	for rows.Next() {
@@ -73,6 +76,7 @@ func TestMigrate_AppliesInOrder(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	for _, name := range []string{"a", "b", "c"} {
+		// #nosec G201 -- constant test identifier, not user input
 		if _, err := db.Exec(fmt.Sprintf(`SELECT * FROM %s`, name)); err != nil {
 			t.Errorf("table %s missing: %v", name, err)
 		}
@@ -204,7 +208,7 @@ func TestMigrate_TimestampVersionsAvoidBranchCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // read-only test query cleanup; rows.Err reports iteration errors
 
 	var got []string
 	for rows.Next() {
@@ -226,17 +230,20 @@ func TestMigrate_BlocksWhenSQLiteWriterLockHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		// #nosec G104 -- test database cleanup cannot affect an earlier assertion
+		db.Close() //nolint:errcheck // test database cleanup cannot affect an earlier assertion
+	})
 
 	held, err := db.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
+	defer held.Close() //nolint:errcheck // test connection cleanup cannot affect the lock assertion
 	if _, err := held.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
 		t.Fatal(err)
 	}
-	defer held.ExecContext(context.Background(), "ROLLBACK")
+	defer held.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup of the deliberately held test lock
 
 	src := fstest.MapFS{
 		"0001_init.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)},
@@ -263,11 +270,14 @@ func TestMigrate_ProceedsAfterLockReleased(t *testing.T) {
 	}
 
 	released := make(chan struct{})
+	releaseErr := make(chan error, 1)
 	go func() {
 		defer close(released)
 		time.Sleep(50 * time.Millisecond)
-		held.ExecContext(context.Background(), "ROLLBACK")
-		held.Close()
+		_, err := held.ExecContext(context.Background(), "ROLLBACK")
+		releaseErr <- err
+		// #nosec G104 -- test connection cleanup follows the checked rollback
+		held.Close() //nolint:errcheck // test connection cleanup follows the checked rollback
 	}()
 	t.Cleanup(func() { <-released })
 
@@ -276,6 +286,9 @@ func TestMigrate_ProceedsAfterLockReleased(t *testing.T) {
 	}
 	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src); err != nil {
 		t.Fatalf("migrations.Migrate should proceed once lock is released: %v", err)
+	}
+	if err := <-releaseErr; err != nil {
+		t.Fatalf("release held SQLite lock: %v", err)
 	}
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
@@ -471,6 +484,7 @@ func TestMigrate_ConcurrentSQLite(t *testing.T) {
 		t.Errorf("expected 3 rows in schema_migrations, got %d", n)
 	}
 	for _, name := range []string{"a", "b", "c"} {
+		// #nosec G202 -- constant test identifier, not user input
 		if _, err := db.Exec(`SELECT * FROM ` + name); err != nil {
 			t.Errorf("table %s missing: %v", name, err)
 		}

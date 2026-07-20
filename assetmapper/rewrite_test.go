@@ -23,7 +23,7 @@ func compileAndRead(t *testing.T, src fstest.MapFS, logical string) (string, *as
 	if !ok {
 		t.Fatalf("manifest missing %q; entries = %v", logical, manifest.Entries)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, hashed))
+	data, err := os.ReadFile(filepath.Join(dir, hashed)) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestCompile_CustomURLPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"]))
+	data, _ := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"])) // #nosec G304 -- reads an app-selected asset path
 	want := "/static/v2/" + manifest.Entries["util.js"]
 	if !strings.Contains(string(data), want) {
 		t.Errorf("rewritten url uses default prefix instead of custom; got:\n%s", data)
@@ -293,7 +293,7 @@ func TestCompile_CustomURLPrefixGetsTrailingSlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"]))
+	data, _ := os.ReadFile(filepath.Join(dir, manifest.Entries["app.js"])) // #nosec G304 -- reads an app-selected asset path
 	want := "/static/" + manifest.Entries["util.js"]
 	if !strings.Contains(string(data), want) {
 		t.Errorf("rewritten url missing trailing-slash normalisation; got:\n%s", data)

@@ -12,8 +12,8 @@ import (
 // Diagnostics from accept are complete and suppress the generic rejection.
 func resolveArgs(g *gen.Gen, cfg *cfgdir.Config, params []param,
 	accept func(pr param) (string, diag.Diagnostics, bool),
-	reject func(pr param) (msg, help string)) ([]string, diag.Diagnostics) {
-
+	reject func(pr param) (msg, help string),
+) ([]string, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	args := make([]string, 0, len(params))
 	for _, pr := range params {

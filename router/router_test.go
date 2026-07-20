@@ -27,7 +27,10 @@ func body(t *testing.T, rr *httptest.ResponseRecorder) string {
 }
 
 func text(s string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, s) }
+	return func(w http.ResponseWriter, _ *http.Request) {
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, s) // #nosec G104 -- httptest.ResponseRecorder.Write cannot fail in this test helper.
+	}
 }
 
 func mustPanic(t *testing.T, name string, fn func()) {
@@ -44,7 +47,8 @@ func TestStaticAndParam(t *testing.T) {
 	r := router.New()
 	r.Get("/", text("root"))
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		io.WriteString(w, "user "+req.PathValue("id"))
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "user "+req.PathValue("id")) // #nosec G104 G705 -- Fixed httptest input and an infallible ResponseRecorder make these non-risks.
 	})
 
 	if rr := do(t, r, "GET", "/"); rr.Code != 200 || body(t, rr) != "root" {
@@ -58,7 +62,8 @@ func TestStaticAndParam(t *testing.T) {
 func TestStaticBeatsParam(t *testing.T) {
 	r := router.New()
 	r.Get("/users/{id}", func(w http.ResponseWriter, req *http.Request) {
-		io.WriteString(w, "param:"+req.PathValue("id"))
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "param:"+req.PathValue("id")) // #nosec G104 G705 -- Fixed httptest input and an infallible ResponseRecorder make these non-risks.
 	})
 	r.Get("/users/new", text("static"))
 
@@ -73,7 +78,8 @@ func TestStaticBeatsParam(t *testing.T) {
 func TestWildcard(t *testing.T) {
 	r := router.New()
 	r.Get("/assets/{path...}", func(w http.ResponseWriter, req *http.Request) {
-		io.WriteString(w, req.PathValue("path"))
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, req.PathValue("path")) // #nosec G104 G705 -- Fixed httptest input and an infallible ResponseRecorder make these non-risks.
 	})
 	if rr := do(t, r, "GET", "/assets/css/site/app.css"); body(t, rr) != "css/site/app.css" {
 		t.Fatalf("wildcard = %q", body(t, rr))
@@ -96,7 +102,8 @@ func TestExactRootMatch(t *testing.T) {
 func TestTrailingSlashSubtreeAndRedirect(t *testing.T) {
 	r := router.New()
 	r.HandleFunc("/files/", func(w http.ResponseWriter, req *http.Request) {
-		io.WriteString(w, "file:"+req.URL.Path)
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "file:"+req.URL.Path) // #nosec G104 G705 -- Fixed httptest input and an infallible ResponseRecorder make these non-risks.
 	})
 
 	if rr := do(t, r, "GET", "/files/a/b.txt"); rr.Code != 200 || body(t, rr) != "file:/files/a/b.txt" {
@@ -172,7 +179,8 @@ func TestExplicitOptionsRoute(t *testing.T) {
 	r.Get("/a", text("a"))
 	r.Options("/a", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Custom-Options", "1")
-		io.WriteString(w, "opts")
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "opts") // #nosec G104 -- httptest.ResponseRecorder.Write cannot fail in this test handler.
 	})
 	rr := do(t, r, "OPTIONS", "/a")
 	if rr.Code != 200 || body(t, rr) != "opts" || rr.Header().Get("X-Custom-Options") != "1" {
@@ -209,7 +217,8 @@ func TestCustomNotFound(t *testing.T) {
 	r.Get("/a", text("a"))
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		io.WriteString(w, "nothing at "+req.URL.Path)
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "nothing at "+req.URL.Path) // #nosec G104 G705 -- Fixed httptest input and an infallible ResponseRecorder make these non-risks.
 	})
 	rr := do(t, r, "GET", "/nope")
 	if rr.Code != http.StatusNotFound || body(t, rr) != "nothing at /nope" {
@@ -223,7 +232,8 @@ func TestCustomMethodNotAllowedGetsAllow(t *testing.T) {
 	r.Post("/a", text("a"))
 	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		io.WriteString(w, "try: "+w.Header().Get("Allow"))
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "try: "+w.Header().Get("Allow")) // #nosec G104 -- httptest.ResponseRecorder.Write cannot fail in this test handler.
 	})
 	rr := do(t, r, "DELETE", "/a")
 	if rr.Code != http.StatusMethodNotAllowed || body(t, rr) != "try: GET, HEAD, POST" {
@@ -239,7 +249,8 @@ func TestCustomNotFoundIgnoresAppWritten404(t *testing.T) {
 	})
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		io.WriteString(w, "router 404")
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "router 404") // #nosec G104 -- httptest.ResponseRecorder.Write cannot fail in this test handler.
 	})
 
 	if rr := do(t, r, "GET", "/item/5"); body(t, rr) != "item gone\n" {
@@ -270,7 +281,10 @@ func TestCustomErrorHandlersDefaultStatus(t *testing.T) {
 	// Body-only handlers still send the routing status.
 	r := router.New()
 	r.Get("/a", text("a"))
-	r.NotFound(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "gone") })
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "gone") // #nosec G104 -- httptest.ResponseRecorder.Write cannot fail in this test handler.
+	})
 	r.MethodNotAllowed(func(http.ResponseWriter, *http.Request) {})
 
 	if rr := do(t, r, "GET", "/nope"); rr.Code != http.StatusNotFound || body(t, rr) != "gone" {
@@ -289,7 +303,8 @@ func TestCustomErrorHandlerCanOverrideStatus(t *testing.T) {
 	r := router.New()
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		io.WriteString(w, "boom")
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "boom") // #nosec G104 -- httptest.ResponseRecorder.Write cannot fail in this test handler.
 	})
 	if rr := do(t, r, "GET", "/nope"); rr.Code != http.StatusInternalServerError || body(t, rr) != "boom" {
 		t.Fatalf("override = %d %q, want 500 boom", rr.Code, body(t, rr))
@@ -452,7 +467,8 @@ func TestExactRootUnderGroupAndMount(t *testing.T) {
 func TestNestedMount(t *testing.T) {
 	inner := router.New()
 	inner.Get("/{iid}", func(w http.ResponseWriter, req *http.Request) {
-		io.WriteString(w, req.PathValue("tid")+"/"+req.PathValue("pid")+"/"+req.PathValue("iid"))
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, req.PathValue("tid")+"/"+req.PathValue("pid")+"/"+req.PathValue("iid")) // #nosec G104 G705 -- Fixed httptest input and an infallible ResponseRecorder make these non-risks.
 	})
 	mid := router.New()
 	mid.Mount("/posts/{pid}/items", inner)
@@ -486,7 +502,8 @@ func TestMountAtRoot(t *testing.T) {
 
 func TestHandleWithStripPrefix(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		io.WriteString(w, "path="+req.URL.Path)
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "path="+req.URL.Path) // #nosec G104 G705 -- Fixed httptest input and an infallible ResponseRecorder make these non-risks.
 	})
 	r := router.New()
 	r.Handle("/static/", http.StripPrefix("/static", inner))
@@ -547,7 +564,8 @@ func TestOptionsAsteriskUnderHooks(t *testing.T) {
 func TestMethodHandle(t *testing.T) {
 	r := router.New()
 	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, "purged")
+		//nolint:errcheck // Test handlers write only to httptest.ResponseRecorder, whose Write cannot fail.
+		io.WriteString(w, "purged") // #nosec G104 -- httptest.ResponseRecorder.Write cannot fail in this test handler.
 	})
 	r.MethodHandle("PURGE", "/cache", h)
 

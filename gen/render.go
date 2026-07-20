@@ -147,8 +147,7 @@ func layoutPhase(nodes []phaseNode) [][]phaseNode {
 	for i := range comp {
 		comp[i] = i
 	}
-	var find func(int) int
-	find = func(x int) int {
+	find := func(x int) int {
 		for comp[x] != x {
 			comp[x] = comp[comp[x]]
 			x = comp[x]

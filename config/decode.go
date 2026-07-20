@@ -73,8 +73,10 @@ func applyDefaults(rv reflect.Value, probs *[]Problem) {
 		// A nil *struct cannot receive nested default/env tags before YAML allocation.
 		if fv.Kind() == reflect.Pointer && fv.Type().Elem().Kind() == reflect.Struct && fv.Type().Elem() != durationType {
 			if hasConfigTags(fv.Type().Elem(), map[reflect.Type]bool{}) {
-				*probs = append(*probs, Problem{Key: path,
-					Message: "optional struct groups cannot carry default: or env: tags; make the field a value struct"})
+				*probs = append(*probs, Problem{
+					Key:     path,
+					Message: "optional struct groups cannot carry default: or env: tags; make the field a value struct",
+				})
 			}
 			return
 		}

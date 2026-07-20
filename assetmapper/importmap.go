@@ -71,11 +71,11 @@ func NewImportmap() *Importmap {
 
 // LoadImportmap reads an importmap from path.
 func LoadImportmap(path string) (*Importmap, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		return nil, fmt.Errorf("assetmapper.LoadImportmap: open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // read-only file close cannot affect the completed decode
 	return ParseImportmap(f)
 }
 
@@ -96,7 +96,7 @@ func ParseImportmap(r io.Reader) (*Importmap, error) {
 // Save writes the importmap to path with sorted keys and two-space
 // indentation. The directory must already exist.
 func (im *Importmap) Save(path string) error {
-	f, err := os.Create(path)
+	f, err := os.Create(path) // #nosec G304 -- writes to a caller-selected asset path
 	if err != nil {
 		return fmt.Errorf("assetmapper.Importmap.Save: create %s: %w", path, err)
 	}

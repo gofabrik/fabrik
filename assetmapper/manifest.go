@@ -38,11 +38,11 @@ func NewManifest() *Manifest {
 // LoadManifest reads publicDir/manifest.json.
 func LoadManifest(publicDir string) (*Manifest, error) {
 	path := filepath.Join(publicDir, ManifestFilename)
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		return nil, fmt.Errorf("assetmapper.LoadManifest: open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // read-only file close cannot affect the completed decode
 	return ParseManifest(f)
 }
 
@@ -61,7 +61,7 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 // Save writes publicDir/manifest.json.
 func (m *Manifest) Save(publicDir string) error {
 	path := filepath.Join(publicDir, ManifestFilename)
-	f, err := os.Create(path)
+	f, err := os.Create(path) // #nosec G304 -- writes to a caller-selected asset path
 	if err != nil {
 		return fmt.Errorf("assetmapper.Manifest.Save: create %s: %w", path, err)
 	}

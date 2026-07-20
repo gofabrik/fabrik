@@ -243,14 +243,14 @@ func (v *Vendor) applyResolution(ctx context.Context, res *Resolution) error {
 	}
 
 	// Write files before importmap entries so missing-file entries cannot persist.
-	if err := os.MkdirAll(v.VendorDir, 0o755); err != nil {
+	if err := os.MkdirAll(v.VendorDir, 0o755); err != nil { // #nosec G301 -- served asset, world-readable by design
 		return fmt.Errorf("assetmapper.Vendor: create %s: %w", v.VendorDir, err)
 	}
 	for _, s := range staged {
-		if err := os.MkdirAll(filepath.Dir(s.dst), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(s.dst), 0o755); err != nil { // #nosec G301 -- served asset, world-readable by design
 			return fmt.Errorf("assetmapper.Vendor: mkdir for %s: %w", s.pkg.Specifier, err)
 		}
-		if err := os.WriteFile(s.dst, s.content, 0o644); err != nil {
+		if err := os.WriteFile(s.dst, s.content, 0o644); err != nil { // #nosec G306 -- served asset, world-readable by design
 			return fmt.Errorf("assetmapper.Vendor: write %s: %w", s.dst, err)
 		}
 	}

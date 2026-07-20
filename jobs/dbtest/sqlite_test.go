@@ -1,3 +1,4 @@
+// Package dbtest exercises jobs persistence against real database backends.
 package dbtest
 
 import (
@@ -24,6 +25,13 @@ type OrderPlaced struct {
 	ID int `json:"id"`
 }
 
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func openDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := "file:" + filepath.Join(t.TempDir(), "jobs.db") +
@@ -32,7 +40,10 @@ func openDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		// #nosec G104 -- best-effort database cleanup after the test completes
+		db.Close() //nolint:errcheck // best-effort database cleanup after the test completes
+	})
 	return db
 }
 
@@ -69,7 +80,8 @@ func runWorker(t *testing.T, m *jobs.Manager) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), timeScale*2*time.Second)
 		defer cancel()
-		w.Stop(ctx)
+		// #nosec G104 -- best-effort worker cleanup after the test completes
+		w.Stop(ctx) //nolint:errcheck // best-effort worker cleanup after the test completes
 	})
 }
 
@@ -97,7 +109,7 @@ func state(t *testing.T, m *jobs.Manager, id string) jobs.State {
 func TestSQLiteEndToEnd(t *testing.T) {
 	m, _ := newMgr(t)
 	var got atomic.Value
-	jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { got.Store(e.To); return nil })
+	requireNoError(t, jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { got.Store(e.To); return nil }))
 	runWorker(t, m)
 	id, err := m.Enqueue(context.Background(), Email{To: "a@b.c"})
 	if err != nil {
@@ -110,7 +122,7 @@ func TestSQLiteEndToEnd(t *testing.T) {
 func TestSQLiteRetryDiscardLedger(t *testing.T) {
 	m, _ := newMgr(t)
 	var runs atomic.Int32
-	jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { runs.Add(1); return errors.New("boom") })
+	requireNoError(t, jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { runs.Add(1); return errors.New("boom") }))
 	runWorker(t, m)
 	id, _ := m.Enqueue(context.Background(), Email{}, jobs.MaxAttempts(2))
 	eventually(t, func() bool { return state(t, m, id) == jobs.StateDiscarded }, "discarded")
@@ -125,10 +137,10 @@ func TestSQLiteRetryDiscardLedger(t *testing.T) {
 
 func TestSQLitePublishFanOut(t *testing.T) {
 	m, _ := newMgr(t)
-	jobs.Register[OrderPlaced](m, "order.placed")
+	requireNoError(t, jobs.Register[OrderPlaced](m, "order.placed"))
 	var a, b atomic.Int32
-	jobs.On(m, "email", func(_ jobs.Context, o OrderPlaced) error { a.Add(1); return nil })
-	jobs.On(m, "inventory", func(_ jobs.Context, o OrderPlaced) error { b.Add(1); return nil })
+	requireNoError(t, jobs.On(m, "email", func(_ jobs.Context, o OrderPlaced) error { a.Add(1); return nil }))
+	requireNoError(t, jobs.On(m, "inventory", func(_ jobs.Context, o OrderPlaced) error { b.Add(1); return nil }))
 	runWorker(t, m)
 	res, err := m.Publish(context.Background(), OrderPlaced{ID: 5})
 	if err != nil || len(res) != 2 {
@@ -140,11 +152,11 @@ func TestSQLitePublishFanOut(t *testing.T) {
 func TestSQLiteCancelRunning(t *testing.T) {
 	m, _ := newMgr(t)
 	started := make(chan struct{})
-	jobs.Handle(m, "email", func(ctx jobs.Context, e Email) error {
+	requireNoError(t, jobs.Handle(m, "email", func(ctx jobs.Context, e Email) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
-	})
+	}))
 	runWorker(t, m)
 	id, _ := m.Enqueue(context.Background(), Email{})
 	<-started
@@ -198,7 +210,7 @@ func TestSQLiteClockControlsTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs.Handle(m, "email", func(jobs.Context, Email) error { return nil })
+	requireNoError(t, jobs.Handle(m, "email", func(jobs.Context, Email) error { return nil }))
 	id, err := m.Enqueue(context.Background(), Email{})
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +227,7 @@ func TestSQLiteClockControlsTimestamps(t *testing.T) {
 
 func TestSQLiteConcurrentUniqueKey(t *testing.T) {
 	m, _ := newMgr(t)
-	jobs.Handle(m, "email", func(jobs.Context, Email) error { return nil })
+	requireNoError(t, jobs.Handle(m, "email", func(jobs.Context, Email) error { return nil }))
 	const n = 16
 	var wg sync.WaitGroup
 	dups := make([]bool, n)
@@ -311,7 +323,7 @@ func TestSQLiteCompleteDoesNotRegressUpdatedAt(t *testing.T) {
 
 func TestSQLiteDedupAndDuplicate(t *testing.T) {
 	m, _ := newMgr(t)
-	jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { return nil })
+	requireNoError(t, jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { return nil }))
 	id1, err := m.Enqueue(context.Background(), Email{}, jobs.UniqueKey("k"))
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +337,7 @@ func TestSQLiteDedupAndDuplicate(t *testing.T) {
 func TestSQLiteSchedule(t *testing.T) {
 	m, _ := newMgr(t)
 	var runs atomic.Int32
-	jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { runs.Add(1); return nil })
+	requireNoError(t, jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { runs.Add(1); return nil }))
 	if err := m.Schedule("poll", jobs.Every(20*time.Millisecond), Email{}, jobs.ScheduleOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +382,8 @@ func TestSQLiteNoDoubleClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	// #nosec G104 -- best-effort database cleanup after the test completes
+	defer db.Close() //nolint:errcheck // best-effort database cleanup after the test completes
 	store, err := jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: true})
 	if err != nil {
 		t.Fatal(err)
@@ -386,12 +399,12 @@ func TestSQLiteNoDoubleClaim(t *testing.T) {
 	const n = 100
 	var mu sync.Mutex
 	seen := map[int]int{}
-	jobs.Handle(m, "task", func(_ jobs.Context, task Task) error {
+	requireNoError(t, jobs.Handle(m, "task", func(_ jobs.Context, task Task) error {
 		mu.Lock()
 		seen[task.ID]++
 		mu.Unlock()
 		return nil
-	})
+	}))
 
 	for _, id := range makeWorkers(t, m, 2) {
 		_ = id
@@ -438,7 +451,8 @@ func makeWorkers(t *testing.T, m *jobs.Manager, count int) []string {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			w.Stop(ctx)
+			// #nosec G104 -- best-effort worker cleanup after the test completes
+			w.Stop(ctx) //nolint:errcheck // best-effort worker cleanup after the test completes
 		})
 	}
 	return ids
@@ -446,9 +460,12 @@ func makeWorkers(t *testing.T, m *jobs.Manager, count int) []string {
 
 func TestSQLiteInsertTx(t *testing.T) {
 	m, store := newMgr(t)
-	jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { return nil })
+	requireNoError(t, jobs.Handle(m, "email", func(_ jobs.Context, e Email) error { return nil }))
 	db := openDB(t)
-	s2, _ := jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: true})
+	s2, err := jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)

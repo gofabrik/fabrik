@@ -254,12 +254,7 @@ func applyFlagToken(tok, next string, haveNext bool, flags []AnyFlag, vs values)
 		body = tok[2:]
 	}
 
-	name, valIn, hasInline := body, "", false
-	if i := strings.Index(body, "="); i >= 0 {
-		name = body[:i]
-		valIn = body[i+1:]
-		hasInline = true
-	}
+	name, valIn, hasInline := strings.Cut(body, "=")
 
 	var f AnyFlag
 	if isLong {

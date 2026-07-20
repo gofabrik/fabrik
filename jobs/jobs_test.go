@@ -31,6 +31,13 @@ func testManager(t *testing.T, store Store) *Manager {
 	return m
 }
 
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runWorker(t *testing.T, m *Manager, cfg WorkerConfig) *Worker {
 	t.Helper()
 	if cfg.PollInterval == 0 {
@@ -53,7 +60,8 @@ func runWorker(t *testing.T, m *Manager, cfg WorkerConfig) *Worker {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		w.Stop(ctx)
+		// #nosec G104 -- best-effort worker cleanup after the test completes
+		w.Stop(ctx) //nolint:errcheck // best-effort worker cleanup after the test completes
 	})
 	return w
 }
@@ -104,13 +112,17 @@ func TestRegistrationConflicts(t *testing.T) {
 
 func TestStopBeforeStartDoesNotHang(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	w, err := NewWorker(m, WorkerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
-	go func() { w.Stop(context.Background()); close(done) }()
+	go func() {
+		// #nosec G104 -- this test asserts prompt return, not the cleanup result
+		w.Stop(context.Background()) //nolint:errcheck // this test asserts prompt return, not the cleanup result
+		close(done)
+	}()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -176,7 +188,7 @@ func TestClockControlsTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	id, err := m.Enqueue(context.Background(), Email{})
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +220,7 @@ func TestCompleteRetriesTransientFailure(t *testing.T) {
 	fs := &flakyStore{Store: NewMemoryStore()}
 	fs.failCompletes.Store(2)
 	m := testManager(t, fs)
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	// Completion retries continue beyond the original claim deadline.
 	runWorker(t, m, WorkerConfig{
 		PollInterval: 5 * time.Millisecond, LeaseDuration: 60 * time.Millisecond,
@@ -298,7 +310,7 @@ func TestCancelWinsOverCompletion(t *testing.T) {
 func TestConcurrentUniqueKeyInsert(t *testing.T) {
 	store := NewMemoryStore()
 	m := testManager(t, store)
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	const n = 20
 	var wg sync.WaitGroup
 	ids := make([]string, n)
@@ -381,11 +393,11 @@ func TestShutdownDeadlineReturns(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
 	started := make(chan struct{})
 	release := make(chan struct{})
-	Handle[Email](m, "email", func(c Context, e Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
 		close(started)
 		<-release
 		return nil
-	})
+	}))
 	w, err := NewWorker(m, WorkerConfig{
 		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
 		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
@@ -441,10 +453,10 @@ func TestHandlerNotStartedAfterAbandon(t *testing.T) {
 
 	m := testManager(t, NewMemoryStore())
 	var ran atomic.Bool
-	Handle[blockDecodeMsg](m, "block", func(Context, blockDecodeMsg) error {
+	requireNoError(t, Handle[blockDecodeMsg](m, "block", func(Context, blockDecodeMsg) error {
 		ran.Store(true)
 		return nil
-	})
+	}))
 	w, err := NewWorker(m, WorkerConfig{
 		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
 		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
@@ -492,11 +504,11 @@ func TestAbandonedRunEmitsFinishHook(t *testing.T) {
 	}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	Handle[Email](m, "email", func(c Context, e Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
 		close(started)
 		<-release
 		return nil
-	})
+	}))
 	w, err := NewWorker(m, WorkerConfig{
 		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
 		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
@@ -526,11 +538,11 @@ func TestTimeoutIsCooperative(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
 	started := make(chan struct{})
 	release := make(chan struct{})
-	Handle[Email](m, "email", func(c Context, e Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
 		close(started)
 		<-release
 		return c.Err()
-	})
+	}))
 	runWorker(t, m, WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond})
 	id, err := m.Enqueue(context.Background(), Email{}, Timeout(50*time.Millisecond), TimeoutAction(TimeoutFail))
 	if err != nil {
@@ -594,12 +606,12 @@ func TestEnqueueRunsHandler(t *testing.T) {
 
 func TestEnqueueRequiresExactlyOneHandler(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
-	Register[OrderPlaced](m, "order.placed")
+	requireNoError(t, Register[OrderPlaced](m, "order.placed"))
 	if _, err := m.Enqueue(context.Background(), OrderPlaced{ID: 1}); err == nil {
 		t.Fatal("want error for zero-handler command")
 	}
-	On[OrderPlaced](m, "a", func(Context, OrderPlaced) error { return nil })
-	On[OrderPlaced](m, "b", func(Context, OrderPlaced) error { return nil })
+	requireNoError(t, On[OrderPlaced](m, "a", func(Context, OrderPlaced) error { return nil }))
+	requireNoError(t, On[OrderPlaced](m, "b", func(Context, OrderPlaced) error { return nil }))
 	if _, err := m.Enqueue(context.Background(), OrderPlaced{ID: 1}); err == nil {
 		t.Fatal("want error for multi-handler command")
 	}
@@ -610,10 +622,10 @@ func TestEnqueueRequiresExactlyOneHandler(t *testing.T) {
 
 func TestPublishFanOut(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
-	Register[OrderPlaced](m, "order.placed")
+	requireNoError(t, Register[OrderPlaced](m, "order.placed"))
 	var a, b atomic.Int32
-	On[OrderPlaced](m, "email", func(Context, OrderPlaced) error { a.Add(1); return nil })
-	On[OrderPlaced](m, "inventory", func(Context, OrderPlaced) error { b.Add(1); return nil })
+	requireNoError(t, On[OrderPlaced](m, "email", func(Context, OrderPlaced) error { a.Add(1); return nil }))
+	requireNoError(t, On[OrderPlaced](m, "inventory", func(Context, OrderPlaced) error { b.Add(1); return nil }))
 	runWorker(t, m, WorkerConfig{})
 	res, err := m.Publish(context.Background(), OrderPlaced{ID: 7})
 	if err != nil {
@@ -627,7 +639,7 @@ func TestPublishFanOut(t *testing.T) {
 
 func TestUniqueKeyDedup(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	id1, err := m.Enqueue(context.Background(), Email{To: "x"}, UniqueKey("k1"))
 	if err != nil {
 		t.Fatal(err)
@@ -644,10 +656,10 @@ func TestUniqueKeyDedup(t *testing.T) {
 func TestRetryThenDiscardAndLedger(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
 	var runs atomic.Int32
-	Handle[Email](m, "email", func(Context, Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error {
 		runs.Add(1)
 		return errors.New("boom")
-	})
+	}))
 	runWorker(t, m, WorkerConfig{})
 	id, err := m.Enqueue(context.Background(), Email{}, MaxAttempts(2))
 	if err != nil {
@@ -668,9 +680,9 @@ func TestRetryThenDiscardAndLedger(t *testing.T) {
 
 func TestPermanentError(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
-	Handle[Email](m, "email", func(Context, Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error {
 		return errors.Join(ErrPermanent, errors.New("nope"))
-	})
+	}))
 	runWorker(t, m, WorkerConfig{})
 	id, _ := m.Enqueue(context.Background(), Email{}, MaxAttempts(10))
 	eventually(t, func() bool { return jobState(t, m, id) == StateFailed }, "permanent -> failed")
@@ -679,11 +691,11 @@ func TestPermanentError(t *testing.T) {
 func TestCancelRunning(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
 	started := make(chan struct{})
-	Handle[Email](m, "email", func(ctx Context, e Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(ctx Context, e Email) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
-	})
+	}))
 	runWorker(t, m, WorkerConfig{})
 	id, _ := m.Enqueue(context.Background(), Email{})
 	<-started
@@ -699,10 +711,10 @@ func TestCancelRunning(t *testing.T) {
 
 func TestTimeoutFail(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
-	Handle[Email](m, "email", func(ctx Context, e Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(ctx Context, e Email) error {
 		<-ctx.Done()
 		return ctx.Err()
-	})
+	}))
 	runWorker(t, m, WorkerConfig{})
 	id, _ := m.Enqueue(context.Background(), Email{}, Timeout(20*time.Millisecond), TimeoutAction(TimeoutFail))
 	eventually(t, func() bool { return jobState(t, m, id) == StateFailed }, "timeout -> failed")
@@ -710,7 +722,7 @@ func TestTimeoutFail(t *testing.T) {
 
 func TestPanicRecovered(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
-	Handle[Email](m, "email", func(Context, Email) error { panic("boom") })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { panic("boom") }))
 	runWorker(t, m, WorkerConfig{})
 	id, _ := m.Enqueue(context.Background(), Email{}, MaxAttempts(1))
 	eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "panic recovered -> discarded")
@@ -719,7 +731,7 @@ func TestPanicRecovered(t *testing.T) {
 func TestDecodePayloadPark(t *testing.T) {
 	store := NewMemoryStore()
 	m := testManager(t, store)
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	_, err := store.Insert(context.Background(), time.Now().UTC(), []Job{{
 		Kind: "email", HandlerID: "email", Payload: []byte("not json"),
 		Queue: "default", MaxAttempts: 3, AvailableAt: time.Now(),
@@ -741,7 +753,7 @@ func TestDecodePayloadPark(t *testing.T) {
 func TestClaimFilterSkipsUnrunnable(t *testing.T) {
 	store := NewMemoryStore()
 	m := testManager(t, store)
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	now := time.Now().UTC()
 	res, _ := store.Insert(context.Background(), now, []Job{{
 		Kind: "email", HandlerID: "other", Payload: []byte(`{}`),
@@ -773,10 +785,12 @@ func TestOnAttemptFinishCommitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	Handle[Email](m, "email", func(Context, Email) error { return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
 	runWorker(t, m, WorkerConfig{})
-	m.Enqueue(context.Background(), Email{})
-	eventually(t, func() bool { return fired.Load() }, "OnAttemptFinish fired")
+	if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, fired.Load, "OnAttemptFinish fired")
 	if finishState.Load() != StateSucceeded || !committed.Load() {
 		t.Fatalf("want succeeded+committed, got %v committed=%v", finishState.Load(), committed.Load())
 	}

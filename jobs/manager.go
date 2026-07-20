@@ -117,6 +117,7 @@ func (m *Manager) withStoreTimeout(parent context.Context) (context.Context, con
 	if m.config.StoreTimeout <= 0 {
 		return parent, func() {}
 	}
+	// #nosec G118 -- the caller receives and owns the cancellation function
 	return context.WithTimeout(parent, m.config.StoreTimeout)
 }
 

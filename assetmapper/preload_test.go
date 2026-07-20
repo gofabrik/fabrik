@@ -241,7 +241,7 @@ func TestRender_IncludesPreloadsBeforeEntrypointScript(t *testing.T) {
 	if im1 < 0 || preload < 0 || module < 0 {
 		t.Fatalf("missing one of importmap/preload/entrypoint:\n%s", got)
 	}
-	if !(im1 < preload && preload < module) {
+	if im1 >= preload || preload >= module {
 		t.Errorf("wrong order; importmap@%d, preload@%d, module@%d", im1, preload, module)
 	}
 }

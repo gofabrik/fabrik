@@ -43,6 +43,7 @@ func loadFreshness(path string, exit int) (nightlyreport.Status, []nightlyreport
 	if path == "" {
 		return nightlyreport.StatusNotRun, nil
 	}
+	// #nosec G304 -- reads an app-selected report artifact path
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nightlyreport.StatusError, nil
@@ -92,6 +93,9 @@ func classifyModule(dir, module string) nightlyreport.ModuleResult {
 
 // detailFor falls back to stderr when an errored tool has no normal output.
 func detailFor(status nightlyreport.Status, normal, errText string) string {
+	if status == nightlyreport.StatusUnchecked {
+		return "go mod tidy not run: this module requires unpublished intra-repo modules resolved via go.work"
+	}
 	if status == nightlyreport.StatusError && strings.TrimSpace(normal) == "" {
 		return errText
 	}
@@ -104,6 +108,7 @@ func isDir(path string) bool {
 }
 
 func readFile(dir, name string) ([]byte, bool) {
+	// #nosec G304 -- reads an app-selected report artifact path
 	data, err := os.ReadFile(filepath.Join(dir, name))
 	if err != nil {
 		return nil, false
@@ -112,6 +117,7 @@ func readFile(dir, name string) ([]byte, bool) {
 }
 
 func readExit(dir, name string) (int, bool) {
+	// #nosec G304 -- reads an app-selected report artifact path
 	data, err := os.ReadFile(filepath.Join(dir, name))
 	if err != nil {
 		return 0, false

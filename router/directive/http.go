@@ -221,11 +221,11 @@ func joinPattern(base, pattern string) string {
 func patternError(path string) string {
 	segs := strings.Split(path[1:], "/")
 	for i, seg := range segs {
-		open, close := strings.Count(seg, "{"), strings.Count(seg, "}")
-		if open == 0 && close == 0 {
+		openCount, closeCount := strings.Count(seg, "{"), strings.Count(seg, "}")
+		if openCount == 0 && closeCount == 0 {
 			continue
 		}
-		if open != 1 || close != 1 || !strings.HasPrefix(seg, "{") || !strings.HasSuffix(seg, "}") {
+		if openCount != 1 || closeCount != 1 || !strings.HasPrefix(seg, "{") || !strings.HasSuffix(seg, "}") {
 			return fmt.Sprintf("a wildcard must be a full segment (in %q)", seg)
 		}
 		last := i == len(segs)-1

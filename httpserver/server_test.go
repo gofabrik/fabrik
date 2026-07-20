@@ -15,7 +15,8 @@ func freeAddr(t *testing.T) string {
 		t.Fatal(err)
 	}
 	addr := l.Addr().String()
-	l.Close()
+	// #nosec G104 -- test cleanup close
+	l.Close() //nolint:errcheck // test cleanup close
 	return addr
 }
 
@@ -24,7 +25,8 @@ func waitListening(t *testing.T, addr string) {
 	for range 200 {
 		c, err := net.Dial("tcp", addr)
 		if err == nil {
-			c.Close()
+			// #nosec G104 -- test cleanup close
+			c.Close() //nolint:errcheck // test cleanup close
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -37,6 +39,7 @@ func TestServer_GracefulShutdownDrainsInflight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var completed bool
+	// #nosec G112 -- test server
 	s := New(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		close(started)
 		<-release
@@ -52,7 +55,8 @@ func TestServer_GracefulShutdownDrainsInflight(t *testing.T) {
 	go func() {
 		resp, err := http.Get("http://" + addr + "/")
 		if err == nil {
-			resp.Body.Close()
+			// #nosec G104 -- test cleanup close
+			resp.Body.Close() //nolint:errcheck // test cleanup close
 		}
 		respErr <- err
 	}()
@@ -84,6 +88,7 @@ func TestServer_GracefulShutdownDrainsInflight(t *testing.T) {
 
 func TestServer_ExternalShutdownNormalizesToNil(t *testing.T) {
 	addr := freeAddr(t)
+	// #nosec G112 -- test server
 	srv := &http.Server{Addr: addr}
 	s := New(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), srv)
 
@@ -109,7 +114,7 @@ func TestServer_DefaultsToPort8080WhenServerNil(t *testing.T) {
 	if got := New(nil, nil).httpServer().Addr; got != ":8080" {
 		t.Errorf("nil *http.Server should default to :8080, got %q", got)
 	}
-	provided := &http.Server{Addr: ":9000"}
+	provided := &http.Server{Addr: ":9000"} // #nosec G112 -- test server fixture
 	if got := New(nil, provided).httpServer(); got != provided {
 		t.Errorf("a provided *http.Server must be used verbatim, got %v", got)
 	}
@@ -120,7 +125,9 @@ func TestServer_ReturnsListenError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	// #nosec G104 -- test cleanup close
+	defer l.Close() //nolint:errcheck // test cleanup close
+	// #nosec G112 -- test server
 	s := New(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), &http.Server{Addr: l.Addr().String()})
 	if err := s.Run(context.Background()); err == nil {
 		t.Fatal("Run must return the listen error when the address is already in use")

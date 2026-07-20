@@ -18,9 +18,13 @@ func TestAssetsRequire(t *testing.T) {
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/generate":
-			fmt.Fprintf(w, `{"map":{"imports":{"htmx.org":"%s/npm:htmx.org@2.0.3/htmx.js"}}}`, srv.URL)
+			if _, err := fmt.Fprintf(w, `{"map":{"imports":{"htmx.org":"%s/npm:htmx.org@2.0.3/htmx.js"}}}`, srv.URL); err != nil {
+				t.Errorf("write generate response: %v", err)
+			}
 		case strings.HasPrefix(r.URL.Path, "/npm:"):
-			fmt.Fprint(w, "export default {};\n")
+			if _, err := fmt.Fprint(w, "export default {};\n"); err != nil {
+				t.Errorf("write module response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -33,10 +37,10 @@ func TestAssetsRequire(t *testing.T) {
 	}
 	write := func(rel, content string) {
 		path := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -52,7 +56,7 @@ func TestAssetsRequire(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "web/assets/vendor/htmx.org.js")); err != nil {
 		t.Fatalf("vendored file missing: %v", err)
 	}
-	im, err := os.ReadFile(filepath.Join(dir, "web/assets/importmap.json"))
+	im, err := os.ReadFile(filepath.Join(dir, "web/assets/importmap.json")) // #nosec G304 -- reads a test-controlled temporary path
 	if err != nil || !strings.Contains(string(im), `"htmx.org"`) {
 		t.Fatalf("importmap.json = %q, %v", im, err)
 	}
@@ -67,10 +71,10 @@ func TestAssetsRequire(t *testing.T) {
 
 func TestAssetsRequireNoDeclaration(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)

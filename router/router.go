@@ -411,6 +411,7 @@ func (p *errorProbe) WriteHeader(code int) {
 		p.status = code
 	}
 }
+
 func (p *errorProbe) Write(b []byte) (int, error) {
 	if p.status == 0 {
 		p.status = http.StatusOK

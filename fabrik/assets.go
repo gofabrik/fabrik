@@ -1,3 +1,4 @@
+// Package main implements the fabrik command-line tool.
 package main
 
 import (
@@ -19,7 +20,7 @@ import (
 // assetsCmd manages vendored packages for the app's asset trees.
 func assetsCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: fabrik assets <require|remove|prune> args...")
+		return errors.New("usage: fabrik assets <require|remove|prune> [args]")
 	}
 	sub, rest := args[0], args[1:]
 	fs := flag.NewFlagSet("assets "+sub, flag.ContinueOnError)
@@ -48,7 +49,7 @@ func assetsCmd(args []string) error {
 	switch sub {
 	case "require":
 		if fs.NArg() == 0 {
-			return errors.New("usage: fabrik assets require <package>[@version]...")
+			return errors.New("usage: fabrik assets require <package>[@version] [package...]")
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
@@ -81,7 +82,7 @@ func assetsCmd(args []string) error {
 
 	case "remove":
 		if fs.NArg() == 0 {
-			return errors.New("usage: fabrik assets remove <specifier>...")
+			return errors.New("usage: fabrik assets remove <specifier> [specifier...]")
 		}
 		// Preflight the batch before deleting any files.
 		paths := make([]string, fs.NArg())
@@ -137,9 +138,13 @@ func assetTreeDir() (string, error) {
 	if diags.HasFatal() {
 		f := diagfmt.NewFormatter(os.Stderr)
 		for _, d := range diags {
-			f.Emit(d)
+			if err := f.Emit(d); err != nil {
+				return "", err
+			}
 		}
-		f.Summary(diags.Counts())
+		if err := f.Summary(diags.Counts()); err != nil {
+			return "", err
+		}
 		return "", errSilent
 	}
 	if len(trees) == 0 {

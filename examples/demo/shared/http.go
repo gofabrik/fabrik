@@ -2,21 +2,10 @@ package shared
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gofabrik/fabrik/templates"
 )
 
-//fabrik:provider
-func NewServer(cfg *Config) *http.Server {
-	return &http.Server{
-		Addr:              cfg.Addr,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-}
-
-// ErrorPages renders the router's miss responses through the app's
-// template set. Body-only handlers keep the router's status codes.
 type ErrorPages struct {
 	Templates *templates.Set
 }

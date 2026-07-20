@@ -82,7 +82,7 @@ func (j *JSPMResolver) Resolve(ctx context.Context, reqs []PackageRequest) (*Res
 	if err != nil {
 		return nil, fmt.Errorf("jspm.io: POST /generate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body close after reading is cleanup only
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("jspm.io: POST /generate: status %d: %s", resp.StatusCode, body)
@@ -105,7 +105,7 @@ func (j *JSPMResolver) Fetch(ctx context.Context, raw string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jspm.io: fetch %s: %w", raw, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // response body close after reading is cleanup only
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("jspm.io: fetch %s: status %d", raw, resp.StatusCode)
 	}

@@ -22,8 +22,16 @@ func startLSP(t *testing.T) *lspClient {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	s := newLSPServer()
-	go s.run(inR, outW)
-	t.Cleanup(func() { inW.Close() })
+	done := make(chan error, 1)
+	go func() { done <- s.run(inR, outW) }()
+	t.Cleanup(func() {
+		if err := inW.Close(); err != nil {
+			t.Errorf("close LSP input: %v", err)
+		}
+		if err := <-done; err != nil {
+			t.Errorf("run LSP server: %v", err)
+		}
+	})
 
 	c := &lspClient{t: t, in: inW, replies: make(chan rpcMessage, 16), notes: make(chan rpcMessage, 64)}
 	go func() {
@@ -97,10 +105,10 @@ func TestLSP(t *testing.T) {
 	}
 	write := func(rel, content string) {
 		path := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

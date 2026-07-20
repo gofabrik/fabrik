@@ -39,7 +39,7 @@ func twoVersionProxy(t *testing.T) string {
 		t.Fatal(err)
 	}
 	list := filepath.Join(proxy, "github.com/gofabrik/fabrik/lib/@v/list")
-	if err := os.WriteFile(list, []byte("v0.1.0\nv0.1.1\n"), 0o644); err != nil {
+	if err := os.WriteFile(list, []byte("v0.1.0\nv0.1.1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return proxy
@@ -65,6 +65,7 @@ func TestScaffoldRepinSurvivesNewerRelease(t *testing.T) {
 		}
 		goMod(t, app, env, "mod", "tidy")
 
+		// #nosec G304 -- reads a test-controlled temporary path
 		data, err := os.ReadFile(filepath.Join(app, "go.mod"))
 		if err != nil {
 			t.Fatal(err)
@@ -82,7 +83,7 @@ func TestScaffoldRepinSurvivesNewerRelease(t *testing.T) {
 
 func goMod(t *testing.T, dir string, env []string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("go", args...)
+	cmd := exec.Command("go", args...) // #nosec G204 -- test launches the go toolchain with controlled args
 	cmd.Dir = dir
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {

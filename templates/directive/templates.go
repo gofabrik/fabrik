@@ -39,7 +39,7 @@ type contribution struct {
 func NewTemplates() *Templates {
 	return &Templates{
 		byName: map[string]*helperNode{},
-		treeFS: func(dir string) fs.FS { return os.DirFS(dir) },
+		treeFS: os.DirFS,
 	}
 }
 

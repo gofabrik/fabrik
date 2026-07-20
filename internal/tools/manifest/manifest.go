@@ -139,6 +139,7 @@ func Fix(cfg *modset.Config) ([]string, error) {
 
 func writeRequires(dir string, have, want map[string]string) (bool, error) {
 	gomod := filepath.Join(dir, "go.mod")
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(gomod)
 	if err != nil {
 		return false, err
@@ -164,7 +165,7 @@ func writeRequires(dir string, have, want map[string]string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(gomod, out, 0o644); err != nil {
+	if err := os.WriteFile(gomod, out, 0o600); err != nil { // #nosec G703 -- path derived from the trusted repo/module layout
 		return false, err
 	}
 	return true, nil
@@ -172,6 +173,7 @@ func writeRequires(dir string, have, want map[string]string) (bool, error) {
 
 func intraRequires(cfg *modset.Config, dir string) (map[string]string, error) {
 	gomod := filepath.Join(dir, "go.mod")
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(gomod)
 	if err != nil {
 		return nil, err

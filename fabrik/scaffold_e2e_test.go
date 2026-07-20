@@ -47,7 +47,7 @@ func TestScaffoldPinsSurviveRealFlow(t *testing.T) {
 		t.Fatalf("fabrik new: %v", err)
 	}
 
-	gomod, err := os.ReadFile(filepath.Join(tmp, "hello", "go.mod"))
+	gomod, err := os.ReadFile(filepath.Join(tmp, "hello", "go.mod")) // #nosec G304 -- reads a test-controlled temporary path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,10 +68,10 @@ func buildScaffoldProxy(t *testing.T, mods map[string]string, versions []string)
 	out := t.TempDir()
 	for path, dir := range mods {
 		vdir := filepath.Join(out, filepath.FromSlash(path), "@v")
-		if err := os.MkdirAll(vdir, 0o755); err != nil {
+		if err := os.MkdirAll(vdir, 0o750); err != nil {
 			t.Fatal(err)
 		}
-		gomod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+		gomod, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304 -- reads a trusted repository module path
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,15 +94,17 @@ func buildScaffoldProxy(t *testing.T, mods map[string]string, versions []string)
 
 func writeFile(t *testing.T, path string, data []byte) {
 	t.Helper()
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil { // #nosec G703 -- trusted test proxy path
 		t.Fatal(err)
 	}
 }
 
 func chmodTree(root string, mode os.FileMode) {
-	filepath.WalkDir(root, func(p string, _ os.DirEntry, err error) error {
+	//nolint:errcheck // best-effort cleanup of a temporary module cache
+	filepath.WalkDir(root, func(p string, _ os.DirEntry, err error) error { // #nosec G104 -- best-effort cleanup of a temporary module cache
 		if err == nil {
-			os.Chmod(p, mode)
+			//nolint:errcheck // best-effort cleanup of a temporary module cache
+			os.Chmod(p, mode) // #nosec G104 -- best-effort cleanup of a temporary module cache
 		}
 		return nil
 	})

@@ -37,7 +37,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	// Local replacements make the copied demo use this checkout's modules.
 	src := copyDemoWithLocalReplaces(t, demoDir, repoRoot)
 	bin := filepath.Join(tmp, "demo-bin")
-	build := exec.Command("go", "build", "-o", bin, ".")
+	build := exec.Command("go", "build", "-o", bin, ".") // #nosec G204 -- launches the go toolchain with controlled args
 	build.Dir = src
 	build.Env = append(os.Environ(), "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -50,19 +50,20 @@ func TestDemoEndToEnd(t *testing.T) {
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
 		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
 	)
-	migrate := exec.Command(bin)
+	migrate := exec.Command(bin) // #nosec G204 -- launches a controlled binary built by this test
 	migrate.Dir = src
 	migrate.Env = env
 	if out, err := migrate.CombinedOutput(); err != nil {
 		t.Fatalf("migrate (bare demo): %v\n%s", err, out)
 	}
-	server := exec.Command(bin, "run")
+	server := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
 	server.Dir = src
 	server.Env = env
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer server.Process.Kill()
+	//nolint:errcheck // best-effort test process cleanup
+	defer server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
 
 	visitRE := regexp.MustCompile(`visit #(\d+)`)
 	base := "http://localhost:" + port
@@ -73,7 +74,8 @@ func TestDemoEndToEnd(t *testing.T) {
 			return -1, ""
 		}
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		//nolint:errcheck // response body close after reading is cleanup only
+		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 		m := visitRE.FindStringSubmatch(string(b))
 		if m == nil {
 			return -1, string(b)
@@ -146,10 +148,10 @@ func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {
 		t.Fatalf("copy demo: %v", err)
 	}
 	// os.CopyFS may preserve a read-only mode.
-	if err := os.Chmod(filepath.Join(dst, "go.mod"), 0o644); err != nil {
+	if err := os.Chmod(filepath.Join(dst, "go.mod"), 0o600); err != nil {
 		t.Fatalf("chmod go.mod: %v", err)
 	}
-	edit := exec.Command("go", "mod", "edit", "-json")
+	edit := exec.Command("go", "mod", "edit", "-json") // #nosec G204 -- launches the go toolchain with controlled args
 	edit.Dir = dst
 	out, err := edit.Output()
 	if err != nil {
@@ -165,7 +167,7 @@ func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {
 			continue
 		}
 		local := filepath.Join(repoRoot, strings.TrimPrefix(r.Path, prefix))
-		e := exec.Command("go", "mod", "edit", "-replace="+r.Path+"="+local)
+		e := exec.Command("go", "mod", "edit", "-replace="+r.Path+"="+local) // #nosec G204 -- launches the go toolchain with controlled args
 		e.Dir = dst
 		if out, err := e.CombinedOutput(); err != nil {
 			t.Fatalf("inject replace %s: %v\n%s", r.Path, err, out)
@@ -197,7 +199,8 @@ func crossOriginFlow(t *testing.T, port string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		//nolint:errcheck // response body close after reading is cleanup only
+		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 		return resp.StatusCode
 	}
 
@@ -240,7 +243,8 @@ func formsFlow(t *testing.T, port string) {
 			t.Fatal(err)
 		}
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		//nolint:errcheck // response body close after reading is cleanup only
+		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 		return resp.StatusCode, string(b)
 	}
 
@@ -258,7 +262,8 @@ func formsFlow(t *testing.T, port string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 		t.Fatalf("valid name should 303 to /, got %d Location=%q", resp.StatusCode, resp.Header.Get("Location"))
 	}
@@ -281,7 +286,8 @@ func crossOriginGet(t *testing.T, client *http.Client, url, origin string) strin
 		t.Fatal(err)
 	}
 	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s = %d:\n%s", url, resp.StatusCode, b)
 	}
@@ -295,7 +301,8 @@ func postGreet(t *testing.T, client *http.Client, base, name string) string {
 		t.Fatal(err)
 	}
 	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST /greet = %d:\n%s", resp.StatusCode, b)
 	}
@@ -316,7 +323,8 @@ func sessionFlow(t *testing.T, port string) {
 			t.Fatal(err)
 		}
 		b, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		//nolint:errcheck // response body close after reading is cleanup only
+		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}

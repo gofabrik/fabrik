@@ -39,7 +39,7 @@ func Build(cfg *modset.Config, outDir string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(proxy)
+	defer os.RemoveAll(proxy) //nolint:errcheck // cleanup of a temporary release proxy
 	if err := candidateproxy.BuildWorktree(cfg, proxy); err != nil {
 		return err
 	}
@@ -48,8 +48,14 @@ func Build(cfg *modset.Config, outDir string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { makeWritable(modcache); os.RemoveAll(modcache) }()
+	defer func() {
+		makeWritable(modcache)
+		// #nosec G104 -- best-effort cleanup of a temporary module cache
+		//nolint:errcheck // cleanup of a temporary module cache
+		os.RemoveAll(modcache)
+	}()
 
+	// #nosec G301 -- release artifacts are intentionally readable by all users
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
@@ -64,6 +70,7 @@ func Build(cfg *modset.Config, outDir string) error {
 		sums = append(sums, fmt.Sprintf("%s  %s", sum, name))
 	}
 	sort.Strings(sums)
+	// #nosec G306 -- release checksums are intentionally readable by all users
 	return os.WriteFile(filepath.Join(outDir, "checksums.txt"), []byte(strings.Join(sums, "\n")+"\n"), 0o644)
 }
 
@@ -72,7 +79,12 @@ func buildTarget(cfg *modset.Config, proxy, modcache, goos, goarch, dst string) 
 	if err != nil {
 		return "", err
 	}
-	defer func() { makeWritable(gopath); os.RemoveAll(gopath) }()
+	defer func() {
+		makeWritable(gopath)
+		// #nosec G104 -- best-effort cleanup of a temporary GOPATH
+		//nolint:errcheck // cleanup of a temporary GOPATH
+		os.RemoveAll(gopath)
+	}()
 
 	env := append(os.Environ(), candidateproxy.Env(proxy, modcache)...)
 	env = append(env,
@@ -82,6 +94,7 @@ func buildTarget(cfg *modset.Config, proxy, modcache, goos, goarch, dst string) 
 		"GOARCH="+goarch,
 		"CGO_ENABLED=0",
 	)
+	// #nosec G204 -- launches the fixed go toolchain with controlled args
 	cmd := exec.Command("go", "install", "-trimpath", cliModule+"@"+cfg.Version)
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -98,15 +111,19 @@ func buildTarget(cfg *modset.Config, proxy, modcache, goos, goarch, dst string) 
 
 // writeArchive creates a deterministic executable archive and returns its SHA-256.
 func writeArchive(dst, binPath string) (string, error) {
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(binPath)
 	if err != nil {
 		return "", err
 	}
+	// #nosec G304 -- writes an app-selected release output path
 	f, err := os.Create(dst)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close() // Cleanup close errors do not replace the operation result.
+	}()
 
 	h := sha256.New()
 	// Zero-valued gzip headers are deterministic.
@@ -132,14 +149,25 @@ func writeArchive(dst, binPath string) (string, error) {
 	if err := gz.Close(); err != nil {
 		return "", err
 	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // makeWritable prepares the read-only module cache for removal.
 func makeWritable(root string) {
-	filepath.WalkDir(root, func(p string, _ os.DirEntry, err error) error {
+	// #nosec G104 -- best-effort cleanup of a temp cache
+	//nolint:errcheck // best-effort cleanup of a temp cache
+	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err == nil {
-			os.Chmod(p, 0o755)
+			mode := os.FileMode(0o600)
+			if d.IsDir() {
+				mode = 0o700
+			}
+			// #nosec G104 -- best-effort cleanup of a temp cache
+			//nolint:errcheck // best-effort cleanup of a temp cache
+			os.Chmod(p, mode) // #nosec G122 -- trusted build path under the tool's own temp dir
 		}
 		return nil
 	})

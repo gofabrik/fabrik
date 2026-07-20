@@ -95,6 +95,7 @@ func TestMulti_ReadFirstNonEmpty(t *testing.T) {
 	}
 
 	r2 := httptest.NewRequest("GET", "/", nil)
+	// #nosec G124 -- cookie attributes are caller-configurable
 	r2.AddCookie(&http.Cookie{Name: "sid", Value: "from-cookie"})
 	r2.Header.Set("Authorization", "Bearer from-header")
 	sid, ok = m.Read(r2)

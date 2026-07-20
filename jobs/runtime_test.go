@@ -22,12 +22,12 @@ func TestRun_WorkerDrainsInflightOnCancel(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var completed atomic.Bool
-	Handle[Email](m, "email", func(c Context, e Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
 		close(started)
 		<-release
 		completed.Store(true)
 		return nil
-	})
+	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	drain, err := Run(ctx, m, RuntimeConfig{Worker: runtimeWorkerConfig()})
@@ -115,7 +115,7 @@ func TestRun_SchedulerHostedReconciles(t *testing.T) {
 func TestRun_SchedulerRuns(t *testing.T) {
 	m := schedManager(t, NewMemoryStore())
 	var runs atomic.Int32
-	Handle[Email](m, "email", func(Context, Email) error { runs.Add(1); return nil })
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { runs.Add(1); return nil }))
 	if err := m.Schedule("poll", Every(20*time.Millisecond), Email{To: "x"}, ScheduleOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -136,11 +136,11 @@ func TestRun_DrainHonorsDeadline(t *testing.T) {
 	m := testManager(t, NewMemoryStore())
 	started := make(chan struct{})
 	release := make(chan struct{})
-	Handle[Email](m, "email", func(c Context, e Email) error {
+	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
 		close(started)
 		<-release
 		return nil
-	})
+	}))
 
 	cfg := runtimeWorkerConfig()
 	cfg.ShutdownTimeout = time.Second
@@ -187,14 +187,14 @@ func TestRun_InvalidWorkerConfig(t *testing.T) {
 }
 
 func TestKeepFirst(t *testing.T) {
-	real := errors.New("boom")
+	realErr := errors.New("boom")
 	if got := keepFirst(nil, context.Canceled); got != nil {
 		t.Errorf("keepFirst(nil, Canceled) = %v, want nil", got)
 	}
-	if got := keepFirst(nil, real); got != real {
+	if got := keepFirst(nil, realErr); got != realErr {
 		t.Errorf("keepFirst(nil, real) = %v, want the error", got)
 	}
-	if got := keepFirst(real, errors.New("second")); got != real {
+	if got := keepFirst(realErr, errors.New("second")); got != realErr {
 		t.Errorf("keepFirst must keep the first error, got %v", got)
 	}
 	if got := keepFirst(nil, nil); got != nil {

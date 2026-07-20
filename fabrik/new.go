@@ -74,7 +74,7 @@ func newCmd(args []string) error {
 	if strings.ContainsAny(module, " \t") {
 		return fmt.Errorf("invalid module path %q", module)
 	}
-	if _, err := os.Stat(project); err == nil {
+	if _, err := os.Stat(project); err == nil { // #nosec G703 -- trusted repo/workspace path
 		return fmt.Errorf("%s already exists", project)
 	}
 
@@ -98,13 +98,13 @@ func newCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil { // #nosec G301 G703 -- generated project directories use conventional source-tree permissions at a trusted workspace path
 			return err
 		}
 		// Only .tmpl files are templates of the scaffold; everything else
 		// (assets, the app's own HTML templates) copies verbatim.
 		if !strings.HasSuffix(path, ".tmpl") {
-			if err := os.WriteFile(outPath, content, 0o644); err != nil {
+			if err := os.WriteFile(outPath, content, 0o644); err != nil { // #nosec G306 G703 -- generated project sources are intentionally readable at a trusted workspace path
 				return err
 			}
 			fmt.Printf("  created  %s\n", outPath)
@@ -114,12 +114,13 @@ func newCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		out, err := os.Create(outPath)
+		out, err := os.Create(outPath) // #nosec G304 G703 -- writes an app/workspace-selected path
 		if err != nil {
 			return err
 		}
 		if err := tmpl.Execute(out, data); err != nil {
-			out.Close()
+			//nolint:errcheck // cleanup after the primary template execution error
+			out.Close() // #nosec G104 -- cleanup after the primary template execution error
 			return err
 		}
 		if err := out.Close(); err != nil {
@@ -133,7 +134,7 @@ func newCmd(args []string) error {
 	}
 
 	// Resolve starter dependencies before wiring.
-	tidy := exec.Command("go", "mod", "tidy")
+	tidy := exec.Command("go", "mod", "tidy") // #nosec G204 -- launches the go toolchain with controlled args
 	tidy.Dir = project
 	if out, terr := tidy.CombinedOutput(); terr != nil {
 		fmt.Fprintf(os.Stderr, "%s", out)
@@ -154,7 +155,7 @@ func newCmd(args []string) error {
 			return err
 		}
 	}
-	tidy = exec.Command("go", "mod", "tidy")
+	tidy = exec.Command("go", "mod", "tidy") // #nosec G204 -- launches the go toolchain with controlled args
 	tidy.Dir = project
 	if out, terr := tidy.CombinedOutput(); terr != nil {
 		fmt.Fprintf(os.Stderr, "%s", out)
@@ -171,7 +172,7 @@ func newCmd(args []string) error {
 
 func repinFabrik(dir, version string) error {
 	for _, m := range starterFabrikModules {
-		edit := exec.Command("go", "mod", "edit", "-require="+m+"@"+version)
+		edit := exec.Command("go", "mod", "edit", "-require="+m+"@"+version) // #nosec G204 -- launches the go toolchain with controlled args
 		edit.Dir = dir
 		if out, err := edit.CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s", out)

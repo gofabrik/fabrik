@@ -21,7 +21,7 @@ func Sync(cfg *modset.Config) (bool, error) {
 	if string(want) == string(data) {
 		return false, nil
 	}
-	return true, os.WriteFile(workPath, want, 0o644)
+	return true, os.WriteFile(workPath, want, 0o600)
 }
 
 // Check reports whether go.work replacements differ from versions.yaml.
@@ -35,6 +35,7 @@ func Check(cfg *modset.Config) (drift bool, err error) {
 
 func generate(cfg *modset.Config) (want, current []byte, err error) {
 	workPath := filepath.Join(cfg.Root, "go.work")
+	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(workPath)
 	if err != nil {
 		return nil, nil, err
