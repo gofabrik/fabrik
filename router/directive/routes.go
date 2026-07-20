@@ -12,8 +12,8 @@ import (
 
 const httpserverPath = "github.com/gofabrik/fabrik/httpserver"
 
-// BindHTTPServer lazily binds an HTTP server for the router when the app imports httpserver.
-func BindHTTPServer(g *gen.Gen) {
+// BindHTTPServer lazily binds an available HTTP server; resolution emits registrations.
+func (h *Host) BindHTTPServer(g *gen.Gen) {
 	st, ok := g.LookupType(httpserverPath, "Server")
 	if !ok {
 		return
@@ -32,7 +32,11 @@ func BindHTTPServer(g *gen.Gen) {
 				srvExpr = e
 			}
 		}
-		return g.Import(httpserverPath) + ".New(" + r + ", " + srvExpr + ")", ds
+		expr := g.Import(httpserverPath) + ".New(" + r + ", " + srvExpr + ")"
+		// Publish first so registrations can inject the server without a false cycle.
+		g.Bind(ptr, "", expr)
+		ds = append(ds, h.FinishBundle(g)...)
+		return expr, ds
 	})
 }
 
@@ -128,16 +132,16 @@ func receiverPtr(recv types.Type) types.Type {
 }
 
 // prepareReceiver registers receiver bindings before dependency resolution.
-func prepareReceiver(g *gen.Gen, recv types.Type, fset *token.FileSet) {
+func (h *Host) prepareReceiver(g *gen.Gen, recv types.Type, fset *token.FileSet) {
 	if recv == nil {
 		return
 	}
 	t := receiverPtr(recv)
 	gen.RegisterStruct(g, fset, t)
-	registerRouterFieldBinding(g, t)
+	h.registerRouterFieldBinding(g, t)
 }
 
-func registerRouterFieldBinding(g *gen.Gen, t types.Type) {
+func (h *Host) registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 	n := namedOf(t)
 	if n == nil {
 		return
@@ -152,6 +156,8 @@ func registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 			continue
 		}
 		if !g.HasBinding(ft, "") {
+			// Replaying here would re-resolve the receiver and report a false cycle;
+			// FinishBundle provides the fallback.
 			g.BindLazy(ft, "", func() (string, diag.Diagnostics) {
 				return g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"), nil
 			})

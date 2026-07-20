@@ -5,17 +5,19 @@ module app
 
 go 1.26
 
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+
 require github.com/gofabrik/fabrik/migrations v0.0.0
 
 replace github.com/gofabrik/fabrik/migrations => MIGRATIONSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- auth/migrations.go --
 package auth
 
@@ -38,10 +40,10 @@ var Migrations embed.FS
 CREATE TABLE profiles (id INTEGER PRIMARY KEY);
 -- want/diags --
 warning: auth/migrations.go:5:1: migrations Migrations can never run: nothing injects migrations.Sources
-  help: call them from a prepare hook: //fabrik:hook prepare
-func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error { return src.Migrate(ctx, db, d) }
+  help: add a migrate command: //fabrik:cli:command
+func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error { return src.Migrate(ctx, db, migrations.DialectSQLite) }
 error: users/migrations.go:5:1: migration stream "accounts" is already declared at $WORK/auth/migrations.go:5:1
   help: streams are bookkeeping identity; name one of them differently with stream=
 warning: users/migrations.go:5:1: migrations Migrations can never run: nothing injects migrations.Sources
-  help: call them from a prepare hook: //fabrik:hook prepare
-func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error { return src.Migrate(ctx, db, d) }
+  help: add a migrate command: //fabrik:cli:command
+func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error { return src.Migrate(ctx, db, migrations.DialectSQLite) }

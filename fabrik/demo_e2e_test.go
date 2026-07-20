@@ -50,11 +50,48 @@ func TestDemoEndToEnd(t *testing.T) {
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
 		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
 	)
-	migrate := exec.Command(bin) // #nosec G204 -- launches a controlled binary built by this test
+	// An invalid config verifies that help and command listing skip construction.
+	cfgPath := filepath.Join(src, "config.yaml")
+	goodCfg, err := os.ReadFile(cfgPath) // #nosec G304 -- test-controlled path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("http: [broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	help := exec.Command(bin, "--help") // #nosec G204 -- launches a controlled binary built by this test
+	help.Dir = src
+	help.Env = env
+	out, err := help.CombinedOutput()
+	if err != nil {
+		t.Fatalf("demo --help: %v\n%s", err, out)
+	}
+	for _, cmd := range []string{"config", "migrate", "run", "serve"} {
+		if !commandListed(out, cmd) {
+			t.Fatalf("demo --help missing %q:\n%s", cmd, out)
+		}
+	}
+	bare := exec.Command(bin) // #nosec G204 -- launches a controlled binary built by this test
+	bare.Dir = src
+	bare.Env = env
+	out, err = bare.CombinedOutput()
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
+		t.Fatalf("bare demo: err=%v (want exit 2)\n%s", err, out)
+	}
+	for _, cmd := range []string{"config", "migrate", "run", "serve"} {
+		if !commandListed(out, cmd) {
+			t.Fatalf("bare demo listing missing %q:\n%s", cmd, out)
+		}
+	}
+	if err := os.WriteFile(cfgPath, goodCfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	migrate := exec.Command(bin, "migrate") // #nosec G204 -- launches a controlled binary built by this test
 	migrate.Dir = src
 	migrate.Env = env
 	if out, err := migrate.CombinedOutput(); err != nil {
-		t.Fatalf("migrate (bare demo): %v\n%s", err, out)
+		t.Fatalf("demo migrate: %v\n%s", err, out)
 	}
 	server := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
 	server.Dir = src
@@ -358,4 +395,9 @@ func sessionFlow(t *testing.T, port string) {
 	if body := get(http.DefaultClient, "/"); !strings.Contains(body, "Goodbye, world!") {
 		t.Fatalf("fresh visitor should get the default greeting:\n%s", body)
 	}
+}
+
+// commandListed matches command entries rather than arbitrary help text.
+func commandListed(out []byte, cmd string) bool {
+	return regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(cmd) + `\s`).Match(out)
 }

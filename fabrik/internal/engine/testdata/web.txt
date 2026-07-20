@@ -18,11 +18,9 @@ replace (
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/mw.go --
 package shared
 
@@ -79,6 +77,9 @@ func (h *Handlers) Raw(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
@@ -87,20 +88,26 @@ import (
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	webTemplates, err := templates.Load(web.Templates, "templates")
-	if err != nil {
-		return err
+func run() int {
+	if err := func() error {
+		// Providers
+		webTemplates, err := templates.Load(web.Templates, "templates")
+		if err != nil {
+			return err
+		}
+		adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
+
+		r := router.New()
+		webHandlers := &web.Handlers{}
+
+		// Register
+		r.Method("GET", "/app/home", adapter.Wrap(webHandlers.Home), shared.RequireAuth)
+		r.Method("POST", "/app/save", adapter.Wrap(webHandlers.Save), shared.RequireAuth)
+		r.Method("GET", "/app/raw", webHandlers.Raw, shared.RequireAuth)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
-
-	r := router.New()
-	webHandlers := &web.Handlers{}
-
-	// Register
-	r.Method("GET", "/app/home", adapter.Wrap(webHandlers.Home), shared.RequireAuth)
-	r.Method("POST", "/app/save", adapter.Wrap(webHandlers.Save), shared.RequireAuth)
-	r.Method("GET", "/app/raw", webHandlers.Raw, shared.RequireAuth)
-	return nil
+	return 0
 }

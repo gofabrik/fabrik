@@ -113,7 +113,7 @@ func TestLSP(t *testing.T) {
 		}
 	}
 	write("go.mod", "module app\n\ngo 1.26\n")
-	write("main.go", "package main\n\nfunc main() {\n\tif err := run(); err != nil {\n\t\tpanic(err)\n\t}\n}\n")
+	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
 	webSrc := `package web
 
 import "net/http"
@@ -195,8 +195,8 @@ func Index(w http.ResponseWriter, r *http.Request) {}
 		}{uri},
 		Position: lspPosition{Line: 7, Character: len("//fabrik:hook ")},
 	}))
-	if !hasLabel(items, "setup") || !hasLabel(items, "start") {
-		t.Fatalf("phase completions = %+v, want setup and start", items)
+	if !hasLabel(items, "setup") || hasLabel(items, "start") {
+		t.Fatalf("phase completions = %+v, want setup only", items)
 	}
 
 	c.request(6, "shutdown", nil)

@@ -6,11 +6,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- setup/setup.go --
 package setup
 
@@ -45,6 +43,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/gofabrik/fabrik/router"
 
@@ -52,24 +52,30 @@ import (
 	"app/web"
 )
 
-func run() error {
+func run() int {
 	ctx := context.Background()
-	// Setup: after config, before providers
-	setup.Logging()
+	if err := func() error {
+		// Setup: after config, before providers
+		setup.Logging()
 
-	if err := setup.Tracing(ctx); err != nil {
-		return err
+		if err := setup.Tracing(ctx); err != nil {
+			return err
+		}
+
+		// Providers
+		webGreeter := web.NewGreeter()
+		webHandlers := &web.Handlers{
+			Greeter: webGreeter,
+		}
+
+		r := router.New()
+
+		// Register
+		r.Method("GET", "/", webHandlers.Index)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-
-	// Providers
-	webGreeter := web.NewGreeter()
-	webHandlers := &web.Handlers{
-		Greeter: webGreeter,
-	}
-
-	r := router.New()
-
-	// Register
-	r.Method("GET", "/", webHandlers.Index)
-	return nil
+	return 0
 }

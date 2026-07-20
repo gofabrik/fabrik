@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/token"
 	"go/types"
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/gofabrik/fabrik/diag"
 	"golang.org/x/tools/go/types/typeutil"
@@ -22,8 +24,6 @@ const (
 	PhaseWire                    // construct app and runtime values
 	PhaseMiddleware              // global middleware registration
 	PhaseRegister                // register generated behavior onto constructed values
-	PhasePrepare                 // prepare hooks: pre-intake work on registered resources
-	PhaseStart                   // start hooks: start background runtime processes
 )
 
 var phaseLabels = []struct {
@@ -35,8 +35,6 @@ var phaseLabels = []struct {
 	{PhaseWire, "Providers"},
 	{PhaseMiddleware, "Middleware"},
 	{PhaseRegister, "Register"},
-	{PhasePrepare, "Prepare: after registration, before runtime start"},
-	{PhaseStart, "Start: after prepare, before serving"},
 }
 
 type lazyBind struct {
@@ -65,17 +63,23 @@ type Gen struct {
 
 	materializing []string // active lazy-bind stack
 
-	commands []string
+	commandFuncs []CommandFunc
+	prologues    []func() diag.Diagnostics
+
+	scopes      []*Scope
+	scope       *Scope          // active scope; nil uses default state
+	aliasIdents map[string]bool // import aliases reserved by new scopes
 }
 
 // New returns an empty Gen.
 func New() *Gen {
 	return &Gen{
-		imports:    map[string]string{},
-		idents:     map[string]bool{},
-		lazyByPath: map[string]*lazyBind{},
-		pathExprs:  map[string]string{},
-		singletons: map[string]string{},
+		imports:     map[string]string{},
+		idents:      map[string]bool{},
+		lazyByPath:  map[string]*lazyBind{},
+		pathExprs:   map[string]string{},
+		singletons:  map[string]string{},
+		aliasIdents: map[string]bool{},
 	}
 }
 
@@ -122,13 +126,39 @@ func (g *Gen) importAs(path, base string) string {
 	if a, ok := g.imports[path]; ok {
 		return a
 	}
-	alias := g.takeIdent(base)
+	if sc := g.scope; sc != nil && sc.validation {
+		// Validation imports must not enter rendered output.
+		if a, ok := sc.imports[path]; ok {
+			return a
+		}
+		sc.imports[path] = base
+		return base
+	}
+	alias := base
+	for n := 2; g.idents[alias] || (g.scope != nil && g.scope.idents[alias]); n++ {
+		alias = fmt.Sprintf("%s%d", base, n)
+	}
+	g.idents[alias] = true
 	g.imports[path] = alias
+	g.aliasIdents[alias] = true
+	if sc := g.scope; sc != nil {
+		sc.idents[alias] = true
+	}
 	return alias
 }
 
-// Var reserves a unique identifier derived from base.
-func (g *Gen) Var(base string) string { return g.takeIdent(base) }
+// Var reserves a unique identifier derived from base within the active scope.
+func (g *Gen) Var(base string) string {
+	if sc := g.scope; sc != nil {
+		name := base
+		for n := 2; sc.idents[name]; n++ {
+			name = fmt.Sprintf("%s%d", base, n)
+		}
+		sc.idents[name] = true
+		return name
+	}
+	return g.takeIdent(base)
+}
 
 func (g *Gen) takeIdent(base string) string {
 	name := base
@@ -147,6 +177,19 @@ func (g *Gen) TypeExpr(t types.Type) string {
 // Bind records expr as the wired value for (t, name).
 func (g *Gen) Bind(t types.Type, name, expr string) {
 	t = types.Unalias(t)
+	if sc := g.scope; sc != nil {
+		key := types.TypeString(t, nil)
+		m := sc.binds[key]
+		if m == nil {
+			m = map[string]string{}
+			sc.binds[key] = m
+		}
+		if _, dup := m[name]; dup {
+			panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
+		}
+		m[name] = expr
+		return
+	}
 	m, _ := g.binds.At(t).(map[string]string)
 	if m == nil {
 		m = map[string]string{}
@@ -158,11 +201,20 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 	m[name] = expr
 }
 
-// AddCommand registers a command factory expression evaluated in the generated run scope.
-func (g *Gen) AddCommand(callExpr string) { g.commands = append(g.commands, callExpr) }
+// CommandFunc describes a generated CLI command and its dependency scope.
+type CommandFunc struct {
+	Name  string
+	Help  string
+	Fn    string // package-qualified user function
+	Scope *Scope
+	Pos   token.Position
+}
+
+// AddCommandFunc registers a command shell for the generated tree.
+func (g *Gen) AddCommandFunc(c CommandFunc) { g.commandFuncs = append(g.commandFuncs, c) }
 
 // CommandCount reports how many commands are registered.
-func (g *Gen) CommandCount() int { return len(g.commands) }
+func (g *Gen) CommandCount() int { return len(g.commandFuncs) }
 
 // BindLazy registers a value that is emitted on first resolution.
 func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Diagnostics)) {
@@ -179,7 +231,13 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 }
 
 // BindPath publishes an expression while its lazy path binding is materializing.
-func (g *Gen) BindPath(path, expr string) { g.pathExprs[path] = expr }
+func (g *Gen) BindPath(path, expr string) {
+	if sc := g.scope; sc != nil {
+		sc.pathExprs[path] = expr
+		return
+	}
+	g.pathExprs[path] = expr
+}
 
 // BindLazyPath registers a lazy binding matched by a printed type path.
 func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics)) {
@@ -189,9 +247,36 @@ func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics))
 	g.lazyByPath[path] = &lazyBind{build: build, owner: g.current}
 }
 
-// Instance resolves the wired expression for (t, name).
+// Instance resolves (t, name) with scope-local state and shared lazy definitions.
 func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, bool) {
 	t = types.Unalias(t)
+	if sc := g.scope; sc != nil {
+		key := types.TypeString(t, nil)
+		if m := sc.binds[key]; m != nil {
+			if expr, ok := m[name]; ok {
+				return expr, nil, true
+			}
+		}
+		if name == "" {
+			if expr, ok := sc.pathExprs[key]; ok {
+				g.Bind(t, name, expr)
+				return expr, nil, true
+			}
+			if lb, ok := g.lazyByPath[key]; ok {
+				expr, ds, ok := g.materialize(t, name, lb)
+				if ok && len(ds) == 0 {
+					sc.pathExprs[key] = expr
+				}
+				return expr, ds, ok
+			}
+		}
+		if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
+			if lb, ok := m[name]; ok {
+				return g.materialize(t, name, lb)
+			}
+		}
+		return "", nil, false
+	}
 	if m, _ := g.binds.At(t).(map[string]string); m != nil {
 		if expr, ok := m[name]; ok {
 			return expr, nil, true
@@ -231,46 +316,71 @@ func (g *Gen) HasBindingPath(path string) bool {
 
 // InstancePath resolves a path-keyed lazy binding without caching diagnosed builds.
 func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
+	if sc := g.scope; sc != nil {
+		if expr, ok := sc.pathExprs[path]; ok {
+			return expr, nil, true
+		}
+		return g.materializePath(path)
+	}
 	if expr, ok := g.pathExprs[path]; ok {
 		return expr, nil, true
 	}
+	return g.materializePath(path)
+}
+
+func (g *Gen) materializePath(path string) (string, diag.Diagnostics, bool) {
 	lb, ok := g.lazyByPath[path]
 	if !ok {
 		return "", nil, false
 	}
-	if lb.running {
+	if g.lazyRunning(lb) {
 		return "", diag.Diagnostics{g.cycleDiag(path)}, false
 	}
-	lb.running = true
+	g.setLazyRunning(lb, true)
 	g.materializing = append(g.materializing, path)
 	prev := g.current
 	g.current = lb.owner
 	defer func() {
 		g.current = prev
 		g.materializing = g.materializing[:len(g.materializing)-1]
-		lb.running = false
+		g.setLazyRunning(lb, false)
 	}()
 	expr, ds := lb.build()
 	if len(ds) == 0 {
-		g.pathExprs[path] = expr
+		g.BindPath(path, expr)
 	}
 	return expr, ds, true
+}
+
+func (g *Gen) lazyRunning(lb *lazyBind) bool {
+	if sc := g.scope; sc != nil {
+		return sc.running[lb]
+	}
+	return lb.running
+}
+
+func (g *Gen) setLazyRunning(lb *lazyBind, v bool) {
+	if sc := g.scope; sc != nil {
+		sc.running[lb] = v
+		return
+	}
+	lb.running = v
 }
 
 func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag.Diagnostics, bool) {
 	// Avoid adding imports while formatting cycle diagnostics.
 	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
-	if lb.running {
+	if g.lazyRunning(lb) {
 		return "", diag.Diagnostics{g.cycleDiag(key)}, false
 	}
-	lb.running = true
+	g.setLazyRunning(lb, true)
 	g.materializing = append(g.materializing, key)
 	prev := g.current
 	g.current = lb.owner
 	defer func() {
 		g.current = prev
 		g.materializing = g.materializing[:len(g.materializing)-1]
-		lb.running = false
+		g.setLazyRunning(lb, false)
 	}()
 	expr, ds := lb.build()
 	// BindPath may populate the type-keyed cache during the build.
@@ -281,7 +391,16 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 }
 
 func (g *Gen) typeBound(t types.Type, name string) bool {
-	m, _ := g.binds.At(types.Unalias(t)).(map[string]string)
+	t = types.Unalias(t)
+	if sc := g.scope; sc != nil {
+		m := sc.binds[types.TypeString(t, nil)]
+		if m == nil {
+			return false
+		}
+		_, ok := m[name]
+		return ok
+	}
+	m, _ := g.binds.At(t).(map[string]string)
 	if m == nil {
 		return false
 	}
@@ -309,8 +428,17 @@ func (g *Gen) Singleton(key, varName, ctor string) string {
 	return g.SingletonIn(PhaseWire, key, varName, ctor)
 }
 
-// SingletonIn emits the shared variable in a specific phase.
+// SingletonIn emits one variable per key in the default flow or active scope.
 func (g *Gen) SingletonIn(phase Phase, key, varName, ctor string) string {
+	if sc := g.scope; sc != nil {
+		if v, ok := sc.singletons[key]; ok {
+			return v
+		}
+		v := g.Var(varName)
+		sc.singletons[key] = v
+		g.Node(&Assign{Base: Base{Phase: phase}, Var: v, Expr: ctor})
+		return v
+	}
 	if v, ok := g.singletons[key]; ok {
 		return v
 	}
@@ -360,7 +488,7 @@ func (g *Gen) Stmt(phase Phase, format string, a ...any) {
 
 // Render assembles and formats main.gen.go.
 func (g *Gen) Render() ([]byte, error) {
-	hasCmd := len(g.commands) > 0
+	hasCmd := len(g.commandFuncs) > 0
 	if hasCmd {
 		g.Context()
 	}
@@ -371,13 +499,17 @@ func (g *Gen) Render() ([]byte, error) {
 	if needsCtx {
 		ctxPkg = g.Import("context")
 	}
+	g.Import("os")
 	if hasCmd {
-		g.Import("os")
 		g.Import("os/signal")
 		g.Import("syscall")
-		g.Import("errors")
-		g.Import("fmt")
 		g.Import("github.com/gofabrik/fabrik/cli")
+	} else {
+		g.Import("fmt")
+	}
+
+	if len(g.scopes) > 0 {
+		g.Import("context")
 	}
 
 	var b bytes.Buffer
@@ -385,6 +517,7 @@ func (g *Gen) Render() ([]byte, error) {
 	g.writeImports(&b)
 
 	g.writeRun(&b, needsCtx, ctxPkg)
+	g.writeScopeFuncs(&b)
 
 	src, err := format.Source(b.Bytes())
 	if err != nil {
@@ -397,27 +530,31 @@ func (g *Gen) Render() ([]byte, error) {
 }
 
 func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
-	if len(g.commands) > 0 {
+	if len(g.commandFuncs) > 0 {
 		g.writeRunCommands(b, ctxPkg)
 		return
 	}
-	b.WriteString("func run() error {\n")
+	osp := g.Import("os")
+	fmtp := g.Import("fmt")
+	b.WriteString("func run() int {\n")
 	if needsCtx {
 		fmt.Fprintf(b, "%s := %s.Background()\n", g.ctxVar, ctxPkg)
 	}
-	g.emitPhaseNodes(b, g.nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister, PhasePrepare, PhaseStart)
+	b.WriteString("if err := func() error {\n")
+	g.emitPhaseNodes(b, g.nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister)
 	b.WriteString("return nil\n")
+	b.WriteString("}(); err != nil {\n")
+	fmt.Fprintf(b, "%s.Fprintln(%s.Stderr, %q, err)\n", fmtp, osp, appName(g.module)+":")
+	b.WriteString("return 1\n}\n")
+	b.WriteString("return 0\n")
 	b.WriteString("}\n\n")
 }
 
-// writeRunCommands emits an integer-returning run that builds the graph before dispatch and defers runtime phases to the default handler.
 func (g *Gen) writeRunCommands(b *bytes.Buffer, ctxPkg string) {
 	ctx := g.ctxVar
 	osp := g.Import("os")
 	sigp := g.Import("os/signal")
 	sysp := g.Import("syscall")
-	errPkg := g.Import("errors")
-	fmtp := g.Import("fmt")
 	clip := g.Import("github.com/gofabrik/fabrik/cli")
 	name := appName(g.module)
 
@@ -429,45 +566,95 @@ func (g *Gen) writeRunCommands(b *bytes.Buffer, ctxPkg string) {
 	fmt.Fprintf(b, "defer %s.Stop(sigc)\n", sigp)
 	fmt.Fprintf(b, "go func() {\n<-sigc\ncancel()\n<-sigc\n%s.Exit(1)\n}()\n\n", osp)
 
-	fmt.Fprintf(b, "var root *%s.Command\n", clip)
-	b.WriteString("err := func() error {\n")
-	// Only graph construction runs before CLI dispatch.
-	g.emitPhaseNodes(b, g.nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister)
-	b.WriteString("\n")
-	fmt.Fprintf(b, "root = &%s.Command{\n", clip)
+	fmt.Fprintf(b, "root := &%s.Command{\n", clip)
 	fmt.Fprintf(b, "Name: %q,\n", name)
-	if g.hasNodesInPhases(PhasePrepare, PhaseStart) {
-		fmt.Fprintf(b, "Run: func(%s.Context) error {\n", clip)
-		g.emitPhaseNodes(b, g.nodes, PhasePrepare, PhaseStart)
-		b.WriteString("return nil\n")
+	fmt.Fprintf(b, "Subcommands: []*%s.Command{\n", clip)
+	for _, c := range g.commandFuncs {
+		b.WriteString("{\n")
+		fmt.Fprintf(b, "Name: %q,\n", c.Name)
+		if c.Help != "" {
+			fmt.Fprintf(b, "Help: %q,\n", c.Help)
+		}
+		fmt.Fprintf(b, "Run: func(ctx %s.Context) error {\n", clip)
+		g.writeCommandWrapper(b, c)
+		b.WriteString("},\n")
 		b.WriteString("},\n")
 	}
-	fmt.Fprintf(b, "Subcommands: []*%s.Command{\n", clip)
-	for _, c := range g.commands {
-		fmt.Fprintf(b, "%s,\n", c)
-	}
 	b.WriteString("},\n}\n")
-	b.WriteString("return nil\n")
-	b.WriteString("}()\n")
-	b.WriteString("if err != nil {\n")
-	fmt.Fprintf(b, "if %s.Is(err, %s.Canceled) && %s.Err() != nil {\nreturn 130\n}\n", errPkg, ctxPkg, ctx)
-	fmt.Fprintf(b, "%s.Fprintln(%s.Stderr, %q, err)\n", fmtp, osp, name+":")
-	b.WriteString("return 1\n}\n")
 	fmt.Fprintf(b, "return root.Exec(%s.Args[1:], %s.WithSignalContext(%s))\n", osp, clip, ctx)
 	b.WriteString("}\n\n")
 }
 
-func (g *Gen) hasNodesInPhases(phases ...Phase) bool {
-	want := map[Phase]bool{}
-	for _, p := range phases {
-		want[p] = true
+func (g *Gen) writeCommandWrapper(b *bytes.Buffer, c CommandFunc) {
+	s := c.Scope
+	if len(s.nodes) == 0 {
+		args := append([]string{"ctx"}, s.rootExprs...)
+		fmt.Fprintf(b, "return %s(%s)\n", c.Fn, strings.Join(args, ", "))
+		return
 	}
-	for _, n := range g.nodes {
-		if want[n.base().Phase] {
-			return true
+	vars := wrapperVars(g, s)
+	lhs := append([]string{}, vars...)
+	if s.hasCleanup {
+		lhs = append(lhs, "cleanup")
+	}
+	if len(lhs) == 0 {
+		fmt.Fprintf(b, "if err := %s(ctx); err != nil {\nreturn err\n}\n", s.fn)
+	} else {
+		fmt.Fprintf(b, "%s, err := %s(ctx)\n", strings.Join(lhs, ", "), s.fn)
+		b.WriteString("if err != nil {\nreturn err\n}\n")
+		if s.hasCleanup {
+			b.WriteString("defer cleanup()\n")
 		}
 	}
-	return false
+	args := append([]string{"ctx"}, vars...)
+	fmt.Fprintf(b, "return %s(%s)\n", c.Fn, strings.Join(args, ", "))
+}
+
+// wrapperVars avoids locals that shadow imported packages.
+func wrapperVars(g *Gen, s *Scope) []string {
+	taken := map[string]bool{"ctx": true, "cleanup": true, "err": true}
+	for a := range g.aliasIdents {
+		taken[a] = true
+	}
+	out := make([]string, 0, len(s.roots))
+	for _, r := range s.roots {
+		base := depVarBase(r)
+		name := base
+		for n := 2; taken[name]; n++ {
+			name = fmt.Sprintf("%s%d", base, n)
+		}
+		taken[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// depVarBase preserves initialisms: Server -> server, DB -> db, HTTPConfig -> httpConfig.
+func depVarBase(t types.Type) string {
+	tt := types.Unalias(t)
+	if p, ok := tt.(*types.Pointer); ok {
+		tt = types.Unalias(p.Elem())
+	}
+	name := "dep"
+	if n, ok := tt.(*types.Named); ok {
+		name = n.Obj().Name()
+	}
+	if !strings.ContainsFunc(name, unicode.IsLower) {
+		return strings.ToLower(name)
+	}
+	rs := []rune(name)
+	upper := 0
+	for upper < len(rs) && unicode.IsUpper(rs[upper]) {
+		upper++
+	}
+	switch {
+	case upper == len(rs):
+		return strings.ToLower(name)
+	case upper > 1:
+		return strings.ToLower(string(rs[:upper-1])) + string(rs[upper-1:])
+	default:
+		return LowerFirst(name)
+	}
 }
 
 func appName(module string) string {

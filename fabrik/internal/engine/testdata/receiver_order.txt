@@ -7,11 +7,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/a.go --
 package web
 
@@ -46,23 +44,32 @@ func (h *Handlers) Get(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	webHandlers := &web.Handlers{}
-	webFoo := web.NewFoo(webHandlers)
-	webAPI := &web.API{
-		Foo: webFoo,
+func run() int {
+	if err := func() error {
+		// Providers
+		webHandlers := &web.Handlers{}
+		webFoo := web.NewFoo(webHandlers)
+		webAPI := &web.API{
+			Foo: webFoo,
+		}
+
+		r := router.New()
+
+		// Register
+		r.Method("GET", "/api", webAPI.Get)
+		r.Method("GET", "/h", webHandlers.Get)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-
-	r := router.New()
-
-	// Register
-	r.Method("GET", "/api", webAPI.Get)
-	r.Method("GET", "/h", webHandlers.Get)
-	return nil
+	return 0
 }

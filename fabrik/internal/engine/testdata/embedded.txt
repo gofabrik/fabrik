@@ -6,11 +6,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/web.go --
 package web
 
@@ -34,21 +32,30 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	webGreeter := web.NewGreeter()
-	webHandlers := &web.Handlers{
-		Greeter: webGreeter,
+func run() int {
+	if err := func() error {
+		// Providers
+		webGreeter := web.NewGreeter()
+		webHandlers := &web.Handlers{
+			Greeter: webGreeter,
+		}
+
+		r := router.New()
+
+		// Register
+		r.Method("GET", "/", webHandlers.Index)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-
-	r := router.New()
-
-	// Register
-	r.Method("GET", "/", webHandlers.Index)
-	return nil
+	return 0
 }

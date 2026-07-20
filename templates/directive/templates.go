@@ -150,7 +150,9 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	g.BindLazyPath(setPath, func() (string, diag.Diagnostics) {
 		decls := t.sortedDecls()
 		for _, d := range decls {
-			d.built = true
+			if !g.InValidationScope() {
+				d.built = true
+			}
 		}
 		tplPkg := g.Import(templatePath)
 		first := decls[0]

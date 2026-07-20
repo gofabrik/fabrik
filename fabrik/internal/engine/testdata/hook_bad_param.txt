@@ -3,14 +3,16 @@ Setup hook parameters are context or config only; provider types move to start.
 module app
 
 go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/web.go --
 package web
 
@@ -32,4 +34,4 @@ type Handlers struct {
 func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
 error: web/web.go:11:15: setup hooks run before providers; parameters must be context.Context or //fabrik:config structs
-  help: needs a built resource? move this to //fabrik:hook prepare or //fabrik:hook start
+  help: construct the resource in a //fabrik:provider and inject it into a command

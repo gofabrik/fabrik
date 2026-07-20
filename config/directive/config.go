@@ -158,7 +158,9 @@ func (c *Config) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 // LoadNode builds a config.Load node in the caller's phase.
 func (c *Config) LoadNode(nd *Node, g *gen.Gen, phase gen.Phase) (string, *gen.ConfigLoad) {
-	nd.built = true
+	if !g.InValidationScope() {
+		nd.built = true
+	}
 	cfgPkg := g.Import(configPath)
 	opts := make([]string, 0, len(c.files)+1)
 	for _, f := range c.files {

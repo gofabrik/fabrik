@@ -15,6 +15,9 @@ func renderNode(n Node) []string {
 	case *Assign:
 		return []string{n.Var + " := " + n.Expr}
 	case *Call:
+		if n.Cleanup != "" {
+			return renderCleanupCall(n)
+		}
 		return renderCall(n.Var, n.Fn, n.Args, n.Err)
 	case *ConfigLoad:
 		lines := []string{fmt.Sprintf("%s, err := %s.Load[%s](", n.Var, n.Pkg, n.Type)}
@@ -54,6 +57,18 @@ func renderCall(v, fn string, args []string, errStyle ErrStyle) []string {
 		return []string{call}
 	}
 	return []string{v + " := " + call}
+}
+
+// renderCleanupCall emits a nil-guarded deferred cleanup.
+func renderCleanupCall(n *Call) []string {
+	call := n.Fn + "(" + strings.Join(n.Args, ", ") + ")"
+	var lines []string
+	if n.Err == ErrReturn {
+		lines = append([]string{n.Var + ", " + n.Cleanup + ", err := " + call}, errReturn()...)
+	} else {
+		lines = []string{n.Var + ", " + n.Cleanup + " := " + call}
+	}
+	return append(lines, "if "+n.Cleanup+" != nil {", "defer "+n.Cleanup+"()", "}")
 }
 
 func errReturn() []string {

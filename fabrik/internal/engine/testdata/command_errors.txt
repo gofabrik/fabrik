@@ -1,6 +1,6 @@
-//fabrik:cli:command rejects anything but an exported, non-variadic package factory
-returning exactly *cli.Command (a lookalike *Command from another package does
-not qualify).
+//fabrik:cli:command rejects anything but an exported, non-variadic package
+function of the shape func(ctx cli.Context, deps...) error, and derived
+command names must be unique.
 -- go.mod --
 module app
 
@@ -16,39 +16,62 @@ func main() {}
 -- shared/shared.go --
 package shared
 
-import "github.com/gofabrik/fabrik/cli"
+import (
+	"context"
+
+	"github.com/gofabrik/fabrik/cli"
+)
 
 type Commands struct{}
 
-type Command struct{}
+//fabrik:cli:command
+func (c *Commands) Method(ctx cli.Context) error { return nil }
 
 //fabrik:cli:command
-func (c *Commands) Method() *cli.Command { return nil }
+func Generic[T any](ctx cli.Context) error { return nil }
 
 //fabrik:cli:command
-func Generic[T any]() *cli.Command { return nil }
+func unexported(ctx cli.Context) error { return nil }
 
 //fabrik:cli:command
-func unexported() *cli.Command { return nil }
+func Variadic(ctx cli.Context, names ...string) error { return nil }
 
 //fabrik:cli:command
-func Variadic(names ...string) *cli.Command { return nil }
+func WrongReturn(ctx cli.Context) (string, error) { return "", nil }
 
 //fabrik:cli:command
-func WrongReturn() error { return nil }
+func PlainContext(ctx context.Context) error { return nil }
 
 //fabrik:cli:command
-func Lookalike() *Command { return nil }
+func NoContext() error { return nil }
+
+//fabrik:cli:command
+func ServeHTTP(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+var NotAFunction int
+-- other/other.go --
+package other
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:command
+func ServeHTTP(ctx cli.Context) error { return nil }
 -- want/diags --
-error: shared/shared.go:9:1: //fabrik:cli:command must be a package function, not a method
+error: shared/shared.go:11:1: //fabrik:cli:command must be a package function, not a method
   help: dependencies are parameters, not receiver fields
-error: shared/shared.go:12:1: //fabrik:cli:command function Generic cannot be generic
+error: shared/shared.go:14:1: //fabrik:cli:command function Generic cannot be generic
   help: declare a concrete function
-error: shared/shared.go:15:1: //fabrik:cli:command function unexported must be exported
+error: shared/shared.go:17:1: //fabrik:cli:command function unexported must be exported
   help: generated code calls it as a package-qualified symbol; capitalize the name
-error: shared/shared.go:18:1: //fabrik:cli:command function Variadic cannot be variadic
+error: shared/shared.go:20:1: //fabrik:cli:command function Variadic cannot be variadic
   help: declare each dependency as its own parameter
-error: shared/shared.go:21:1: command WrongReturn has the wrong signature
-  help: want func(deps...) *cli.Command
-error: shared/shared.go:24:1: command Lookalike has the wrong signature
-  help: want func(deps...) *cli.Command
+error: shared/shared.go:23:1: command WrongReturn has the wrong signature
+  help: want func(ctx cli.Context, deps...) error
+error: shared/shared.go:26:1: command PlainContext must take cli.Context as its first parameter
+  help: want func(ctx cli.Context, deps...) error
+error: shared/shared.go:29:1: command NoContext must take cli.Context as its first parameter
+  help: want func(ctx cli.Context, deps...) error
+error: shared/shared.go:32:1: duplicate command name "serve-http"
+  help: first declared at $WORK/other/other.go:5:1; rename one function
+error: shared/shared.go:35:1: //fabrik:cli:command must be on a function

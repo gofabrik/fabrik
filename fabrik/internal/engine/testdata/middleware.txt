@@ -6,11 +6,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/mw.go --
 package shared
 
@@ -50,23 +48,32 @@ func Spaced(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/shared"
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	r := router.New()
+func run() int {
+	if err := func() error {
+		// Providers
+		r := router.New()
 
-	// Middleware
-	r.Use(shared.RequestID)
+		// Middleware
+		r.Use(shared.RequestID)
 
-	// Register
-	r.Method("GET", "/", web.Index)
-	r.Method("GET", "/account", web.Account, web.NoCache)
-	r.Method("POST", "/admin", web.Admin, shared.RequireAuth, shared.Audit)
-	r.Method("POST", "/spaced", web.Spaced, shared.RequireAuth, shared.Audit)
-	return nil
+		// Register
+		r.Method("GET", "/", web.Index)
+		r.Method("GET", "/account", web.Account, web.NoCache)
+		r.Method("POST", "/admin", web.Admin, shared.RequireAuth, shared.Audit)
+		r.Method("POST", "/spaced", web.Spaced, shared.RequireAuth, shared.Audit)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }

@@ -1,10 +1,14 @@
-A prepare hook consuming migrations without the app providing *sql.DB
+A migrate command consuming migrations without the app providing *sql.DB
 and migrations.Dialect gets the standard unresolved-dependency
-diagnostics at the hook, with recipes for both.
+diagnostics at the command, with recipes for both.
 -- go.mod --
 module app
 
 go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
 
 require github.com/gofabrik/fabrik/migrations v0.0.0
 
@@ -12,23 +16,22 @@ replace github.com/gofabrik/fabrik/migrations => MIGRATIONSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/hooks.go --
 package shared
 
 import (
-	"context"
 	"database/sql"
 
 	"github.com/gofabrik/fabrik/migrations"
+
+	"github.com/gofabrik/fabrik/cli"
 )
 
-//fabrik:hook prepare
-func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
+//fabrik:cli:command
+func MigrateDB(ctx cli.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
 	return src.Migrate(ctx, db, d)
 }
 -- shared/migrations.go --
@@ -42,8 +45,7 @@ var Migrations embed.FS
 -- shared/migrations/0001_users.sql --
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 -- want/diags --
-error: shared/hooks.go:11:37: no provider or binding supplies this hook parameter
-  help: declare a //fabrik:provider for it
-error: shared/hooks.go:11:49: no provider or binding supplies this hook parameter
-  help: provide it next to your database: //fabrik:provider
-func NewDialect(cfg *DBConfig) migrations.Dialect { return migrations.DialectSQLite }
+error: shared/hooks.go:11:1: no provider for *sql.DB
+  help: add a //fabrik:provider returning *sql.DB
+error: shared/hooks.go:11:1: no provider for migrations.Dialect
+  help: add a //fabrik:provider returning migrations.Dialect

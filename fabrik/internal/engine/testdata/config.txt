@@ -11,11 +11,9 @@ replace github.com/gofabrik/fabrik/config => CONFIGDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/config.go --
 package shared
 
@@ -70,6 +68,9 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
 
@@ -78,45 +79,51 @@ import (
 	"app/web"
 )
 
-func run() error {
-	// Config
-	sharedConfig, err := config.Load[shared.Config](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("http", "store", "unused"),
-		config.Section("http"),
-	)
-	if err != nil {
-		return err
+func run() int {
+	if err := func() error {
+		// Config
+		sharedConfig, err := config.Load[shared.Config](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("http", "store", "unused"),
+			config.Section("http"),
+		)
+		if err != nil {
+			return err
+		}
+
+		storeConfig, err := config.Load[store.Config](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("http", "store", "unused"),
+			config.Section("store"),
+		)
+		if err != nil {
+			return err
+		}
+
+		// Setup: after config, before providers
+		if err := shared.InitLogger(sharedConfig); err != nil {
+			return err
+		}
+
+		// Providers
+		storeDB := store.Open(storeConfig)
+		webHandlers := &web.Handlers{
+			Config: sharedConfig,
+			DB:     storeDB,
+		}
+
+		r := router.New()
+
+		// Register
+		r.Method("GET", "/", webHandlers.Index)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-
-	storeConfig, err := config.Load[store.Config](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("http", "store", "unused"),
-		config.Section("store"),
-	)
-	if err != nil {
-		return err
-	}
-
-	// Setup: after config, before providers
-	if err := shared.InitLogger(sharedConfig); err != nil {
-		return err
-	}
-
-	// Providers
-	storeDB := store.Open(storeConfig)
-	webHandlers := &web.Handlers{
-		Config: sharedConfig,
-		DB:     storeDB,
-	}
-
-	r := router.New()
-
-	// Register
-	r.Method("GET", "/", webHandlers.Index)
-	return nil
+	return 0
 }
 -- want/diags --
 warning: shared/config.go:14:1: config struct Unused is never used

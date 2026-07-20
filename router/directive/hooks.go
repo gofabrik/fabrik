@@ -11,17 +11,20 @@ import (
 
 // Hook implements a router miss-handler directive.
 type Hook struct {
+	host   *Host
 	name   string // directive name
 	method string // router method to emit
 	first  *token.Position
 }
 
 // NewNotFound returns the //fabrik:http:notfound directive for one run.
-func NewNotFound() *Hook { return &Hook{name: "http:notfound", method: "NotFound"} }
+func NewNotFound(host *Host) *Hook {
+	return &Hook{host: host, name: "http:notfound", method: "NotFound"}
+}
 
 // NewMethodNotAllowed returns the //fabrik:http:methodnotallowed directive.
-func NewMethodNotAllowed() *Hook {
-	return &Hook{name: "http:methodnotallowed", method: "MethodNotAllowed"}
+func NewMethodNotAllowed(host *Host) *Hook {
+	return &Hook{host: host, name: "http:methodnotallowed", method: "MethodNotAllowed"}
 }
 
 func (h *Hook) Name() string { return h.name }
@@ -46,6 +49,7 @@ func (h *Hook) Meta() gen.Meta {
 		Synopsis: synopsis[h.name],
 		Doc:      doc[h.name],
 		Example:  "//fabrik:" + h.name,
+		Tier:     gen.TierBind,
 	}
 }
 
@@ -109,18 +113,21 @@ func (h *Hook) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*hookNode)
-	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
-	handler, ds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
-	g.Node(&gen.Call{
-		Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
-		Fn:   r + "." + h.method,
-		Args: []string{handler},
+	h.host.record(func(g *gen.Gen) diag.Diagnostics {
+		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		handler, ds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+			Fn:   r + "." + h.method,
+			Args: []string{handler},
+		})
+		return ds
 	})
-	return ds
+	return nil
 }
 
 // PrepareNode registers the hook's receiver struct before resolution.
 func (h *Hook) PrepareNode(n any, g *gen.Gen) {
 	nd := n.(*hookNode)
-	prepareReceiver(g, nd.recv, nd.fset)
+	h.host.prepareReceiver(g, nd.recv, nd.fset)
 }

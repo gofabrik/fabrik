@@ -1,12 +1,8 @@
 package shared
 
 import (
-	"context"
-	"database/sql"
 	"log/slog"
 	"os"
-
-	"github.com/gofabrik/fabrik/migrations"
 )
 
 //fabrik:hook setup
@@ -17,9 +13,4 @@ func InitLogger(l *LogConfig) error {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	return nil
-}
-
-//fabrik:hook prepare
-func MigrateDB(ctx context.Context, db *sql.DB, src migrations.Sources) error {
-	return src.Migrate(ctx, db, migrations.DialectSQLite)
 }

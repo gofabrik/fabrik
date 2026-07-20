@@ -139,6 +139,13 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 			return nil, err
 		}
 	}
+	// Validate all lazy bindings before materializing command scopes.
+	if g.ScopeCount() > 0 {
+		diags = append(diags, g.RunValidationPass()...)
+		if !diags.HasFatal() {
+			diags = append(diags, g.MaterializeScopes()...)
+		}
+	}
 	for _, d := range directives {
 		v, ok := d.(gen.Validator)
 		if !ok {

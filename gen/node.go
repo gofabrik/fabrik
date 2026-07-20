@@ -53,6 +53,9 @@ type Call struct {
 	Fn   string // rendered callee, e.g. "shared.InitLogger" or "r.Use"
 	Args []string
 	Err  ErrStyle
+
+	// Cleanup names the cleanup result; generated calls guard a nil result.
+	Cleanup string
 }
 
 // ConfigLoad loads one configuration struct.
@@ -125,6 +128,10 @@ func (g *Gen) Node(n Node) {
 	b := n.base()
 	if b.Origin.Directive == "" {
 		b.Origin.Directive = g.current
+	}
+	if sc := g.scope; sc != nil {
+		sc.nodes = append(sc.nodes, n)
+		return
 	}
 	g.nodes = append(g.nodes, n)
 }

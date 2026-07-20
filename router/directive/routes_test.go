@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/gen"
 )
 
@@ -52,6 +53,21 @@ func TestRouteTable(t *testing.T) {
 }
 
 // typecheck compiles one source file and returns its package scope.
+func typecheckAs(t *testing.T, pkgPath, src string) *types.Package {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "pkg.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	pkg, err := conf.Check(pkgPath, fset, []*ast.File{f}, nil)
+	if err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	return pkg
+}
+
 func typecheck(t *testing.T, src string) *types.Package {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -192,5 +208,132 @@ func Direct(next http.Handler) http.Handler { return next }
 	}
 	if got := gen.LowerFirst(""); got != "" {
 		t.Errorf("lowerFirst empty = %q", got)
+	}
+}
+
+func TestBundleDefersEmissionUntilRouterDemand(t *testing.T) {
+	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
+	g := gen.New()
+
+	ds := h.EmitHandle(g, "/metrics/", pos(1), func() (string, diag.Diagnostics) {
+		return "pkg.Metrics()", nil
+	})
+	if ds.HasFatal() {
+		t.Fatalf("EmitHandle: %v", ds)
+	}
+	src, err := g.Render()
+	if err != nil {
+		t.Fatalf("render before demand: %v", err)
+	}
+	if strings.Contains(string(src), "/metrics/") {
+		t.Fatalf("route emitted before router demand:\n%s", src)
+	}
+
+	r, rds := h.Router(g)
+	if rds.HasFatal() {
+		t.Fatalf("Router: %v", rds)
+	}
+	if r != "r" {
+		t.Fatalf("router var = %q, want r", r)
+	}
+	src, err = g.Render()
+	if err != nil {
+		t.Fatalf("render after demand: %v", err)
+	}
+	if got := strings.Count(string(src), `"/metrics/"`); got != 1 {
+		t.Fatalf("route emitted %d times after demand, want 1:\n%s", got, src)
+	}
+
+	if _, rds := h.Router(g); rds.HasFatal() {
+		t.Fatalf("second Router: %v", rds)
+	}
+	if fds := h.FinishBundle(g); fds.HasFatal() {
+		t.Fatalf("FinishBundle after build: %v", fds)
+	}
+	src, err = g.Render()
+	if err != nil {
+		t.Fatalf("render after re-trigger: %v", err)
+	}
+	if got := strings.Count(string(src), `"/metrics/"`); got != 1 {
+		t.Fatalf("route emitted %d times after re-trigger, want 1:\n%s", got, src)
+	}
+}
+
+func TestBundleFinishFallbackEmitsWithoutDemand(t *testing.T) {
+	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
+	g := gen.New()
+
+	if ds := h.EmitHandle(g, "/metrics/", pos(1), func() (string, diag.Diagnostics) {
+		return "pkg.Metrics()", nil
+	}); ds.HasFatal() {
+		t.Fatalf("EmitHandle: %v", ds)
+	}
+	if ds := h.FinishBundle(g); ds.HasFatal() {
+		t.Fatalf("FinishBundle: %v", ds)
+	}
+	src, err := g.Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got := strings.Count(string(src), `"/metrics/"`); got != 1 {
+		t.Fatalf("fallback emitted route %d times, want 1:\n%s", got, src)
+	}
+}
+
+func TestBundleReplaysInRecordOrder(t *testing.T) {
+	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
+	g := gen.New()
+
+	var got []string
+	h.record(func(*gen.Gen) diag.Diagnostics { got = append(got, "first"); return nil })
+	h.record(func(*gen.Gen) diag.Diagnostics { got = append(got, "second"); return nil })
+	h.record(func(*gen.Gen) diag.Diagnostics { got = append(got, "third"); return nil })
+
+	if ds := h.FinishBundle(g); ds.HasFatal() {
+		t.Fatalf("FinishBundle: %v", ds)
+	}
+	want := []string{"first", "second", "third"}
+	if len(got) != len(want) {
+		t.Fatalf("replayed %d records, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("replay order = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestBundleReplayResolvesServerWithoutCycle(t *testing.T) {
+	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
+	g := gen.New()
+	pkg := typecheckAs(t, httpserverPath, "package httpserver\n\ntype Server struct{}\n")
+	g.SetTypes(map[string]*types.Package{httpserverPath: pkg})
+	srv := types.NewPointer(pkg.Scope().Lookup("Server").Type())
+
+	h.BindHTTPServer(g)
+
+	var nested string
+	var nestedDS diag.Diagnostics
+	h.record(func(g *gen.Gen) diag.Diagnostics {
+		expr, ds, ok := g.Instance(srv, "")
+		if !ok {
+			t.Fatalf("server unresolvable during replay: %v", ds)
+		}
+		nested, nestedDS = expr, ds
+		return ds
+	})
+
+	expr, ds, ok := g.Instance(srv, "")
+	if !ok || ds.HasFatal() {
+		t.Fatalf("Instance = %q ok=%v ds=%v", expr, ok, ds)
+	}
+	if nestedDS.HasFatal() {
+		t.Fatalf("nested resolution reported diagnostics: %v", nestedDS)
+	}
+	if nested != expr {
+		t.Fatalf("nested expr = %q, top-level %q; want the same server expression", nested, expr)
+	}
+	if !strings.Contains(expr, ".New(r, nil)") {
+		t.Fatalf("server expr = %q, want httpserver.New(r, nil)", expr)
 	}
 }

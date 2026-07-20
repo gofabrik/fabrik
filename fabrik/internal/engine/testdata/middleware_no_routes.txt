@@ -7,11 +7,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/web.go --
 package web
 
@@ -26,16 +24,25 @@ func Logged(next http.Handler) http.Handler { return next }
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	r := router.New()
+func run() int {
+	if err := func() error {
+		// Providers
+		r := router.New()
 
-	// Middleware
-	r.Use(web.Logged)
-	return nil
+		// Middleware
+		r.Use(web.Logged)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }

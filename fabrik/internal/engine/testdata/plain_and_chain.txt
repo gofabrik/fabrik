@@ -6,11 +6,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- store/store.go --
 package store
 
@@ -54,6 +52,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/gofabrik/fabrik/router"
 
@@ -61,20 +61,26 @@ import (
 	"app/web"
 )
 
-func run() error {
+func run() int {
 	ctx := context.Background()
-	// Providers
-	storeConfig := store.NewConfig()
-	storeDB := store.Open(ctx, storeConfig)
-	webAPI := &web.API{
-		DB: storeDB,
+	if err := func() error {
+		// Providers
+		storeConfig := store.NewConfig()
+		storeDB := store.Open(ctx, storeConfig)
+		webAPI := &web.API{
+			DB: storeDB,
+		}
+
+		r := router.New()
+
+		// Register
+		r.Method("GET", "/api", webAPI.Get)
+		r.Method("POST", "/api", webAPI.Post)
+		r.Method("GET", "/health", web.Health)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-
-	r := router.New()
-
-	// Register
-	r.Method("GET", "/api", webAPI.Get)
-	r.Method("POST", "/api", webAPI.Post)
-	r.Method("GET", "/health", web.Health)
-	return nil
+	return 0
 }

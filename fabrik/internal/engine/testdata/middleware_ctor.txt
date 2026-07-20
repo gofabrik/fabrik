@@ -14,11 +14,9 @@ replace github.com/gofabrik/fabrik/router => ROUTERDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/mw.go --
 package shared
 
@@ -70,31 +68,40 @@ func Remove(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/shared"
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	sharedLimiter := shared.NewLimiter()
-	r := router.New()
+func run() int {
+	if err := func() error {
+		// Providers
+		sharedLimiter := shared.NewLimiter()
+		r := router.New()
 
-	// Middleware
-	sessionsMW, err := shared.Sessions(sharedLimiter)
-	if err != nil {
-		return err
+		// Middleware
+		sessionsMW, err := shared.Sessions(sharedLimiter)
+		if err != nil {
+			return err
+		}
+		r.Use(sessionsMW)
+
+		authMW := shared.RequireAuth(sharedLimiter)
+
+		// Register
+		r.Method("GET", "/", web.Index)
+		r.Method("POST", "/admin", web.Admin, authMW, shared.Audit)
+		r.Method("DELETE", "/admin", web.Remove, authMW)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-	r.Use(sessionsMW)
-
-	authMW := shared.RequireAuth(sharedLimiter)
-
-	// Register
-	r.Method("GET", "/", web.Index)
-	r.Method("POST", "/admin", web.Admin, authMW, shared.Audit)
-	r.Method("DELETE", "/admin", web.Remove, authMW)
-	return nil
+	return 0
 }
 -- want/diags --
 warning: shared/mw.go:27:1: middleware "unused" is never referenced

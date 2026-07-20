@@ -12,6 +12,9 @@ func IsContext(t types.Type) bool {
 // Context marks the lifecycle context as needed and returns its
 // variable; Render emits the assignment as run()'s first statement.
 func (g *Gen) Context() string {
+	if sc := g.scope; sc != nil {
+		return sc.ctxVar
+	}
 	if !g.ctxNeeded {
 		g.ctxNeeded = true
 		g.ctxPkg = g.Import("context")

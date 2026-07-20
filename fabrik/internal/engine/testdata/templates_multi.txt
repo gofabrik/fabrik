@@ -12,11 +12,9 @@ replace github.com/gofabrik/fabrik/templates => TEMPLATEDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/templates.go --
 package shared
 
@@ -67,6 +65,9 @@ func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
 
@@ -74,22 +75,28 @@ import (
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	appTemplates, err := templates.LoadSources([]templates.Source{
-		{FS: shared.Templates, Dir: "templates"},
-		{FS: web.Templates, Dir: "templates"},
-	})
-	if err != nil {
-		return err
-	}
-	webHandlers := &web.Handlers{
-		Templates: appTemplates,
-	}
+func run() int {
+	if err := func() error {
+		// Providers
+		appTemplates, err := templates.LoadSources([]templates.Source{
+			{FS: shared.Templates, Dir: "templates"},
+			{FS: web.Templates, Dir: "templates"},
+		})
+		if err != nil {
+			return err
+		}
+		webHandlers := &web.Handlers{
+			Templates: appTemplates,
+		}
 
-	r := router.New()
+		r := router.New()
 
-	// Register
-	r.Method("GET", "/", webHandlers.Home)
-	return nil
+		// Register
+		r.Method("GET", "/", webHandlers.Home)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }

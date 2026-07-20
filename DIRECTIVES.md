@@ -27,13 +27,17 @@ Options:
 
 **`//fabrik:cli:command`**
 
-Declared on a package factory `func(deps...) *cli.Command`: the parameters are injected dependencies like a provider, and the function returns a command built with the cli library. The generator resolves the dependencies, calls the factory, and registers the returned command so `app <name>` dispatches to it.
+Declared on a package function `func(ctx cli.Context, deps...) error`: the first parameter is the invocation context, the rest are injected dependencies like a provider. The command name derives from the function name (`ServeHTTP` becomes `serve-http`); the help line is the doc comment's first sentence. The generator emits a build function that constructs exactly this command's dependencies when the command is selected, so help and completion never construct the application.
 
-Declaring any `//fabrik:cli:command` makes the generated `run()` dispatch commands: a subcommand runs its factory's command, while a bare invocation runs prepare and start hooks without starting injected runtimes. HTTP servers and jobs runners must be injected into and started by a command. Because `run()` returns an exit code, `main` must be `func main() { os.Exit(run()) }`; adding the first command to an app whose `main` still uses `if err := run(); err != nil` will not compile until `main` is updated.
+A bare invocation lists the commands. Runtimes are startable injected values (`*httpserver.Server`, `*jobs.Runner`) the command starts itself; migrations are an injectable `migrations.Sources` the command applies itself. `run()` returns an exit code, so `main` is always `func main() { os.Exit(run()) }`.
 
 ```go
+// Start the HTTP server.
+//
 //fabrik:cli:command
-func GreetCommand(g *Greeter) *cli.Command { ... }
+func Serve(ctx cli.Context, server *httpserver.Server) error {
+	return server.Run(ctx)
+}
 ```
 
 ## fabrik:config
@@ -71,15 +75,13 @@ Options:
 
 ## fabrik:hook
 
-**`//fabrik:hook PHASE`**
+**`//fabrik:hook setup`**
 
-Marks a function the generated `run()` calls at a named point of the app lifecycle: `config -> setup -> providers -> middleware -> routes -> prepare -> start -> serve`. Hookable phases, in order:
+Marks a function the generated assembly calls at a named point of the app lifecycle: `config -> setup -> providers -> middleware -> routes`. Hookable phase:
 
-- `setup` - after config, before providers. Process-level setup (logger, runtime tuning); parameters may be a leading `context.Context` and pointers to //fabrik:config structs.
-- `prepare` - after everything is wired and registered, before runtime processes start. Run pre-intake work on built resources (schema checks, cache warming, migrations, seeding); parameters resolve against everything providers and libraries bind.
-- `start` - after prepare, before serving. Start runtime processes that consume registered and prepared state (workers, schedulers, watchers); parameters resolve against everything providers and libraries bind.
+- `setup` - after config, before providers. Process-level setup (logger, runtime tuning); parameters may be a leading `context.Context` and pointers to //fabrik:config structs. With commands, setup runs at the start of every command's build function, under the command context.
 
-Hooks of one phase run in source order and must be independent. A returned `error` aborts startup.
+Hooks run in source order and must be independent. A returned `error` aborts startup. Pre-intake work such as migrations belongs to an explicit command that injects what it needs; runtime processes are startable values a command runs.
 
 ```go
 //fabrik:hook setup
@@ -91,7 +93,7 @@ func InitLogger(cfg *Log) error {
 
 Positional arguments:
 
-- `PHASE` - one of setup, prepare, start
+- `PHASE` - one of setup
 
 ## fabrik:http
 
@@ -235,7 +237,7 @@ Options:
 
 **`//fabrik:migrations [dir=migrations] [stream=NAME]`**
 
-Declared on an exported `embed.FS` variable: the tree's `NNNN_name.sql` files become one migration stream, bound with every other declared stream into an injectable `migrations.Sources`. Nothing runs automatically - call `Sources.Migrate` from a `//fabrik:hook prepare` function, a handler, or a command. Versions order within a stream. Streams are independent, so tables that reference each other belong in one stream. The default stream name is the package path relative to the module. Use `stream=` to pin identity when moving a package or declaring migrations at module root. Use `all:<dir>` so embedded files match the validated tree.
+Declared on an exported `embed.FS` variable: the tree's `NNNN_name.sql` files become one migration stream, bound with every other declared stream into an injectable `migrations.Sources`. Nothing runs automatically - inject it into a `//fabrik:cli:command` (a migrate command) or a handler and call `Sources.Migrate` there. Versions order within a stream. Streams are independent, so tables that reference each other belong in one stream. The default stream name is the package path relative to the module. Use `stream=` to pin identity when moving a package or declaring migrations at module root. Use `all:<dir>` so embedded files match the validated tree.
 
 ```go
 //fabrik:migrations
@@ -252,7 +254,7 @@ Options:
 
 **`//fabrik:provider [case=kind]`**
 
-Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive the shared signal-bound application context (cancelled at shutdown). A second `error` return aborts startup. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
+Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive the shared signal-bound application context (cancelled at shutdown). A second `error` return aborts startup. A `func()` result before the error is a cleanup: generated code skips it when nil and releases in reverse construction order at process end and on construction failure. A provider that returns an error owns its partial teardown. Cleanup returns are not allowed on `case=` providers. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
 
 ```go
 //fabrik:provider

@@ -45,9 +45,9 @@ func (*Migrations) Meta() gen.Meta {
 			"Declared on an exported `embed.FS` variable: the tree's " +
 			"`NNNN_name.sql` files become one migration stream, bound with " +
 			"every other declared stream into an injectable " +
-			"`migrations.Sources`. Nothing runs automatically - call " +
-			"`Sources.Migrate` from a `//fabrik:hook prepare` function, a " +
-			"handler, or a command. Versions order within a stream. " +
+			"`migrations.Sources`. Nothing runs automatically - inject it into " +
+			"a `//fabrik:cli:command` (a migrate command) or a handler and " +
+			"call `Sources.Migrate` there. Versions order within a stream. " +
 			"Streams are independent, so tables that reference each other " +
 			"belong in one stream. The default stream name is the package " +
 			"path relative to the module. Use `stream=` to pin identity " +
@@ -193,7 +193,9 @@ func (mg *Migrations) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		}
 		decls := mg.sortedByStream()
 		for _, d := range decls {
-			d.built = true
+			if !g.InValidationScope() {
+				d.built = true
+			}
 		}
 		migPkg := g.Import(migrationsPath)
 		var b strings.Builder
@@ -250,7 +252,7 @@ func (mg *Migrations) Validate(g *gen.Gen) diag.Diagnostics {
 	for _, d := range mg.decls {
 		if !d.built {
 			ds.Warn(d.pos, fmt.Sprintf("migrations %s can never run: nothing injects migrations.Sources", d.varName),
-				"call them from a prepare hook: //fabrik:hook prepare\nfunc MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error { return src.Migrate(ctx, db, d) }")
+				"add a migrate command: //fabrik:cli:command\nfunc Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error { return src.Migrate(ctx, db, migrations.DialectSQLite) }")
 		}
 	}
 	return ds
