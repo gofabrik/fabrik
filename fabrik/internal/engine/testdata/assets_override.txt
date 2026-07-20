@@ -17,11 +17,9 @@ replace (
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/assets.go --
 package web
 
@@ -73,6 +71,9 @@ func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
@@ -80,30 +81,36 @@ import (
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
-		{FS: web.Assets, Dir: "assets"},
-	}, nil)
-	if err != nil {
-		return err
-	}
-	webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
-		"asset": web.CustomAsset,
-	})
-	if err != nil {
-		return err
-	}
-	webHandlers := &web.Handlers{
-		Templates: webTemplates,
-	}
+func run() int {
+	if err := func() error {
+		// Providers
+		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+			{FS: web.Assets, Dir: "assets"},
+		}, nil)
+		if err != nil {
+			return err
+		}
+		webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
+			"asset": web.CustomAsset,
+		})
+		if err != nil {
+			return err
+		}
+		webHandlers := &web.Handlers{
+			Templates: webTemplates,
+		}
 
-	r := router.New()
+		r := router.New()
 
-	// Register
-	r.Handle("/assets/", assetCompiled.Handler())
-	r.Method("GET", "/{$}", webHandlers.Home)
-	return nil
+		// Register
+		r.Handle("/assets/", assetCompiled.Handler())
+		r.Method("GET", "/{$}", webHandlers.Home)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }
 -- want/diags --
 warning: web/helpers.go:3:1: template function "asset" overrides a function contributed by another directive

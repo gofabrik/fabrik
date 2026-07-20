@@ -12,14 +12,12 @@ import (
 
 // Handle is the //fabrik:http:handle directive.
 type Handle struct {
-	groups *Group
-	routes *routeTable
-	mw     *Middleware
+	host *Host
 }
 
 // NewHandle returns a Handle directive for one run.
-func NewHandle(groups *Group, routes *routeTable, mw *Middleware) *Handle {
-	return &Handle{groups: groups, routes: routes, mw: mw}
+func NewHandle(host *Host) *Handle {
+	return &Handle{host: host}
 }
 
 func (*Handle) Name() string { return "http:handle" }
@@ -34,6 +32,7 @@ func (*Handle) Meta() gen.Meta {
 			"comma-separated chain of declared names, same as on `//fabrik:http`.\n\n" +
 			"```go\n//fabrik:http:handle /metrics\nfunc Metrics() http.Handler { return promhttp.Handler() }\n```",
 		Example: "//fabrik:http:handle /metrics",
+		Tier:    gen.TierBind,
 		Pos: []gen.PosSpec{
 			{Name: "PATH", Kind: gen.KindFreeform},
 		},
@@ -123,50 +122,52 @@ func (h *Handle) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*handleNode)
-	var ds diag.Diagnostics
 
-	pattern, refs := effectiveRoute(h.groups, nd.recvObj, nd.path, nd.refs)
+	pattern, refs := effectiveRoute(h.host.groups, nd.recvObj, nd.path, nd.refs)
 
 	// Duplicate routes still validate middleware references.
-	mws, mds := h.mw.resolve(refs)
-	ds = append(ds, mds...)
+	mws, ds := h.host.mw.resolve(refs)
 
-	if d, ok := h.routes.add(pattern, nd.pos); !ok {
+	if d, ok := h.host.routes.add(pattern, nd.pos); !ok {
 		return append(ds, d)
 	}
 
-	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
-	callee, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
-	ds = append(ds, hds...)
+	h.host.record(func(g *gen.Gen) diag.Diagnostics {
+		var ds diag.Diagnostics
+		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		callee, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
+		ds = append(ds, hds...)
 
-	// Middleware and produced handlers require http.Handler registration.
-	if !nd.produces && len(mws) == 0 {
+		// Middleware and handler factories require an http.Handler value.
+		if !nd.produces && len(mws) == 0 {
+			g.Node(&gen.Route{
+				Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+				Router:  r,
+				Kind:    gen.RouteHandleFunc,
+				Pattern: pattern,
+				Handler: callee,
+			})
+			return ds
+		}
+		handler := callee + "()"
+		if !nd.produces {
+			handler = g.Import("net/http") + ".HandlerFunc(" + callee + ")"
+		}
+		chain := make([]string, 0, len(mws))
+		for _, mw := range mws {
+			expr, eds := h.host.mw.expr(g, mw)
+			ds = append(ds, eds...)
+			chain = append(chain, expr)
+		}
 		g.Node(&gen.Route{
 			Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
 			Router:  r,
-			Kind:    gen.RouteHandleFunc,
+			Kind:    gen.RouteHandle,
 			Pattern: pattern,
-			Handler: callee,
+			Handler: handler,
+			Chain:   chain,
 		})
 		return ds
-	}
-	handler := callee + "()"
-	if !nd.produces {
-		handler = g.Import("net/http") + ".HandlerFunc(" + callee + ")"
-	}
-	chain := make([]string, 0, len(mws))
-	for _, mw := range mws {
-		expr, eds := h.mw.expr(g, mw)
-		ds = append(ds, eds...)
-		chain = append(chain, expr)
-	}
-	g.Node(&gen.Route{
-		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
-		Router:  r,
-		Kind:    gen.RouteHandle,
-		Pattern: pattern,
-		Handler: handler,
-		Chain:   chain,
 	})
 	return ds
 }
@@ -180,6 +181,6 @@ func producesHandler(sig *types.Signature) bool {
 // PrepareNode registers the handler's receiver struct before resolution.
 func (h *Handle) PrepareNode(n any, g *gen.Gen) {
 	nd := n.(*handleNode)
-	prepareReceiver(g, nd.recv, nd.fset)
-	BindHTTPServer(g)
+	h.host.prepareReceiver(g, nd.recv, nd.fset)
+	h.host.BindHTTPServer(g)
 }

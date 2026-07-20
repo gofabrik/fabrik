@@ -14,8 +14,12 @@ import (
 )
 
 //fabrik:provider
-func NewDB(cfg *DatabaseConfig) (*sql.DB, error) {
-	return sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)")
+func NewDB(cfg *DatabaseConfig) (*sql.DB, func(), error) {
+	db, err := sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, nil, err
+	}
+	return db, func() { db.Close() }, nil
 }
 
 //fabrik:provider

@@ -11,11 +11,9 @@ replace github.com/gofabrik/fabrik/jobs => JOBSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/shared.go --
 package shared
 
@@ -31,6 +29,17 @@ func Worker() jobs.RuntimeConfig {
 
 package main
 
-func run() error {
-	return nil
+import (
+	"fmt"
+	"os"
+)
+
+func run() int {
+	if err := func() error {
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }

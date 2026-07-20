@@ -11,11 +11,9 @@ replace github.com/gofabrik/fabrik/config => CONFIGDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- store/store.go --
 package store
 
@@ -62,6 +60,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
@@ -70,34 +69,40 @@ import (
 	"app/web"
 )
 
-func run() error {
-	// Config
-	storeConfig, err := config.Load[store.Config](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("store"),
-		config.Section("store"),
-	)
-	if err != nil {
-		return err
-	}
+func run() int {
+	if err := func() error {
+		// Config
+		storeConfig, err := config.Load[store.Config](
+			config.FileOptional("config.yaml"),
+			config.FileOptional("config.local.yaml"),
+			config.KnownSections("store"),
+			config.Section("store"),
+		)
+		if err != nil {
+			return err
+		}
 
-	// Providers
-	// store.Store, selected by store.kind
-	var storeStore store.Store
-	switch storeConfig.Group.Kind {
-	case "memory":
-		storeStore = store.NewMemory()
-	default:
-		return fmt.Errorf("no store.Store implementation for %q", storeConfig.Group.Kind)
-	}
-	webHandlers := &web.Handlers{
-		Store: storeStore,
-	}
+		// Providers
+		// store.Store, selected by store.kind
+		var storeStore store.Store
+		switch storeConfig.Group.Kind {
+		case "memory":
+			storeStore = store.NewMemory()
+		default:
+			return fmt.Errorf("no store.Store implementation for %q", storeConfig.Group.Kind)
+		}
+		webHandlers := &web.Handlers{
+			Store: storeStore,
+		}
 
-	r := router.New()
+		r := router.New()
 
-	// Register
-	r.Method("GET", "/", webHandlers.Index)
-	return nil
+		// Register
+		r.Method("GET", "/", webHandlers.Index)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }

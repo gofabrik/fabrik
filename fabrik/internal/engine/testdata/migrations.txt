@@ -1,10 +1,14 @@
 Migration streams union across packages into one injectable
-migrations.Sources; a prepare hook calls them explicitly with the db and
-dialect the app provides. Nothing runs unless the user calls it.
+migrations.Sources; a migrate command applies them explicitly with the db
+and dialect the app provides. Nothing runs unless the command is selected.
 -- go.mod --
 module app
 
 go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
 
 require github.com/gofabrik/fabrik/migrations v0.0.0
 
@@ -12,19 +16,18 @@ replace github.com/gofabrik/fabrik/migrations => MIGRATIONSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/db.go --
 package shared
 
 import (
-	"context"
 	"database/sql"
 
 	"github.com/gofabrik/fabrik/migrations"
+
+	"github.com/gofabrik/fabrik/cli"
 )
 
 //fabrik:provider
@@ -33,8 +36,8 @@ func NewDB() (*sql.DB, error) { return sql.Open("sqlite", "file:app.db") }
 //fabrik:provider
 func NewDialect() migrations.Dialect { return migrations.DialectSQLite }
 
-//fabrik:hook prepare
-func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
+//fabrik:cli:command
+func MigrateDB(ctx cli.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
 	return src.Migrate(ctx, db, d)
 }
 -- shared/migrations.go --
@@ -72,21 +75,54 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/migrations"
-	"github.com/gofabrik/fabrik/router"
 
 	"app/shared"
 	"app/todos"
-	"app/web"
 )
 
-func run() error {
-	ctx := context.Background()
+func run() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	go func() {
+		<-sigc
+		cancel()
+		<-sigc
+		os.Exit(1)
+	}()
+
+	root := &cli.Command{
+		Name: "app",
+		Subcommands: []*cli.Command{
+			{
+				Name: "migrate-db",
+				Run: func(ctx cli.Context) error {
+					db, dialect, sources, err := buildMigrateDB(ctx)
+					if err != nil {
+						return err
+					}
+					return shared.MigrateDB(ctx, db, dialect, sources)
+				},
+			},
+		},
+	}
+	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
+}
+
+func buildMigrateDB(ctx context.Context) (*sql.DB, migrations.Dialect, migrations.Sources, error) {
 	// Providers
 	sharedSqlDB, err := shared.NewDB()
 	if err != nil {
-		return err
+		return nil, 0, nil, err
 	}
 
 	sharedMigrationsDialect := shared.NewDialect()
@@ -94,14 +130,5 @@ func run() error {
 		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
 		{Stream: "todos", FS: todos.Migrations, Dir: "migrations"},
 	}
-	r := router.New()
-
-	// Register
-	r.Method("GET", "/{$}", web.Home)
-
-	// Prepare: after registration, before runtime start
-	if err := shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources); err != nil {
-		return err
-	}
-	return nil
+	return sharedSqlDB, sharedMigrationsDialect, migrationSources, nil
 }

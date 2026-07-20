@@ -1,0 +1,4 @@
+change_type: breaking
+component: gen
+note: "`//fabrik:cli:command` declares a plain function; the generated root constructs only the selected command's dependencies, so help and completion never build the application, and migrations run as an explicit command"
+issues: [0]

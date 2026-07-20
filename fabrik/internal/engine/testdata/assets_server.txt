@@ -32,8 +32,8 @@ import (
 var Assets embed.FS
 
 //fabrik:cli:command
-func ServeCommand(server *httpserver.Server) *cli.Command {
-	return &cli.Command{Name: "serve", Run: func(ctx cli.Context) error { return server.Run(ctx) }}
+func Serve(ctx cli.Context, server *httpserver.Server) error {
+	return server.Run(ctx)
 }
 -- shared/assets/style.css --
 body {}
@@ -45,8 +45,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -72,35 +70,36 @@ func run() int {
 		os.Exit(1)
 	}()
 
-	var root *cli.Command
-	err := func() error {
-		// Providers
-		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
-			{FS: shared.Assets, Dir: "assets"},
-		}, nil)
-		if err != nil {
-			return err
-		}
-
-		r := router.New()
-
-		// Register
-		r.Handle("/assets/", assetCompiled.Handler())
-
-		root = &cli.Command{
-			Name: "app",
-			Subcommands: []*cli.Command{
-				shared.ServeCommand(httpserver.New(r, nil)),
+	root := &cli.Command{
+		Name: "app",
+		Subcommands: []*cli.Command{
+			{
+				Name: "serve",
+				Run: func(ctx cli.Context) error {
+					server, err := buildServe(ctx)
+					if err != nil {
+						return err
+					}
+					return shared.Serve(ctx, server)
+				},
 			},
-		}
-		return nil
-	}()
-	if err != nil {
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			return 130
-		}
-		fmt.Fprintln(os.Stderr, "app:", err)
-		return 1
+		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
+}
+
+func buildServe(ctx context.Context) (*httpserver.Server, error) {
+	// Providers
+	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+		{FS: shared.Assets, Dir: "assets"},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r := router.New()
+
+	// Register
+	r.Handle("/assets/", assetCompiled.Handler())
+	return httpserver.New(r, nil), nil
 }

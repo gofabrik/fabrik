@@ -22,28 +22,24 @@ func (*Hook) Name() string { return "hook" }
 
 func (*Hook) Meta() gen.Meta {
 	return gen.Meta{
-		Synopsis: "Lifecycle hook function: setup|prepare|start",
-		Doc: "**`//fabrik:hook PHASE`**\n\n" +
-			"Marks a function the generated `run()` calls at a named point of " +
+		Synopsis: "Lifecycle hook function: setup",
+		Doc: "**`//fabrik:hook setup`**\n\n" +
+			"Marks a function the generated assembly calls at a named point of " +
 			"the app lifecycle: `config -> setup -> providers -> middleware -> " +
-			"routes -> prepare -> start -> serve`. Hookable phases, in order:\n\n" +
+			"routes`. Hookable phase:\n\n" +
 			"- `setup` - after config, before providers. Process-level setup " +
 			"(logger, runtime tuning); parameters may be a leading " +
-			"`context.Context` and pointers to //fabrik:config structs.\n" +
-			"- `prepare` - after everything is wired and registered, before " +
-			"runtime processes start. Run pre-intake work on built resources " +
-			"(schema checks, cache warming, migrations, seeding); parameters " +
-			"resolve against everything providers and libraries bind.\n" +
-			"- `start` - after prepare, before serving. Start runtime " +
-			"processes that consume registered and prepared state (workers, " +
-			"schedulers, watchers); parameters " +
-			"resolve against everything providers and libraries bind.\n\n" +
-			"Hooks of one phase run in source order and must be independent. " +
-			"A returned `error` aborts startup.\n\n" +
+			"`context.Context` and pointers to //fabrik:config structs. With " +
+			"commands, setup runs at the start of every command's build " +
+			"function, under the command context.\n\n" +
+			"Hooks run in source order and must be independent. " +
+			"A returned `error` aborts startup. Pre-intake work such as " +
+			"migrations belongs to an explicit command that injects what it " +
+			"needs; runtime processes are startable values a command runs.\n\n" +
 			"```go\n//fabrik:hook setup\nfunc InitLogger(cfg *Log) error {\n\tslog.SetDefault(...)\n\treturn nil\n}\n```",
 		Example: "//fabrik:hook setup",
 		Pos: []gen.PosSpec{
-			{Name: "PHASE", Kind: gen.KindEnum, Values: []string{"setup", "prepare", "start"}},
+			{Name: "PHASE", Kind: gen.KindEnum, Values: []string{"setup"}},
 		},
 		Tier: gen.TierHook,
 	}
@@ -66,10 +62,10 @@ func (h *Hook) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	}
 	phase := args.Pos[0]
 	switch phase.Text {
-	case "setup", "prepare", "start":
+	case "setup":
 	default:
 		ds.Error(a.ArgPos(phase.Col), fmt.Sprintf("unknown lifecycle phase %q", phase.Text),
-			"hookable phases in order: setup (after config, before providers), prepare (pre-intake work), start (runtime processes)")
+			"the hookable phase is setup (after config, before providers); pre-intake and runtime work belong to commands")
 	}
 	if ds.HasFatal() {
 		return nil, ds
@@ -133,12 +129,9 @@ func (h *Hook) Check(n any, t gen.Typed) diag.Diagnostics {
 func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*hookNode)
 
-	var args []string
-	var ds diag.Diagnostics
-	switch nd.phase {
-	case "setup":
+	emit := func() diag.Diagnostics {
 		// Setup hooks can consume only context and config.
-		args, ds = resolveArgs(g, h.cfg, nd.params,
+		args, ds := resolveArgs(g, h.cfg, nd.params,
 			func(pr param) (string, diag.Diagnostics, bool) {
 				if !h.cfg.IsConfig(pr.t) {
 					return "", nil, false
@@ -147,36 +140,24 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			},
 			func(param) (string, string) {
 				return "setup hooks run before providers; parameters must be context.Context or //fabrik:config structs",
-					"needs a built resource? move this to //fabrik:hook prepare or //fabrik:hook start"
+					"construct the resource in a //fabrik:provider and inject it into a command"
 			})
-	case "prepare", "start":
-		// Prepare and start hooks can consume any generated binding.
-		args, ds = resolveArgs(g, h.cfg, nd.params,
-			func(pr param) (string, diag.Diagnostics, bool) {
-				return g.Instance(pr.t, "")
-			},
-			func(param) (string, string) {
-				return "no provider or binding supplies this hook parameter",
-					"declare a //fabrik:provider for it"
-			})
+		errStyle := gen.ErrNone
+		if nd.returnsErr {
+			errStyle = gen.ErrInline
+		}
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseSetup, Origin: gen.Origin{Pos: nd.pos}},
+			Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
+			Args: args,
+			Err:  errStyle,
+		})
+		return ds
 	}
-
-	phase := gen.PhaseSetup
-	switch nd.phase {
-	case "prepare":
-		phase = gen.PhasePrepare
-	case "start":
-		phase = gen.PhaseStart
+	if g.ScopeCount() > 0 {
+		// Each command runs setup with config resolved in its own scope.
+		g.ScopePrologue(emit)
+		return nil
 	}
-	errStyle := gen.ErrNone
-	if nd.returnsErr {
-		errStyle = gen.ErrInline
-	}
-	g.Node(&gen.Call{
-		Base: gen.Base{Phase: phase, Origin: gen.Origin{Pos: nd.pos}},
-		Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
-		Args: args,
-		Err:  errStyle,
-	})
-	return ds
+	return emit()
 }

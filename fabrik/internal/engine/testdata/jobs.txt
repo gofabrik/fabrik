@@ -9,24 +9,26 @@ module app
 
 go 1.26
 
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+
 require github.com/gofabrik/fabrik/jobs v0.0.0
 
 replace github.com/gofabrik/fabrik/jobs => JOBSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/shared.go --
 package shared
 
 import (
-	"context"
-
 	"github.com/gofabrik/fabrik/jobs"
+
+	"github.com/gofabrik/fabrik/cli"
 )
 
 type Store struct{}
@@ -37,8 +39,8 @@ func NewStore() *Store { return &Store{} }
 //fabrik:provider
 func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
 
-//fabrik:hook start
-func Boot(ctx context.Context, mgr *jobs.Manager) error { return nil }
+//fabrik:cli:command
+func Boot(ctx cli.Context, mgr *jobs.Manager) error { return nil }
 -- mail/mail.go --
 package mail
 
@@ -78,64 +80,88 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/jobs"
-	"github.com/gofabrik/fabrik/router"
 
 	"app/mail"
 	"app/shared"
-	"app/web"
 )
 
-func run() error {
-	ctx := context.Background()
+func run() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	go func() {
+		<-sigc
+		cancel()
+		<-sigc
+		os.Exit(1)
+	}()
+
+	root := &cli.Command{
+		Name: "app",
+		Subcommands: []*cli.Command{
+			{
+				Name: "boot",
+				Run: func(ctx cli.Context) error {
+					manager, err := buildBoot(ctx)
+					if err != nil {
+						return err
+					}
+					return shared.Boot(ctx, manager)
+				},
+			},
+		},
+	}
+	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
+}
+
+func buildBoot(ctx context.Context) (*jobs.Manager, error) {
 	// Providers
 	sharedJobsStore, err := shared.NewJobStore()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	jobsManager, err := jobs.New(sharedJobsStore, jobs.Config{})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	sharedStore := shared.NewStore()
-	r := router.New()
 
 	// Register
 	// Jobs
 	if err := jobs.Register[mail.OrderPlaced](jobsManager, "mail.OrderPlaced"); err != nil {
-		return err
+		return nil, err
 	}
 	if err := jobs.Register[mail.Welcome](jobsManager, "mail.Welcome"); err != nil {
-		return err
+		return nil, err
 	}
 	if err := jobs.On[mail.Welcome](jobsManager, "SendWelcome", func(c jobs.Context, m mail.Welcome) error {
 		return mail.SendWelcome(c, sharedStore, m)
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if err := jobs.On[mail.OrderPlaced](jobsManager, "email-receipt", func(c jobs.Context, m mail.OrderPlaced) error {
 		return mail.EmailReceipt(c, sharedStore, m)
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if err := jobs.On[mail.OrderPlaced](jobsManager, "update-inventory", func(c jobs.Context, m mail.OrderPlaced) error {
 		return mail.UpdateInventory(c, m)
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	if err := jobs.RegisterCron(jobsManager, "nightly", "0 3 * * *", func(c jobs.Context) error {
 		return mail.Nightly(c, sharedStore)
 	}); err != nil {
-		return err
+		return nil, err
 	}
-
-	r.Method("GET", "/{$}", web.Home)
-
-	// Start: after prepare, before serving
-	if err := shared.Boot(ctx, jobsManager); err != nil {
-		return err
-	}
-	return nil
+	return jobsManager, nil
 }

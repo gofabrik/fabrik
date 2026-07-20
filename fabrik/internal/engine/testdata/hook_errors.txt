@@ -7,11 +7,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/web.go --
 package web
 
@@ -39,7 +37,7 @@ error: web/web.go:7:1: //fabrik:hook must be on a package-level function (func S
 error: web/web.go:10:1: hook Bad must return nothing or error
   help: example: func MigrateDB(ctx context.Context) error
 error: web/web.go:13:15: unknown lifecycle phase "verbose"
-  help: hookable phases in order: setup (after config, before providers), prepare (pre-intake work), start (runtime processes)
+  help: the hookable phase is setup (after config, before providers); pre-intake and runtime work belong to commands
 error: web/web.go:16:1: //fabrik:hook requires PHASE
   help: example: //fabrik:hook setup
 error: web/web.go:20:31: hook TrailingCtx takes context.Context after other parameters

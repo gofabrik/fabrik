@@ -7,11 +7,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/mw.go --
 package shared
 
@@ -51,23 +49,32 @@ func Index(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/shared"
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	r := router.New()
-	webAPI := &web.API{}
+func run() int {
+	if err := func() error {
+		// Providers
+		r := router.New()
+		webAPI := &web.API{}
 
-	// Register
-	r.Method("GET", "/api/users", webAPI.Users, shared.RequireAuth)
-	r.Method("GET", "/api", webAPI.Root, shared.RequireAuth)
-	r.Method("GET", "/api/fresh", webAPI.Fresh, shared.RequireAuth, web.NoCache)
-	r.Method("GET", "/", web.Index)
-	return nil
+		// Register
+		r.Method("GET", "/api/users", webAPI.Users, shared.RequireAuth)
+		r.Method("GET", "/api", webAPI.Root, shared.RequireAuth)
+		r.Method("GET", "/api/fresh", webAPI.Fresh, shared.RequireAuth, web.NoCache)
+		r.Method("GET", "/", web.Index)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }
 -- want/diags --
 warning: web/web.go:20:1: group on Nothing has no routes

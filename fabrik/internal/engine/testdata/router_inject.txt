@@ -10,11 +10,9 @@ replace github.com/gofabrik/fabrik/router => ROUTERDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/web.go --
 package web
 
@@ -39,19 +37,28 @@ func (d *Docs) List(w http.ResponseWriter, r *http.Request) {
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	r := router.New()
-	webDocs := &web.Docs{
-		Router: r,
-	}
+func run() int {
+	if err := func() error {
+		// Providers
+		r := router.New()
+		webDocs := &web.Docs{
+			Router: r,
+		}
 
-	// Register
-	r.Method("GET", "/routes", webDocs.List)
-	return nil
+		// Register
+		r.Method("GET", "/routes", webDocs.List)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }

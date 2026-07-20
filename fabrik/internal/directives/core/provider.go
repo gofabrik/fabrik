@@ -36,7 +36,11 @@ func (*Provider) Meta() gen.Meta {
 			"app code by matching types. Parameters resolve to other " +
 			"providers; `context.Context` parameters receive the shared " +
 			"signal-bound application context (cancelled at shutdown). A second " +
-			"`error` return aborts startup. " +
+			"`error` return aborts startup. A `func()` result before the error " +
+			"is a cleanup: generated code skips it when nil and releases in " +
+			"reverse construction order at process end and on construction " +
+			"failure. A provider that returns an error owns its partial " +
+			"teardown. Cleanup returns are not allowed on `case=` providers. " +
 			"With `case=<kind>`, the constructor is instead one selectable " +
 			"implementation for a `//fabrik:provider:select` interface, " +
 			"matched by its return type and constructed only when the " +
@@ -60,13 +64,14 @@ type node struct {
 
 	caseVal string // case= value: this provider is one candidate in a provider:select group, chosen by return type
 
-	fn         string
-	pkg        *types.Package
-	returns    []types.Type
-	returnsErr bool
-	params     []param
-	fset       *token.FileSet
-	built      bool
+	fn             string
+	pkg            *types.Package
+	returns        []types.Type
+	returnsErr     bool
+	returnsCleanup bool
+	params         []param
+	fset           *token.FileSet
+	built          bool
 }
 
 func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
@@ -120,9 +125,19 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 		return ds
 	case results.Len() == 2 && isErrorType(results.At(1).Type()):
 		nd.returnsErr = true
+	case results.Len() == 2 && isCleanupType(results.At(1).Type()):
+		nd.returnsCleanup = true
+	case results.Len() == 3 && isCleanupType(results.At(1).Type()) && isErrorType(results.At(2).Type()):
+		nd.returnsCleanup = true
+		nd.returnsErr = true
 	case results.Len() > 1:
-		ds.Error(nd.pos, fmt.Sprintf("provider %s must return exactly one value, or a value and an error", fn.Name()),
-			"example: func NewGreeter() (*Greeter, error)")
+		ds.Error(nd.pos, fmt.Sprintf("provider %s must return a value, optionally followed by a cleanup func() and an error", fn.Name()),
+			"examples: func New() (*T, error); func New() (*T, func(), error)")
+		return ds
+	}
+	if nd.caseVal != "" && nd.returnsCleanup {
+		ds.Error(nd.pos, fmt.Sprintf("case provider %s cannot return a cleanup", fn.Name()),
+			"drop the cleanup result or the case= attribute")
 		return ds
 	}
 
@@ -165,19 +180,26 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	g.BindLazy(nd.returns[0], "", func() (string, diag.Diagnostics) {
-		nd.built = true
+		if !g.InValidationScope() {
+			nd.built = true
+		}
 		args, ds := p.resolveParams(g, nd.params)
 		v := g.Var(varBase(nd.pkg, nd.returns[0]))
+		var closeVar string
+		if nd.returnsCleanup {
+			closeVar = g.Var(v + "Close")
+		}
 		errStyle := gen.ErrNone
 		if nd.returnsErr {
 			errStyle = gen.ErrReturn
 		}
 		g.Node(&gen.Call{
-			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
-			Var:  v,
-			Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
-			Args: args,
-			Err:  errStyle,
+			Base:    gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
+			Var:     v,
+			Fn:      g.ImportPkg(nd.pkg) + "." + nd.fn,
+			Args:    args,
+			Err:     errStyle,
+			Cleanup: closeVar,
 		})
 		return v, ds
 	})
@@ -250,6 +272,10 @@ func varBase(pkg *types.Package, t types.Type) string {
 		return pkg.Name() + strings.ToUpper(q[:1]) + q[1:] + name
 	}
 	return pkg.Name() + name
+}
+
+func isCleanupType(t types.Type) bool {
+	return types.TypeString(types.Unalias(t), nil) == "func()"
 }
 
 func isErrorType(t types.Type) bool {

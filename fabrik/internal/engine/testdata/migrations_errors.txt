@@ -12,11 +12,9 @@ replace github.com/gofabrik/fabrik/migrations => MIGRATIONSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- auth/migrations.go --
 package auth
 

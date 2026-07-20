@@ -7,6 +7,14 @@ module app
 
 go 1.26
 
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+require github.com/gofabrik/fabrik/httpserver v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+
+replace github.com/gofabrik/fabrik/httpserver => HTTPSERVERDIR
+
 require (
 	github.com/gofabrik/fabrik/assetmapper v0.0.0
 	github.com/gofabrik/fabrik/migrations v0.0.0
@@ -25,11 +33,9 @@ replace (
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/config.go --
 package shared
 
@@ -72,6 +78,9 @@ import (
 	"database/sql"
 
 	"github.com/gofabrik/fabrik/migrations"
+
+	"github.com/gofabrik/fabrik/cli"
+	"github.com/gofabrik/fabrik/httpserver"
 )
 
 //fabrik:config store
@@ -114,11 +123,16 @@ func NewDB() (*sql.DB, error) { return sql.Open("sqlite", "file:app.db") }
 //fabrik:provider
 func NewDialect() migrations.Dialect { return migrations.DialectSQLite }
 
-//fabrik:hook start
-func WarmCache(ctx context.Context, p *Pool) error { return nil }
+//fabrik:cli:command
+func WarmCache(ctx cli.Context, p *Pool) error { return nil }
 
-//fabrik:hook prepare
-func MigrateDB(ctx context.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
+//fabrik:cli:command
+func Serve(ctx cli.Context, server *httpserver.Server) error {
+	return server.Run(ctx)
+}
+
+//fabrik:cli:command
+func MigrateDB(ctx cli.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
 	return src.Migrate(ctx, db, d)
 }
 -- store/schema.go --
@@ -210,12 +224,18 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/config"
+	"github.com/gofabrik/fabrik/httpserver"
 	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/templates"
@@ -226,8 +246,58 @@ import (
 	"app/web"
 )
 
-func run() error {
-	ctx := context.Background()
+func run() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	go func() {
+		<-sigc
+		cancel()
+		<-sigc
+		os.Exit(1)
+	}()
+
+	root := &cli.Command{
+		Name: "app",
+		Subcommands: []*cli.Command{
+			{
+				Name: "warm-cache",
+				Run: func(ctx cli.Context) error {
+					pool, err := buildWarmCache(ctx)
+					if err != nil {
+						return err
+					}
+					return store.WarmCache(ctx, pool)
+				},
+			},
+			{
+				Name: "serve",
+				Run: func(ctx cli.Context) error {
+					server, err := buildServe(ctx)
+					if err != nil {
+						return err
+					}
+					return store.Serve(ctx, server)
+				},
+			},
+			{
+				Name: "migrate-db",
+				Run: func(ctx cli.Context) error {
+					db, dialect, sources, err := buildMigrateDB(ctx)
+					if err != nil {
+						return err
+					}
+					return store.MigrateDB(ctx, db, dialect, sources)
+				},
+			},
+		},
+	}
+	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
+}
+
+func buildWarmCache(ctx context.Context) (*store.Pool, error) {
 	// Config
 	sharedLog, err := config.Load[shared.Log](
 		config.FileOptional("config.yaml"),
@@ -236,7 +306,42 @@ func run() error {
 		config.Section("log"),
 	)
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	// Setup: after config, before providers
+	if err := shared.InitLogger(sharedLog); err != nil {
+		return nil, err
+	}
+
+	// Providers
+	storePool, err := store.NewPool(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return storePool, nil
+}
+
+func buildServe(ctx context.Context) (*httpserver.Server, error) {
+	// Config
+	sharedConfig, err := config.Load[shared.Config](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("http", "log", "postgres", "store"),
+		config.Section("http"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	sharedLog, err := config.Load[shared.Log](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("http", "log", "postgres", "store"),
+		config.Section("log"),
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	storeConfig, err := config.Load[store.Config](
@@ -246,18 +351,16 @@ func run() error {
 		config.Section("store"),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Setup: after config, before providers
 	if err := shared.InitLogger(sharedLog); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Providers
-	migrationSources := migrations.Sources{
-		{Stream: "store", FS: store.Migrations, Dir: "migrations"},
-	}
+	sharedHttpServer := shared.NewServer(sharedConfig)
 
 	// store.Store, selected by store.kind
 	var storeStore store.Store
@@ -272,31 +375,31 @@ func run() error {
 			config.Section("postgres"),
 		)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		storeStorePostgres, err := store.NewPostgres(ctx, storePostgresConfig)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		storeStore = storeStorePostgres
 	default:
-		return fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
+		return nil, fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
 	}
 	storePool, err := store.NewPool(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
 		{FS: web.Assets, Dir: "assets"},
 	}, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
 		"shout": web.Shout,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	webAPI := &web.API{
 		Store:     storeStore,
@@ -305,17 +408,10 @@ func run() error {
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
 
-	storeSqlDB, err := store.NewDB()
-	if err != nil {
-		return err
-	}
-
-	storeMigrationsDialect := store.NewDialect()
-
 	// embedded Static, served under /static
 	webStatic, err := fs.Sub(web.Static, "static")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	r := router.New()
@@ -331,18 +427,36 @@ func run() error {
 	r.Handle("/metrics", web.Metrics())
 	r.Method("GET", "/api/api/items.json", adapter.Wrap(webAPI.ItemsJSON), shared.RequireAuth)
 	r.NotFound(web.Missing)
-
-	// Prepare: after registration, before runtime start
-	if err := store.MigrateDB(ctx, storeSqlDB, storeMigrationsDialect, migrationSources); err != nil {
-		return err
-	}
-
-	// Start: after prepare, before serving
-	if err := store.WarmCache(ctx, storePool); err != nil {
-		return err
-	}
-	return nil
+	return httpserver.New(r, sharedHttpServer), nil
 }
--- want/diags --
-warning: shared/config.go:3:1: config struct Config is never used
-  help: inject it into a provider, hook, or handler struct, or remove the directive
+
+func buildMigrateDB(ctx context.Context) (*sql.DB, migrations.Dialect, migrations.Sources, error) {
+	// Config
+	sharedLog, err := config.Load[shared.Log](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("http", "log", "postgres", "store"),
+		config.Section("log"),
+	)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	// Setup: after config, before providers
+	if err := shared.InitLogger(sharedLog); err != nil {
+		return nil, 0, nil, err
+	}
+
+	// Providers
+	migrationSources := migrations.Sources{
+		{Stream: "store", FS: store.Migrations, Dir: "migrations"},
+	}
+
+	storeSqlDB, err := store.NewDB()
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	storeMigrationsDialect := store.NewDialect()
+	return storeSqlDB, storeMigrationsDialect, migrationSources, nil
+}

@@ -14,6 +14,7 @@ import (
 // Middleware registers global and named HTTP middleware.
 type Middleware struct {
 	byName map[string]*mwNode
+	host   *Host
 }
 
 // NewMiddleware returns a Middleware directive for one run.
@@ -33,6 +34,7 @@ func (*Middleware) Meta() gen.Meta {
 			"opt in through their `middleware=` chain.\n\n" +
 			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n\n//fabrik:http:middleware\nfunc SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {\n\treturn m.Middleware\n}\n```",
 		Example: "//fabrik:http:middleware",
+		Tier:    gen.TierBind,
 		Attrs: []gen.AttrSpec{
 			{Key: "name", Kind: gen.KindFreeform},
 		},
@@ -47,10 +49,10 @@ type mwNode struct {
 	pkg  *types.Package
 	used bool // referenced by at least one middleware= chain
 
-	ctor      bool // constructor form: built once, referenced by variable
+	ctor      bool // constructor form, built once per scope
 	errResult bool
 	params    []ctorParam
-	varName   string // set once the constructor is materialized
+	varNames  map[any]string // scope-local constructor variables
 }
 
 // ctorParam is one binding-resolved constructor parameter.
@@ -134,14 +136,17 @@ func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		// Named constructors build on first reference.
 		return nil
 	}
-	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
-	expr, ds := m.expr(g, nd)
-	g.Node(&gen.Call{
-		Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
-		Fn:   r + ".Use",
-		Args: []string{expr},
+	m.host.record(func(g *gen.Gen) diag.Diagnostics {
+		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		expr, ds := m.expr(g, nd)
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
+			Fn:   r + ".Use",
+			Args: []string{expr},
+		})
+		return ds
 	})
-	return ds
+	return nil
 }
 
 // expr renders one middleware reference and builds constructors once.
@@ -149,8 +154,11 @@ func (m *Middleware) expr(g *gen.Gen, nd *mwNode) (string, diag.Diagnostics) {
 	if !nd.ctor {
 		return g.ImportPkg(nd.pkg) + "." + nd.fn, nil
 	}
-	if nd.varName != "" {
-		return nd.varName, nil
+	if nd.varNames == nil {
+		nd.varNames = map[any]string{}
+	}
+	if v, ok := nd.varNames[g.ScopeID()]; ok {
+		return v, nil
 	}
 	var ds diag.Diagnostics
 	args := make([]string, 0, len(nd.params))
@@ -182,7 +190,7 @@ func (m *Middleware) expr(g *gen.Gen, nd *mwNode) (string, diag.Diagnostics) {
 		Args: args,
 		Err:  errStyle,
 	})
-	nd.varName = v
+	nd.varNames[g.ScopeID()] = v
 	return v, ds
 }
 

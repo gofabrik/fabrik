@@ -21,8 +21,8 @@ import "github.com/gofabrik/fabrik/cli"
 type Missing struct{}
 
 //fabrik:cli:command
-func GreetCommand(m *Missing) *cli.Command {
-	return &cli.Command{Name: "greet"}
+func Greet(ctx cli.Context, m *Missing) error {
+	return nil
 }
 -- want/diags --
 error: shared/shared.go:7:1: no provider for *shared.Missing

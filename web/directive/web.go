@@ -48,6 +48,7 @@ func (*Web) Meta() gen.Meta {
 			"through the app's template set.\n\n" +
 			"```go\n//fabrik:web POST /login\nfunc (h *Handlers) Login(req *web.Request) (web.Response, error) { ... }\n```",
 		Example: "//fabrik:web GET /login",
+		Tier:    gen.TierBind,
 		Pos: []gen.PosSpec{
 			{Name: "METHOD", Kind: gen.KindFreeform, Values: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}},
 			{Name: "PATH", Kind: gen.KindFreeform},
@@ -183,5 +184,5 @@ func (w *Web) PrepareNode(n any, g *gen.Gen) {
 	if nd.recv != nil {
 		w.host.PrepareReceiver(g, nd.recv, nd.fset)
 	}
-	routerdir.BindHTTPServer(g)
+	w.host.BindHTTPServer(g)
 }

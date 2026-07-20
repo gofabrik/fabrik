@@ -15,6 +15,9 @@ func defines(n Node) []string {
 		return []string{n.Var}
 	case *Call:
 		if n.Var != "" && n.Err != ErrInline {
+			if n.Cleanup != "" {
+				return []string{n.Var, n.Cleanup}
+			}
 			return []string{n.Var}
 		}
 	case *ConfigLoad:

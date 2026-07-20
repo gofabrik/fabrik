@@ -5,11 +5,9 @@ import (
 	"github.com/gofabrik/fabrik/httpserver"
 )
 
+// Start the HTTP server.
+//
 //fabrik:cli:command
-func RunCommand(server *httpserver.Server) *cli.Command {
-	return &cli.Command{
-		Name: "run",
-		Help: "Start the HTTP server",
-		Run:  func(ctx cli.Context) error { return server.Run(ctx) },
-	}
+func Run(ctx cli.Context, server *httpserver.Server) error {
+	return server.Run(ctx)
 }

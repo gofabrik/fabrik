@@ -12,11 +12,9 @@ replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/assets.go --
 package shared
 

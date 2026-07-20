@@ -13,16 +13,16 @@ import (
 
 // Static is the //fabrik:http:static directive.
 type Static struct {
-	routes *routeTable
+	host *Host
 }
 
 // NewStatic returns a Static directive for one run.
-func NewStatic(routes *routeTable) *Static { return &Static{routes: routes} }
+func NewStatic(host *Host) *Static { return &Static{host: host} }
 
 func (*Static) Name() string { return "http:static" }
 
 // PrepareNode binds the HTTP server for static routes.
-func (*Static) PrepareNode(_ any, g *gen.Gen) { BindHTTPServer(g) }
+func (s *Static) PrepareNode(_ any, g *gen.Gen) { s.host.BindHTTPServer(g) }
 
 func (*Static) Meta() gen.Meta {
 	return gen.Meta{
@@ -33,6 +33,7 @@ func (*Static) Meta() gen.Meta {
 			"URLs do not repeat it.\n\n" +
 			"```go\n//fabrik:http:static /assets dir=assets\n//go:embed assets\nvar Assets embed.FS\n```",
 		Example: "//fabrik:http:static /assets dir=assets",
+		Tier:    gen.TierBind,
 		Pos: []gen.PosSpec{
 			{Name: "PREFIX", Kind: gen.KindFreeform},
 		},
@@ -102,38 +103,40 @@ func (s *Static) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (s *Static) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*staticNode)
-	var ds diag.Diagnostics
 
 	pattern := nd.prefix + "/"
-	if d, ok := s.routes.add(pattern, nd.pos); !ok {
-		return append(ds, d)
+	if d, ok := s.host.routes.add(pattern, nd.pos); !ok {
+		return diag.Diagnostics{d}
 	}
 
-	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
-	httpPkg := g.Import("net/http")
-	fsExpr := g.ImportPkg(nd.pkg) + "." + nd.varName
-	if nd.dir != "" {
-		fsPkg := g.Import("io/fs")
-		v := g.Var(nd.pkg.Name() + nd.varName)
-		g.Node(&gen.Call{
-			Base: gen.Base{
-				Phase:  gen.PhaseWire,
-				Origin: gen.Origin{Pos: nd.pos},
-				Label:  "embedded " + nd.varName + ", served under " + nd.prefix,
-			},
-			Var:  v,
-			Fn:   fsPkg + ".Sub",
-			Args: []string{fsExpr, strconv.Quote(nd.dir)},
-			Err:  gen.ErrReturn,
+	s.host.record(func(g *gen.Gen) diag.Diagnostics {
+		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		httpPkg := g.Import("net/http")
+		fsExpr := g.ImportPkg(nd.pkg) + "." + nd.varName
+		if nd.dir != "" {
+			fsPkg := g.Import("io/fs")
+			v := g.Var(nd.pkg.Name() + nd.varName)
+			g.Node(&gen.Call{
+				Base: gen.Base{
+					Phase:  gen.PhaseWire,
+					Origin: gen.Origin{Pos: nd.pos},
+					Label:  "embedded " + nd.varName + ", served under " + nd.prefix,
+				},
+				Var:  v,
+				Fn:   fsPkg + ".Sub",
+				Args: []string{fsExpr, strconv.Quote(nd.dir)},
+				Err:  gen.ErrReturn,
+			})
+			fsExpr = v
+		}
+		g.Node(&gen.Route{
+			Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
+			Router:  r,
+			Kind:    gen.RouteHandle,
+			Pattern: pattern,
+			Handler: httpPkg + ".StripPrefix(" + strconv.Quote(nd.prefix) + ", " + httpPkg + ".FileServerFS(" + fsExpr + "))",
 		})
-		fsExpr = v
-	}
-	g.Node(&gen.Route{
-		Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
-		Router:  r,
-		Kind:    gen.RouteHandle,
-		Pattern: pattern,
-		Handler: httpPkg + ".StripPrefix(" + strconv.Quote(nd.prefix) + ", " + httpPkg + ".FileServerFS(" + fsExpr + "))",
+		return nil
 	})
-	return ds
+	return nil
 }

@@ -7,11 +7,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/web.go --
 package web
 
@@ -44,22 +42,31 @@ func (t *Tenant) Info(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	r := router.New()
-	webTenant := &web.Tenant{}
+func run() int {
+	if err := func() error {
+		// Providers
+		r := router.New()
+		webTenant := &web.Tenant{}
 
-	// Register
-	r.Method("GET", "/users/new", web.New)
-	r.Method("GET", "/users/{id}", web.Show)
-	r.Method("GET", "/files/{path...}", web.Files)
-	r.Method("GET", "/{$}", web.Root)
-	r.Method("PURGE", "/cache", web.Purge)
-	r.Method("GET", "/tenants/{tid}/info", webTenant.Info)
-	return nil
+		// Register
+		r.Method("GET", "/users/new", web.New)
+		r.Method("GET", "/users/{id}", web.Show)
+		r.Method("GET", "/files/{path...}", web.Files)
+		r.Method("GET", "/{$}", web.Root)
+		r.Method("PURGE", "/cache", web.Purge)
+		r.Method("GET", "/tenants/{tid}/info", webTenant.Info)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
+	}
+	return 0
 }

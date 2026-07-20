@@ -7,11 +7,9 @@ go 1.26
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- web/assets/style.css --
 body {}
 -- web/web.go --
@@ -54,31 +52,39 @@ func Index(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
 )
 
-func run() error {
-	// Providers
-	// embedded Assets, served under /assets
-	webAssets, err := fs.Sub(web.Assets, "assets")
-	if err != nil {
-		return err
+func run() int {
+	if err := func() error {
+		// Providers
+		// embedded Assets, served under /assets
+		webAssets, err := fs.Sub(web.Assets, "assets")
+		if err != nil {
+			return err
+		}
+
+		r := router.New()
+
+		// Register
+		r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))
+		r.NotFound(web.NotFound)
+		r.MethodNotAllowed(web.MethodNotAllowed)
+		r.HandleFunc("/every", web.Every)
+		r.Handle("/wrapped", web.NoCache(http.HandlerFunc(web.Wrapped)))
+		r.Handle("/metrics", web.Metrics())
+		r.Method("GET", "/{$}", web.Index)
+		return nil
+	}(); err != nil {
+		fmt.Fprintln(os.Stderr, "app:", err)
+		return 1
 	}
-
-	r := router.New()
-
-	// Register
-	r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))
-	r.NotFound(web.NotFound)
-	r.MethodNotAllowed(web.MethodNotAllowed)
-	r.HandleFunc("/every", web.Every)
-	r.Handle("/wrapped", web.NoCache(http.HandlerFunc(web.Wrapped)))
-	r.Handle("/metrics", web.Metrics())
-	r.Method("GET", "/{$}", web.Index)
-	return nil
+	return 0
 }

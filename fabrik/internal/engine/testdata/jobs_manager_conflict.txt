@@ -6,24 +6,26 @@ module app
 
 go 1.26
 
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+
 require github.com/gofabrik/fabrik/jobs v0.0.0
 
 replace github.com/gofabrik/fabrik/jobs => JOBSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/shared.go --
 package shared
 
 import (
-	"context"
-
 	"github.com/gofabrik/fabrik/jobs"
+
+	"github.com/gofabrik/fabrik/cli"
 )
 
 //fabrik:provider
@@ -35,8 +37,8 @@ func NewManager(s jobs.Store) *jobs.Manager {
 	return m
 }
 
-//fabrik:hook start
-func Boot(ctx context.Context, mgr *jobs.Manager) error { return nil }
+//fabrik:cli:command
+func Boot(ctx cli.Context, mgr *jobs.Manager) error { return nil }
 -- mail/mail.go --
 package mail
 

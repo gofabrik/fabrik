@@ -1,28 +1,34 @@
-Start hooks render after providers and share one lifecycle context.
+A command consuming the jobs manager builds it inside its own scope.
 -- go.mod --
 module app
 
 go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- store/store.go --
 package store
 
-import "context"
+import (
+	"context"
+
+	"github.com/gofabrik/fabrik/cli"
+)
 
 type Pool struct{}
 
 //fabrik:provider
 func NewPool(ctx context.Context) (*Pool, error) { return &Pool{}, nil }
 
-//fabrik:hook start
-func WarmCache(ctx context.Context, p *Pool) error { return nil }
+//fabrik:cli:command
+func WarmCache(ctx cli.Context, p *Pool) error { return nil }
 -- web/web.go --
 package web
 
@@ -38,29 +44,51 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/gofabrik/fabrik/router"
+	"github.com/gofabrik/fabrik/cli"
 
 	"app/store"
-	"app/web"
 )
 
-func run() error {
-	ctx := context.Background()
+func run() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigc := make(chan os.Signal, 2)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigc)
+	go func() {
+		<-sigc
+		cancel()
+		<-sigc
+		os.Exit(1)
+	}()
+
+	root := &cli.Command{
+		Name: "app",
+		Subcommands: []*cli.Command{
+			{
+				Name: "warm-cache",
+				Run: func(ctx cli.Context) error {
+					pool, err := buildWarmCache(ctx)
+					if err != nil {
+						return err
+					}
+					return store.WarmCache(ctx, pool)
+				},
+			},
+		},
+	}
+	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
+}
+
+func buildWarmCache(ctx context.Context) (*store.Pool, error) {
 	// Providers
 	storePool, err := store.NewPool(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	r := router.New()
-
-	// Register
-	r.Method("GET", "/", web.Home)
-
-	// Start: after prepare, before serving
-	if err := store.WarmCache(ctx, storePool); err != nil {
-		return err
-	}
-	return nil
+	return storePool, nil
 }

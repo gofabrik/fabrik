@@ -39,6 +39,7 @@ func (*HTTP) Meta() gen.Meta {
 			"`//fabrik:http:middleware name=` declarations, outermost first.\n\n" +
 			"```go\n//fabrik:http GET /login\n//fabrik:http POST /account middleware=auth\n```",
 		Example: "//fabrik:http GET /login",
+		Tier:    gen.TierBind,
 		Pos: []gen.PosSpec{
 			// Values seed completions; Parse accepts any method token.
 			{Name: "METHOD", Kind: gen.KindFreeform, Values: httpMethods},
@@ -254,6 +255,14 @@ func patternError(path string) string {
 // PrepareNode registers the route's receiver struct before resolution.
 func (h *HTTP) PrepareNode(n any, g *gen.Gen) {
 	nd := n.(*node)
-	prepareReceiver(g, nd.recv, nd.fset)
-	BindHTTPServer(g)
+	h.host.prepareReceiver(g, nd.recv, nd.fset)
+	h.host.BindHTTPServer(g)
+}
+
+// Finish emits registrations for applications without command scopes.
+func (h *HTTP) Finish(g *gen.Gen) diag.Diagnostics {
+	if g.ScopeCount() > 0 {
+		return nil
+	}
+	return h.host.FinishBundle(g)
 }

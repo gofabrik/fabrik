@@ -6,27 +6,33 @@ module app
 
 go 1.26
 
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+
 require github.com/gofabrik/fabrik/jobs v0.0.0
 
 replace github.com/gofabrik/fabrik/jobs => JOBSDIR
 -- main.go --
 package main
 
-func main() {
-	if err := run(); err != nil {
-		panic(err)
-	}
-}
+import "os"
+
+func main() { os.Exit(run()) }
 -- shared/shared.go --
 package shared
 
-import "github.com/gofabrik/fabrik/jobs"
+import (
+	"github.com/gofabrik/fabrik/jobs"
+
+	"github.com/gofabrik/fabrik/cli"
+)
 
 //fabrik:provider
 func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
 
-//fabrik:hook start
-func Boot(mgr *jobs.Manager) error { return nil }
+//fabrik:cli:command
+func Boot(ctx cli.Context, mgr *jobs.Manager) error { return nil }
 -- cleanup/cleanup.go --
 package cleanup
 
