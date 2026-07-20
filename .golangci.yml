@@ -1,0 +1,21 @@
+version: "2"
+
+# Exclude revive's exported-comment rule because it overwhelms the report with low-value findings.
+linters:
+  default: standard
+  enable:
+    - gosec
+    - gocritic
+    - revive
+    - misspell
+  exclusions:
+    rules:
+      - linters:
+          - revive
+        text: "^exported:"
+
+# gci conflicts with gofumpt's import ordering.
+formatters:
+  enable:
+    - gofumpt
+    - goimports

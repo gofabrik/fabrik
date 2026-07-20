@@ -7,6 +7,9 @@ vars:
   MULTIMOD: '{{.ROOT_DIR}}/.task-bin/multimod'
   MODULE_DIRS:
     sh: cd {{.ROOT_DIR}} && go work edit -json | jq -r '.Use[].DiskPath'
+  # Run pinned tools with the workspace toolchain so they can analyze Go 1.26 code.
+  GOLANGCI: 'go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2'
+  GOVULNCHECK: 'go run golang.org/x/vuln/cmd/govulncheck@v1.1.4'
 
 tasks:
   default:
@@ -40,6 +43,55 @@ tasks:
     dir: '{{.ROOT_DIR}}/internal/tools'
     env: { GOWORK: 'off' }
     cmds: [go test ./...]
+
+  lint:
+    desc: Lint, static analysis, and formatting across every module (report only, never gates)
+    cmds:
+      - for: { var: MODULE_DIRS }
+        cmd: cd {{.ROOT_DIR}}/{{.ITEM}} && {{.GOLANGCI}} run ./...
+        ignore_error: true
+      - task: lint:tools
+
+  lint:tools:
+    dir: '{{.ROOT_DIR}}/internal/tools'
+    env: { GOWORK: 'off' }
+    cmds:
+      - cmd: '{{.GOLANGCI}} run ./...'
+        ignore_error: true
+
+  vuln:
+    desc: govulncheck vulnerability scan across every module (report only, never gates)
+    cmds:
+      - for: { var: MODULE_DIRS }
+        cmd: cd {{.ROOT_DIR}}/{{.ITEM}} && {{.GOVULNCHECK}} ./...
+        ignore_error: true
+      - task: vuln:tools
+
+  vuln:tools:
+    dir: '{{.ROOT_DIR}}/internal/tools'
+    env: { GOWORK: 'off' }
+    cmds:
+      - cmd: '{{.GOVULNCHECK}} ./...'
+        ignore_error: true
+
+  deps:
+    desc: Report available dependency updates (workspace) and go.mod tidy drift (per module)
+    cmds:
+      - cmd: cd {{.ROOT_DIR}} && go list -m -u all
+        ignore_error: true
+      - for: { var: MODULE_DIRS }
+        cmd: cd {{.ROOT_DIR}}/{{.ITEM}} && go mod tidy -diff
+        ignore_error: true
+      - task: deps:tools
+
+  deps:tools:
+    dir: '{{.ROOT_DIR}}/internal/tools'
+    env: { GOWORK: 'off' }
+    cmds:
+      - cmd: go list -m -u all
+        ignore_error: true
+      - cmd: go mod tidy -diff
+        ignore_error: true
 
   manifest:lint:
     desc: Fail on any missing intra-repo require, wrong version, or module cycle

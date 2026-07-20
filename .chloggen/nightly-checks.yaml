@@ -1,0 +1,11 @@
+# One of: breaking, deprecation, new_component, enhancement, bug_fix
+change_type: enhancement
+
+# The module or area of concern, e.g. jobs, router, gen, fabrik (the CLI).
+component: build
+
+# A brief description of the change. Surround with quotes ("") if it must start with a backtick (`).
+note: "Add non-blocking nightly lint, security, test, and dependency checks for every Go module, with a consolidated report and downloadable artifacts."
+
+# One or more tracking issues or PR numbers related to the change.
+issues: [0]
