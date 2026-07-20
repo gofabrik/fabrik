@@ -1,4 +1,3 @@
-// Package shared provides the demo's common configuration and services.
 package shared
 
 import (
@@ -28,7 +27,6 @@ func ConfigCommand(cfg *HTTPConfig, db *DatabaseConfig) *cli.Command {
 	}
 }
 
-//
 //fabrik:cli:command
 func RunCommand(server *httpserver.Server, worker *jobs.Runner) *cli.Command {
 	return &cli.Command{

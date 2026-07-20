@@ -1,4 +1,3 @@
-// Package web implements the demo's web layer.
 package web
 
 //fabrik:config greeter

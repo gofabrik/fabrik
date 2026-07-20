@@ -1,4 +1,3 @@
-// Package dbtest exercises jobs persistence against real database backends.
 package dbtest
 
 import (

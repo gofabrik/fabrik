@@ -1,4 +1,3 @@
-// Package main implements the fabrik command-line tool.
 package main
 
 import (
