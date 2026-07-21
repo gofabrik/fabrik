@@ -66,7 +66,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("demo --help: %v\n%s", err, out)
 	}
-	for _, cmd := range []string{"config", "migrate", "run", "serve"} {
+	for _, cmd := range []string{"config", "database", "run", "serve"} {
 		if !commandListed(out, cmd) {
 			t.Fatalf("demo --help missing %q:\n%s", cmd, out)
 		}
@@ -78,16 +78,46 @@ func TestDemoEndToEnd(t *testing.T) {
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
 		t.Fatalf("bare demo: err=%v (want exit 2)\n%s", err, out)
 	}
-	for _, cmd := range []string{"config", "migrate", "run", "serve"} {
+	for _, cmd := range []string{"config", "database", "run", "serve"} {
 		if !commandListed(out, cmd) {
 			t.Fatalf("bare demo listing missing %q:\n%s", cmd, out)
 		}
+	}
+	// Nested help exposes declared inputs without constructing the application.
+	nestedHelp := exec.Command(bin, "database", "migrate", "--help") // #nosec G204 -- launches a controlled binary built by this test
+	nestedHelp.Dir = src
+	nestedHelp.Env = env
+	out, err = nestedHelp.CombinedOutput()
+	if err != nil {
+		t.Fatalf("database migrate --help: %v\n%s", err, out)
+	}
+	for _, want := range []string{"demo database migrate", "--dry-run", "Print what would run"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("nested help missing %q:\n%s", want, out)
+		}
+	}
+	// Parse errors must occur before application construction.
+	badArgs := exec.Command(bin, "database", "migrate", "sideways") // #nosec G204 -- launches a controlled binary built by this test
+	badArgs.Dir = src
+	badArgs.Env = env
+	if out, err := badArgs.CombinedOutput(); err == nil || !strings.Contains(string(out), "unexpected argument") {
+		t.Fatalf("unexpected positional accepted: err=%v\n%s", err, out)
 	}
 	if err := os.WriteFile(cfgPath, goodCfg, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	migrate := exec.Command(bin, "migrate") // #nosec G204 -- launches a controlled binary built by this test
+	// Dry-run binds the flag without creating the database.
+	dry := exec.Command(bin, "database", "migrate", "-n") // #nosec G204 -- launches a controlled binary built by this test
+	dry.Dir = src
+	dry.Env = env
+	if out, err := dry.CombinedOutput(); err != nil || !strings.Contains(string(out), "would apply pending migrations") {
+		t.Fatalf("dry run: err=%v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "demo.db")); !os.IsNotExist(err) {
+		t.Fatalf("dry run touched the database: %v", err)
+	}
+	migrate := exec.Command(bin, "database", "migrate") // #nosec G204 -- launches a controlled binary built by this test
 	migrate.Dir = src
 	migrate.Env = env
 	if out, err := migrate.CombinedOutput(); err != nil {

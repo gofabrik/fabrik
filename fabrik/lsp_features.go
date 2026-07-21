@@ -264,49 +264,54 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 	}
 
 	args := tokens[1:]
-	if partial, ok := activeMWChain(meta, args, trailingSpace); ok {
-		return s.middlewareCompletions(uri, partial)
+	if partial, kind, ok := activeMWChain(meta, args, trailingSpace); ok {
+		directive := "http:middleware"
+		if kind == gen.KindCLIMiddlewareRef {
+			directive = "cli:middleware"
+		}
+		return s.middlewareCompletions(uri, partial, directive)
 	}
 	return argCompletions(meta, args, trailingSpace)
 }
 
-func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, bool) {
+func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, gen.ValueKind, bool) {
 	for i := len(args) - 1; i >= 0; i-- {
 		key, val, hasEq := strings.Cut(args[i], "=")
 		if !hasEq {
 			continue
 		}
-		if !isMWAttr(meta, key) {
-			return "", false
+		kind, isMW := mwAttrKind(meta, key)
+		if !isMW {
+			return "", 0, false
 		}
 		cur := val
 		for j := i + 1; j < len(args); j++ {
 			if !strings.HasSuffix(cur, ",") {
-				return "", false
+				return "", 0, false
 			}
 			cur = args[j]
 		}
 		if !trailingSpace {
-			return cur, true
+			return cur, kind, true
 		}
 		if strings.HasSuffix(cur, ",") {
-			return "", true
+			return "", kind, true
 		}
-		return "", false
+		return "", 0, false
 	}
-	return "", false
+	return "", 0, false
 }
 
-func isMWAttr(meta gen.Meta, key string) bool {
+func mwAttrKind(meta gen.Meta, key string) (gen.ValueKind, bool) {
 	for _, spec := range meta.Attrs {
 		if spec.Key == key {
-			return spec.Kind == gen.KindMiddlewareRef
+			return spec.Kind, spec.Kind == gen.KindMiddlewareRef || spec.Kind == gen.KindCLIMiddlewareRef
 		}
 	}
-	return false
+	return 0, false
 }
 
-func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem {
+func (s *lspServer) middlewareCompletions(uri, partial, directive string) []completionItem {
 	if i := strings.LastIndex(partial, ","); i >= 0 {
 		partial = partial[i+1:]
 	}
@@ -341,7 +346,7 @@ func (s *lspServer) middlewareCompletions(uri, partial string) []completionItem 
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || filepath.Base(path) == "main.gen.go" {
 			return nil
 		}
-		for _, name := range s.middlewareNames(path, overlay[path], d) {
+		for _, name := range s.middlewareNames(path, overlay[path], d, directive) {
 			if seen[name] || (partial != "" && !strings.HasPrefix(name, partial)) {
 				continue
 			}
@@ -360,23 +365,24 @@ type mwCacheEntry struct {
 	names   []string
 }
 
-// mwDirective keeps completion parsing aligned with generation.
-var mwDirective = func() gen.Directive {
+// mwDirectives reuses registered directives so completion validation matches generation.
+var mwDirectives = func() map[string]gen.Directive {
+	out := map[string]gen.Directive{}
 	for _, d := range engine.New() {
-		if d.Name() == "http:middleware" {
-			return d
+		if d.Name() == "http:middleware" || d.Name() == "cli:middleware" {
+			out[d.Name()] = d
 		}
 	}
-	return nil
+	return out
 }()
 
-func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) []string {
+func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry, directive string) []string {
 	var info iofs.FileInfo
 	if overlayText == "" {
 		if fi, err := d.Info(); err == nil {
 			info = fi
 			s.mu.Lock()
-			entry, hit := s.mwCache[path]
+			entry, hit := s.mwCache[directive+"\x00"+path]
 			s.mu.Unlock()
 			if hit && entry.size == fi.Size() && entry.modTime == fi.ModTime().UnixNano() {
 				return entry.names
@@ -394,13 +400,14 @@ func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) [
 	if err == nil && f.Name.Name != "main" {
 		anns, _ := load.ScanFile(fset, f)
 		for _, ann := range anns {
-			if ann.Name != "http:middleware" || mwDirective == nil {
+			d := mwDirectives[directive]
+			if ann.Name != directive || d == nil {
 				continue
 			}
-			if _, ds := mwDirective.Parse(ann); ds.HasFatal() {
+			if _, ds := d.Parse(ann); ds.HasFatal() {
 				continue
 			}
-			args, _ := gen.ParseArgs(ann, mwDirective.Meta())
+			args, _ := gen.ParseArgs(ann, d.Meta())
 			if nm, ok := args.Attr["name"]; ok && nm.Text != "" {
 				names = append(names, nm.Text)
 			}
@@ -408,7 +415,7 @@ func (s *lspServer) middlewareNames(path, overlayText string, d iofs.DirEntry) [
 	}
 	if info != nil {
 		s.mu.Lock()
-		s.mwCache[path] = mwCacheEntry{size: info.Size(), modTime: info.ModTime().UnixNano(), names: names}
+		s.mwCache[directive+"\x00"+path] = mwCacheEntry{size: info.Size(), modTime: info.ModTime().UnixNano(), names: names}
 		s.mu.Unlock()
 	}
 	return names

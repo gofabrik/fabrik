@@ -1,6 +1,8 @@
 package shared
 
 import (
+	"fmt"
+
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/httpserver"
 )
@@ -8,6 +10,10 @@ import (
 // Start the HTTP server.
 //
 //fabrik:cli:command
-func Run(ctx cli.Context, server *httpserver.Server) error {
+//fabrik:cli:flag name=quiet type=bool help="Suppress the startup message."
+func Run(ctx cli.Context, server *httpserver.Server, quiet bool) error {
+	if !quiet {
+		fmt.Fprintln(ctx.Stdout(), "starting the HTTP server")
+	}
 	return server.Run(ctx)
 }

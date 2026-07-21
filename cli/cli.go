@@ -38,6 +38,12 @@ type Command struct {
 	// Version is the string emitted by --version.
 	Version string
 
+	// Usage overrides the derived usage line in --help when set.
+	Usage string
+
+	// Aliases are accepted for dispatch, suggestions, and completion; paths and usage remain canonical.
+	Aliases []string
+
 	// Flags declares command flags inherited by descendants.
 	Flags []AnyFlag
 

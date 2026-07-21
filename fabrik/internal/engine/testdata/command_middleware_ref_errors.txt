@@ -1,0 +1,42 @@
+Middleware reference resolution: unknown names error with the known list,
+and unreferenced declarations warn.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:middleware name=confirm
+func Confirm(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:middleware name=lonely
+func Lonely(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:middleware name=orphan
+func Orphan(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:command middleware=ghost,lonely,phantom
+func Migrate(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command middleware=confirm
+func Status(ctx cli.Context) error { return nil }
+-- want/diags --
+warning: shared/shared.go:11:1: CLI middleware "orphan" is declared but never referenced
+  help: reference it with middleware= or remove the declaration
+error: shared/shared.go:14:1: unknown CLI middleware "ghost"
+  help: known: confirm, lonely, orphan
+error: shared/shared.go:14:1: unknown CLI middleware "phantom"
+  help: known: confirm, lonely, orphan

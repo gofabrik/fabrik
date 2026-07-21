@@ -28,6 +28,7 @@ func New() []gen.Directive {
 	cfg := configdir.New("config.yaml", "config.local.yaml")
 	provider := core.NewProvider(cfg)
 	jobsJob, jobsCron := jobsdir.New()
+	cliCmd, cliFlag, cliArg, cliExample, cliGroup, cliRoot, cliMW := clidir.New()
 	// Registry order is presentation only; lifecycle order comes from Meta.Tier.
 	return []gen.Directive{
 		provider,
@@ -47,7 +48,13 @@ func New() []gen.Directive {
 		migdir.NewMigrations(),
 		jobsJob,
 		jobsCron,
-		clidir.New(),
+		cliCmd,
+		cliFlag,
+		cliArg,
+		cliExample,
+		cliGroup,
+		cliRoot,
+		cliMW,
 		cfg,
 	}
 }

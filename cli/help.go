@@ -28,15 +28,18 @@ func renderHelp(w io.Writer, path []*Command, known []AnyFlag) {
 	cmd := path[len(path)-1]
 	names := strings.Join(commandNames(path), " ")
 
-	usage := names
-	if hasVisibleFlags(known) {
-		usage += " [flags]"
-	}
-	if hasVisibleSubcommands(cmd.Subcommands) {
-		usage += " <command>"
-	}
-	for _, a := range cmd.Args {
-		usage += " " + renderArgSlot(a)
+	usage := cmd.Usage
+	if usage == "" {
+		usage = names
+		if hasVisibleFlags(known) {
+			usage += " [flags]"
+		}
+		if hasVisibleSubcommands(cmd.Subcommands) {
+			usage += " <command>"
+		}
+		for _, a := range cmd.Args {
+			usage += " " + renderArgSlot(a)
+		}
 	}
 	writeHelpLine(w, info.bold("Usage:"))
 	writeHelpLine(w, "  "+usage)
@@ -205,7 +208,7 @@ func renderSubcommands(w io.Writer, subs []*Command) {
 	}
 	width := 0
 	for _, s := range visible {
-		if l := len(s.Name); l > width {
+		if l := len(listingName(s)); l > width {
 			width = l
 		}
 	}
@@ -213,8 +216,15 @@ func renderSubcommands(w io.Writer, subs []*Command) {
 		return visible[i].Name < visible[j].Name
 	})
 	for _, s := range visible {
-		writeHelpf(w, "  %-*s  %s\n", width, s.Name, s.Help)
+		writeHelpf(w, "  %-*s  %s\n", width, listingName(s), s.Help)
 	}
+}
+
+func listingName(c *Command) string {
+	if len(c.Aliases) == 0 {
+		return c.Name
+	}
+	return c.Name + ", " + strings.Join(c.Aliases, ", ")
 }
 
 func hasVisibleFlags(flags []AnyFlag) bool {

@@ -11,6 +11,8 @@ import (
 type Arg struct {
 	Text string
 	Col  int // byte offset within Annotation.Args
+	// quoteAt is the opening quote offset, or -1, for option-value diagnostics.
+	quoteAt int
 }
 
 // Args contains positional arguments and key=value options.
@@ -85,7 +87,11 @@ func cutOption(tok Arg) (key string, val Arg, ok bool) {
 	if i <= 0 || !isIdent(tok.Text[:i]) {
 		return "", Arg{}, false
 	}
-	return tok.Text[:i], Arg{Text: tok.Text[i+1:], Col: tok.Col + i + 1}, true
+	col := tok.Col + i + 1
+	if tok.quoteAt == i+1 {
+		col++ // Point past the opening quote.
+	}
+	return tok.Text[:i], Arg{Text: tok.Text[i+1:], Col: col, quoteAt: -1}, true
 }
 
 func isIdent(s string) bool {
@@ -142,6 +148,7 @@ func lexArgs(s string) []Arg {
 	var out []Arg
 	var cur strings.Builder
 	start := -1
+	quoteAt := -1
 	inQuote := false
 	for i := 0; i < len(s); i++ {
 		b := s[i]
@@ -151,11 +158,15 @@ func lexArgs(s string) []Arg {
 			if start < 0 {
 				start = i
 			}
+			if quoteAt < 0 {
+				quoteAt = i - start
+			}
 		case (b == ' ' || b == '\t') && !inQuote:
 			if start >= 0 {
-				out = append(out, Arg{Text: cur.String(), Col: start})
+				out = append(out, Arg{Text: cur.String(), Col: start, quoteAt: quoteAt})
 				cur.Reset()
 				start = -1
+				quoteAt = -1
 			}
 		default:
 			if start < 0 {
@@ -165,7 +176,7 @@ func lexArgs(s string) []Arg {
 		}
 	}
 	if start >= 0 {
-		out = append(out, Arg{Text: cur.String(), Col: start})
+		out = append(out, Arg{Text: cur.String(), Col: start, quoteAt: quoteAt})
 	}
 	return out
 }

@@ -1,0 +1,4 @@
+change_type: enhancement
+component: gen
+note: Define nested CLI commands, flags, arguments, groups, examples, aliases, and middleware declaratively, with generated type-safe parameter binding.
+issues: [0]

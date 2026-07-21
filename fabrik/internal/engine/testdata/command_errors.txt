@@ -72,6 +72,6 @@ error: shared/shared.go:26:1: command PlainContext must take cli.Context as its 
   help: want func(ctx cli.Context, deps...) error
 error: shared/shared.go:29:1: command NoContext must take cli.Context as its first parameter
   help: want func(ctx cli.Context, deps...) error
-error: shared/shared.go:32:1: duplicate command name "serve-http"
-  help: first declared at $WORK/other/other.go:5:1; rename one function
+error: shared/shared.go:32:1: duplicate command "serve-http"
+  help: first declared at $WORK/other/other.go:5:1; command paths are unique per parent
 error: shared/shared.go:35:1: //fabrik:cli:command must be on a function

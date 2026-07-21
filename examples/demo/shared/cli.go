@@ -53,8 +53,13 @@ func Serve(ctx cli.Context, server *httpserver.Server) error {
 
 // Apply pending database migrations.
 //
-//fabrik:cli:command
-func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error {
+//fabrik:cli:command path="database migrate"
+//fabrik:cli:flag name=dry-run short=n type=bool help="Print what would run without applying migrations."
+func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources, dryRun bool) error {
+	if dryRun {
+		fmt.Fprintln(ctx.Stdout(), "would apply pending migrations")
+		return nil
+	}
 	if err := src.Migrate(ctx, db, migrations.DialectSQLite); err != nil {
 		return err
 	}

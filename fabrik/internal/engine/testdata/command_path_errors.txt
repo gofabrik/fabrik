@@ -1,0 +1,44 @@
+name= and path= validation: mutually exclusive, canonical segment tokens,
+and full-path uniqueness.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:command name=migrate path="database migrate"
+func Both(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command path="database Migrate"
+func BadSegment(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command name=Migrate
+func BadName(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command path="database migrate"
+func First(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command path="database migrate"
+func Second(ctx cli.Context) error { return nil }
+-- want/diags --
+error: shared/shared.go:5:1: //fabrik:cli:command takes name= or path=, not both
+  help: path= owns every segment including the leaf
+error: shared/shared.go:8:37: invalid CLI token "Migrate" in path
+  help: segments are lowercase kebab-case: [a-z0-9]+(-[a-z0-9]+)*
+error: shared/shared.go:11:27: invalid CLI token "Migrate"
+  help: names are lowercase kebab-case: [a-z0-9]+(-[a-z0-9]+)*
+error: shared/shared.go:17:1: duplicate command "database migrate"
+  help: first declared at $WORK/shared/shared.go:14:1; command paths are unique per parent

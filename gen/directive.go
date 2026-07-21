@@ -103,5 +103,6 @@ type ValueKind int
 const (
 	KindFreeform ValueKind = iota
 	KindEnum
-	KindMiddlewareRef // completes from declared //fabrik:http:middleware names
+	KindMiddlewareRef    // completes from declared //fabrik:http:middleware names
+	KindCLIMiddlewareRef // completes from declared //fabrik:cli:middleware names
 )

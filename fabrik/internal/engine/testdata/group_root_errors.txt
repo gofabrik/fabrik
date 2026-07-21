@@ -1,0 +1,54 @@
+Group and root declaration rules: sentinel carriers, single ownership per
+node, one root, flags-only inheritance, and chain-unique names.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+//fabrik:cli:group name=jobs
+var _jobs struct{}
+
+//fabrik:cli:group name=jobs
+var _jobsAgain struct{}
+
+//fabrik:cli:root
+var _root struct{}
+
+//fabrik:cli:root
+var _rootAgain struct{}
+
+//fabrik:cli:group name=exported
+var Exported struct{}
+
+//fabrik:cli:group name=nounderscore
+var nounderscore struct{}
+
+//fabrik:cli:group name=initialized
+var _initialized = struct{}{}
+
+
+
+
+-- want/diags --
+error: shared/shared.go:6:1: duplicate //fabrik:cli:group for "jobs"
+  help: first declared at $WORK/shared/shared.go:3:1
+error: shared/shared.go:12:1: duplicate //fabrik:cli:root
+  help: first declared at $WORK/shared/shared.go:9:1; an application has one root
+error: shared/shared.go:15:1: //fabrik:cli:group must be on an unexported sentinel variable
+  help: declare it as: var _name struct{}
+error: shared/shared.go:18:1: //fabrik:cli:group must be on an unexported sentinel variable
+  help: declare it as: var _name struct{}
+error: shared/shared.go:21:1: //fabrik:cli:group must be on an unexported sentinel variable
+  help: declare it as: var _name struct{}
