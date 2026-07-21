@@ -1,0 +1,94 @@
+Parameter classification and binding rules report wire diagnostics at Emit:
+unbound inputs, ordering, pointer bindings, optional arguments without
+defaults, flag/argument name clashes, and input directives without a
+command.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+type Store struct{ DSN string }
+
+//fabrik:provider
+func NewStore() *Store { return &Store{DSN: "app.db"} }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=mode type=string default=fast
+func Unbound(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=mode type=string default=fast
+func ValueBeforeDep(ctx cli.Context, mode string, store *Store) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:argument name=target type=string
+func OptionalNoDefault(ctx cli.Context, target string) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=mode type=string default=fast
+func PointerBinding(ctx cli.Context, mode *string) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=mode type=string default=fast
+//fabrik:cli:argument name=mode type=string default=slow
+func FlagArgClash(ctx cli.Context, mode string) error { return nil }
+
+//fabrik:cli:flag name=orphan type=bool
+func NoCommand(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=serve-http type=string default=on
+func KebabCollision(ctx cli.Context, serveHTTP string, serveHttp string) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:argument name=first type=string default=a
+//fabrik:cli:argument name=second type=string required=true
+func RequiredAfterOptional(ctx cli.Context, first, second string) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:argument name=rest type=strings variadic=true
+//fabrik:cli:argument name=last type=string required=true
+func VariadicNotFinal(ctx cli.Context, rest []string, last string) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=steps type=int default=1
+func TypeMismatch(ctx cli.Context, steps string) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=dry-run short=n type=bool
+//fabrik:cli:flag name=count type=int short=n default=1
+func DuplicateShorts(ctx cli.Context, dryRun bool, count int) error { return nil }
+-- want/diags --
+error: shared/shared.go:11:1: CLI input "mode" has no matching parameter on Unbound
+  help: add a parameter named "mode" after the dependencies
+error: shared/shared.go:14:1: CLI parameter "mode" must appear after dependency "store"
+  help: order is ctx, dependencies, then CLI values
+error: shared/shared.go:19:1: optional argument "target" needs default= on OptionalNoDefault
+  help: value parameters cannot carry presence; give the argument a default
+error: shared/shared.go:22:1: parameter "mode" binds CLI input "mode" and cannot be a pointer
+  help: CLI values bind as plain values; optional arguments declare default=
+error: shared/shared.go:28:1: command FlagArgClash declares a flag and an argument named "mode"
+  help: name-bound parameters cannot disambiguate; rename one
+error: shared/shared.go:31:1: //fabrik:cli:flag requires //fabrik:cli:command on the same declaration
+error: shared/shared.go:34:1: parameters "serveHTTP" and "serveHttp" both bind CLI input "serve-http"
+  help: rename one parameter
+error: shared/shared.go:40:1: required argument "second" follows an optional argument on RequiredAfterOptional
+error: shared/shared.go:44:1: variadic argument "rest" must be the final argument of VariadicNotFinal
+error: shared/shared.go:48:1: parameter "steps" binds CLI input "steps" and must have type int (got string)
+  help: the type= attribute decides the parameter type
+error: shared/shared.go:54:1: flags "dry-run" and "count" share short -n on DuplicateShorts
+  help: the cli library rejects duplicate shorts at startup

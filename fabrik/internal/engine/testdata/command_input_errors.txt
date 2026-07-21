@@ -1,0 +1,109 @@
+Every flag/argument declaration and binding rule reports a wire diagnostic:
+grammar violations at the declaring directive, classification violations at
+the command function.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+type Store struct{ DSN string }
+
+//fabrik:provider
+func NewStore() *Store { return &Store{DSN: "app.db"} }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=dry_run type=bool
+func BadToken(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=force type=bool required=maybe
+func BadBool(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=force type=bool short=ff
+func BadShort(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=steps type=int default=three
+func BadDefault(ctx cli.Context, steps int) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=only type=strings values=a,b
+func SliceValues(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=help type=bool
+func ReservedHelp(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=force
+func MissingType(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=level type=uint8
+func UnsupportedType(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=force type=bool values=true,false
+func ValuesOnBool(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=steps type=int values=one,2
+func BadValuesElement(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=verbose type=bool required=1
+func BooleanSpelling(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=force type=bool short=é
+func NonASCIIShort(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command
+//fabrik:cli:argument name=names type=strings
+func SliceArgNotVariadic(ctx cli.Context, names []string) error { return nil }
+
+//fabrik:cli:command
+func Bad_Name(ctx cli.Context) error { return nil }
+
+
+
+
+
+
+-- want/diags --
+error: shared/shared.go:11:24: invalid CLI token "dry_run"
+  help: names are lowercase kebab-case: [a-z0-9]+(-[a-z0-9]+)*
+error: shared/shared.go:15:49: required= wants true or false (got "maybe")
+error: shared/shared.go:19:46: short= wants exactly one [a-z0-9] rune (got "ff")
+error: shared/shared.go:23:47: default=three does not parse as int: strconv.ParseInt: parsing "three": invalid syntax
+error: shared/shared.go:27:49: values= is not supported for type "strings"
+  help: supported for scalar string, int, int64, float64
+error: shared/shared.go:31:1: flag name help and short h are reserved by the cli library
+error: shared/shared.go:35:1: //fabrik:cli:flag needs type=
+  help: example: //fabrik:cli:flag name=dry-run type=bool
+error: shared/shared.go:39:35: unsupported type "uint8" for //fabrik:cli:flag
+  help: supported: bool, duration, float64, int, int64, ints, string, strings, time
+error: shared/shared.go:43:47: values= is not supported for type "bool"
+  help: supported for scalar string, int, int64, float64
+error: shared/shared.go:47:46: values= element "one" does not parse as int: strconv.ParseInt: parsing "one": invalid syntax
+error: shared/shared.go:51:51: required= wants true or false (got "1")
+error: shared/shared.go:55:46: short= wants exactly one [a-z0-9] rune (got "é")
+error: shared/shared.go:59:1: arguments of type strings must declare variadic=true
+  help: the cli library accepts a slice argument only as the variadic tail
+error: shared/shared.go:62:1: function name Bad_Name derives invalid CLI token "bad_-name"
+  help: rename the function so its kebab-case form is [a-z0-9]+(-[a-z0-9]+)*

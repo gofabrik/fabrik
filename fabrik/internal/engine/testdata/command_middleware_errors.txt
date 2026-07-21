@@ -1,0 +1,49 @@
+CLI middleware declaration and reference rules.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:middleware name=confirm
+func Confirm(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:middleware name=confirm
+func ConfirmAgain(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:middleware name=wrong
+func Wrong(ctx cli.Context) error { return nil }
+
+//fabrik:cli:middleware name=unexported
+func hidden(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:middleware name=Bad
+func BadToken(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:middleware name=generic
+func Generic[T any](next cli.Handler) cli.Handler { return next }
+
+-- want/diags --
+error: shared/shared.go:8:1: duplicate //fabrik:cli:middleware name "confirm"
+  help: first declared at $WORK/shared/shared.go:5:1
+error: shared/shared.go:11:1: middleware Wrong has the wrong signature
+  help: want func(next cli.Handler) cli.Handler
+error: shared/shared.go:14:1: //fabrik:cli:middleware function hidden must be exported
+  help: generated code calls it as a package-qualified symbol; capitalize the name
+error: shared/shared.go:17:30: invalid CLI token "Bad"
+  help: names are lowercase kebab-case: [a-z0-9]+(-[a-z0-9]+)*
+error: shared/shared.go:20:1: //fabrik:cli:middleware function Generic cannot be generic
+  help: generated code cannot instantiate type parameters; declare a concrete function

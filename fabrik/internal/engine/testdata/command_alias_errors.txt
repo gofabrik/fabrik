@@ -1,0 +1,44 @@
+Sibling tokens are unique across canonical names, intermediate nodes, and
+aliases, mirroring the cli library's startup rule at wire time.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:command name=alpha alias=beta
+func Alpha(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command name=beta
+func Beta(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command name=gamma alias=shared-alias
+func Gamma(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command name=delta alias=shared-alias
+func Delta(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command path="database migrate"
+func Migrate(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command name=jobs alias=database
+func Jobs(ctx cli.Context) error { return nil }
+-- want/diags --
+error: shared/shared.go:5:1: alias "beta" collides with a sibling command or group
+  help: the cli library requires sibling names and aliases to be unique
+error: shared/shared.go:14:1: alias "shared-alias" is already used by a sibling declared at $WORK/shared/shared.go:11:1
+error: shared/shared.go:20:1: alias "database" collides with a sibling command or group
+  help: the cli library requires sibling names and aliases to be unique

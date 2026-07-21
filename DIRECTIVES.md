@@ -23,11 +23,33 @@ Options:
 
 - `dir=`
 
+## fabrik:cli:argument
+
+**`//fabrik:cli:argument name= type= [help=] [default=] [values=] [required=true] [variadic=true]`**
+
+Declared alongside `//fabrik:cli:command` on the same function: one positional argument, bound to the plain parameter whose name matches (`direction` binds `direction string`). Declaration order is binding order. Optional arguments need `default=`; `values=` restricts and completes; `variadic=true` (type `strings`) collects the tail.
+
+```go
+//fabrik:cli:command
+//fabrik:cli:argument name=direction type=string values=up,down default=up help="Migration direction."
+func Migrate(ctx cli.Context, db *sql.DB, direction string) error { ... }
+```
+
+Options:
+
+- `name=`
+- `type=` - e.g. string, int, strings
+- `help=`
+- `default=`
+- `values=`
+- `required=` - e.g. true, false
+- `variadic=` - e.g. true, false
+
 ## fabrik:cli:command
 
-**`//fabrik:cli:command`**
+**`//fabrik:cli:command [name=<token>] [path="<seg> <seg> ..."] [usage=] [alias=<a,b>] [hidden=true] [middleware=<m1,m2>]`**
 
-Declared on a package function `func(ctx cli.Context, deps...) error`: the first parameter is the invocation context, the rest are injected dependencies like a provider. The command name derives from the function name (`ServeHTTP` becomes `serve-http`); the help line is the doc comment's first sentence. The generator emits a build function that constructs exactly this command's dependencies when the command is selected, so help and completion never construct the application.
+Declared on a package function `func(ctx cli.Context, deps...) error`: the first parameter is the invocation context, the rest are injected dependencies like a provider. The command name derives from the function name (`ServeHTTP` becomes `serve-http`); `name=` overrides that token, and `path=` owns every segment including the leaf, nesting the command under bare intermediate nodes (`path="database migrate"`). name= and path= are mutually exclusive; all tokens are lowercase kebab-case, and full paths are unique per parent. `usage=` overrides the derived usage line, `alias=` adds invocation tokens, `hidden=true` omits the command from listings, and `middleware=` attaches declared CLI middleware in order. The help line is the doc comment's first sentence. The generator emits a build function that constructs exactly this command's dependencies when the command is selected, so help and completion never construct the application.
 
 A bare invocation lists the commands. Runtimes are startable injected values (`*httpserver.Server`, `*jobs.Runner`) the command starts itself; migrations are an injectable `migrations.Sources` the command applies itself. `run()` returns an exit code, so `main` is always `func main() { os.Exit(run()) }`.
 
@@ -39,6 +61,112 @@ func Serve(ctx cli.Context, server *httpserver.Server) error {
 	return server.Run(ctx)
 }
 ```
+
+Options:
+
+- `name=`
+- `path=`
+- `usage=`
+- `alias=`
+- `hidden=` - e.g. true, false
+- `middleware=`
+
+## fabrik:cli:example
+
+**`//fabrik:cli:example cmd= [help=]`**
+
+Declared alongside `//fabrik:cli:command`: one entry in the command's --help Examples section, in declaration order.
+
+```go
+//fabrik:cli:example cmd="app migrate up" help="Apply all pending migrations."
+```
+
+Options:
+
+- `cmd=`
+- `help=`
+
+## fabrik:cli:flag
+
+**`//fabrik:cli:flag name= type= [short=] [help=] [default=] [values=] [env=] [required=true] [hidden=true] [placeholder=] [group=]`**
+
+Declared alongside `//fabrik:cli:command` on the same function: one flag, bound to the plain parameter whose lowerCamel name matches the kebab-case flag (`dry-run` binds `dryRun bool`). The cli library owns parsing, defaults, validation, and completion; `values=` maps to `OneOf` on scalar types.
+
+```go
+//fabrik:cli:command
+//fabrik:cli:flag name=dry-run short=n type=bool help="Print without applying."
+func Migrate(ctx cli.Context, db *sql.DB, dryRun bool) error { ... }
+```
+
+Options:
+
+- `name=`
+- `type=` - e.g. string, bool, int, int64, float64, duration, time, strings, ints
+- `short=`
+- `help=`
+- `default=`
+- `values=`
+- `env=`
+- `required=` - e.g. true, false
+- `hidden=` - e.g. true, false
+- `placeholder=`
+- `group=`
+
+## fabrik:cli:group
+
+**`//fabrik:cli:group name="<seg> [seg ...]" [help=] [usage=] [alias=<a,b>] [hidden=true] [middleware=<m1,m2>]`**
+
+Declared on an unexported sentinel `var _name struct{}`: describes a non-executable tree node that `path=` segments create (help falls back to the sentinel's doc synopsis, the remainder becomes Long). `//fabrik:cli:flag` lines on the sentinel declare flags every descendant command inherits and may bind; `//fabrik:cli:example` lines attach examples; `middleware=` wraps every descendant command. A group may not name an executable command's path - the command owns that node.
+
+```go
+// Database maintenance commands.
+//
+//fabrik:cli:group name=database
+var _database struct{}
+```
+
+Options:
+
+- `name=`
+- `help=`
+- `usage=`
+- `alias=`
+- `hidden=` - e.g. true, false
+- `middleware=`
+
+## fabrik:cli:middleware
+
+**`//fabrik:cli:middleware name=<token>`**
+
+Declared on an exported `func(cli.Handler) cli.Handler`: registers the function under a name that `middleware=` chains on `//fabrik:cli:command`, `//fabrik:cli:group`, and `//fabrik:cli:root` reference. Chains attach in declaration order; the cli library applies root middleware outermost, then each ancestor, then the command's own. Unreferenced declarations warn.
+
+```go
+//fabrik:cli:middleware name=confirm
+func Confirm(next cli.Handler) cli.Handler { ... }
+```
+
+Options:
+
+- `name=`
+
+## fabrik:cli:root
+
+**`//fabrik:cli:root [usage=] [version=] [middleware=<m1,m2>]`**
+
+Declared on an unexported sentinel `var _name struct{}`, at most once per application: contributes the root command's usage line, --version string, Long text (the sentinel's doc comment), root flags (`//fabrik:cli:flag` lines, inheritable and bindable by every command), examples, and `middleware=` applied outermost to every invocation. The program name stays module-derived.
+
+```go
+// The demo application.
+//
+//fabrik:cli:root version=1.0.0
+var _root struct{}
+```
+
+Options:
+
+- `usage=`
+- `version=`
+- `middleware=`
 
 ## fabrik:config
 

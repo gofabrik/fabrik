@@ -225,6 +225,11 @@ func runComplete(ctx Context, root *Command, partial []string) error {
 			if strings.HasPrefix(s.Name, cur) {
 				emit(s.Name)
 			}
+			for _, a := range s.Aliases {
+				if strings.HasPrefix(a, cur) {
+					emit(a)
+				}
+			}
 		}
 	}
 

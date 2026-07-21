@@ -95,3 +95,65 @@ func X(w http.ResponseWriter, r *http.Request) {}
 	c.request(5, "shutdown", nil)
 	c.notifyServer("exit", nil)
 }
+
+// CLI middleware references complete from //fabrik:cli:middleware
+// declarations, not from HTTP middleware names.
+func TestLSPCLIMiddlewareCompletion(t *testing.T) {
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	write := func(rel, content string) {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module app\n\ngo 1.26\n")
+	write("main.go", "package main\n\nfunc main() { _ = run }\n")
+	write("shared/mw.go", `package shared
+
+import (
+	"net/http"
+
+	"github.com/gofabrik/fabrik/cli"
+)
+
+//fabrik:cli:middleware name=confirm
+func Confirm(next cli.Handler) cli.Handler { return next }
+
+//fabrik:http:middleware name=httponly
+func HTTPOnly(next http.Handler) http.Handler { return next }
+`)
+	cmdSrc := `package shared2
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:command middleware=
+func Migrate(ctx cli.Context) error { return nil }
+`
+	write("shared2/cli.go", cmdSrc)
+	uri := uriFromFile(filepath.Join(dir, "shared2", "cli.go"))
+
+	c := startLSP(t)
+	c.request(1, "initialize", map[string]any{})
+	c.notifyServer("textDocument/didOpen", didOpenParams{
+		TextDocument: textDocumentItem{URI: uri, LanguageID: "go", Version: 1, Text: cmdSrc},
+	})
+
+	items := completionResult(t, c.request(2, "textDocument/completion", completionParams{
+		TextDocument: struct {
+			URI string `json:"uri"`
+		}{uri},
+		Position: lspPosition{Line: 4, Character: len("//fabrik:cli:command middleware=")},
+	}))
+	if !hasLabel(items, "confirm") {
+		t.Fatalf("cli middleware completions = %+v, want confirm", items)
+	}
+	if hasLabel(items, "httponly") {
+		t.Fatalf("http middleware offered for a cli reference: %+v", items)
+	}
+}

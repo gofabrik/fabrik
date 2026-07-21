@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -186,6 +187,12 @@ func validateArgsDecl(c *Command, inherited []AnyFlag) error {
 			return fmt.Errorf("command %q: duplicate subcommand %q", c.Name, s.Name)
 		}
 		nameSeen[s.Name] = true
+		for _, a := range s.Aliases {
+			if nameSeen[a] {
+				return fmt.Errorf("command %q: duplicate subcommand %q", c.Name, a)
+			}
+			nameSeen[a] = true
+		}
 	}
 	childInherited := append(append([]AnyFlag(nil), inherited...), c.Flags...)
 	for _, s := range c.Subcommands {
@@ -207,7 +214,10 @@ func isNilValue(v any) bool {
 
 func findSub(c *Command, name string) *Command {
 	for _, s := range c.Subcommands {
-		if s != nil && s.Name == name {
+		if s == nil {
+			continue
+		}
+		if s.Name == name || slices.Contains(s.Aliases, name) {
 			return s
 		}
 	}
@@ -356,10 +366,11 @@ func suggestSub(c *Command, attempted string) string {
 		if s.Hidden {
 			continue
 		}
-		d := levenshtein(attempted, s.Name)
-		if d < bestDist {
-			best = s.Name
-			bestDist = d
+		for _, cand := range append([]string{s.Name}, s.Aliases...) {
+			if d := levenshtein(attempted, cand); d < bestDist {
+				best = cand
+				bestDist = d
+			}
 		}
 	}
 	return best

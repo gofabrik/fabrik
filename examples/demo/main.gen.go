@@ -38,6 +38,8 @@ func run() int {
 		os.Exit(1)
 	}()
 
+	migrateDryRun := cli.BoolFlag("dry-run").Short('n').Help("Print what would run without applying migrations.")
+
 	root := &cli.Command{
 		Name: "demo",
 		Subcommands: []*cli.Command{
@@ -77,15 +79,21 @@ func run() int {
 				},
 			},
 			{
-				Name: "migrate",
-				Help: "Apply pending database migrations",
-				Run: func(ctx cli.Context) error {
-					db, sources, cleanup, err := buildMigrate(ctx)
-					if err != nil {
-						return err
-					}
-					defer cleanup()
-					return shared.Migrate(ctx, db, sources)
+				Name: "database",
+				Subcommands: []*cli.Command{
+					{
+						Name:  "migrate",
+						Help:  "Apply pending database migrations",
+						Flags: cli.Flags(migrateDryRun),
+						Run: func(ctx cli.Context) error {
+							db, sources, cleanup, err := buildMigrate(ctx)
+							if err != nil {
+								return err
+							}
+							defer cleanup()
+							return shared.Migrate(ctx, db, sources, migrateDryRun.Get(ctx))
+						},
+					},
 				},
 			},
 		},

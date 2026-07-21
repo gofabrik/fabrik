@@ -1,0 +1,82 @@
+Emit-phase group/root rules: groups own only non-executable nodes, carry
+flags only, and inherited names stay unique across the chain.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:group name=witharg
+//fabrik:cli:argument name=target type=string default=x
+var _witharg struct{}
+
+//fabrik:cli:group name=migrate
+var _migrate struct{}
+
+//fabrik:cli:command
+func Migrate(ctx cli.Context) error { return nil }
+
+//fabrik:cli:group name=database
+//fabrik:cli:flag name=timeout type=int default=30
+var _database struct{}
+
+//fabrik:cli:command path="database migrate"
+//fabrik:cli:flag name=timeout type=int default=10
+func DBMigrate(ctx cli.Context, timeout int) error { return nil }
+
+//fabrik:cli:root version=1.0.0
+//fabrik:cli:flag name=verbose type=bool short=v
+//fabrik:cli:flag name=version type=bool
+var _root struct{}
+
+//fabrik:cli:group name=tools
+//fabrik:cli:flag name=verbose type=bool
+var _tools struct{}
+
+//fabrik:cli:group name=exports
+//fabrik:cli:flag name=fast type=bool short=f
+//fabrik:cli:flag name=force type=bool short=f
+var _exports struct{}
+
+//fabrik:cli:command path="late run"
+//fabrik:cli:flag name=local type=bool
+func LateRun(ctx cli.Context, local bool, mode string) error { return nil }
+
+//fabrik:cli:group name=late
+//fabrik:cli:flag name=mode type=string default=fast
+//fabrik:cli:argument name=bad type=string default=x
+var _late struct{}
+
+//fabrik:cli:command path="database status"
+//fabrik:cli:flag name=vertical type=bool short=v
+func DBStatus(ctx cli.Context, vertical bool) error { return nil }
+-- want/diags --
+error: shared/shared.go:6:1: //fabrik:cli:argument belongs to a command function
+  help: groups and the root declare flags only
+error: shared/shared.go:9:1: //fabrik:cli:group "migrate" names an executable command's path
+  help: the command owns this node; groups describe non-executable nodes
+error: shared/shared.go:20:1: flag "timeout" collides with the inherited flag declared at $WORK/shared/shared.go:16:1
+  help: inherited long names are unique across the ancestor chain
+error: shared/shared.go:25:1: root flag "version" collides with the --version flag version= reserves
+  help: the cli library rejects this tree at startup
+error: shared/shared.go:29:1: flag "verbose" collides with the inherited flag declared at $WORK/shared/shared.go:24:1
+  help: inherited long names are unique across the ancestor chain
+error: shared/shared.go:34:1: flags "fast" and "force" share short -f on group exports
+  help: the cli library rejects duplicate shorts at startup
+error: shared/shared.go:43:1: //fabrik:cli:argument belongs to a command function
+  help: groups and the root declare flags only
+error: shared/shared.go:47:1: flags "verbose" and "vertical" share short -v on one chain
+  help: the cli library rejects duplicate shorts at startup

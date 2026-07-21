@@ -63,8 +63,12 @@ type Gen struct {
 
 	materializing []string // active lazy-bind stack
 
-	commandFuncs []CommandFunc
-	prologues    []func() diag.Diagnostics
+	commandFuncs  []CommandFunc
+	commandGroups []CommandGroup
+	commandRoot   *RootSpec
+	// treeOrder preserves arrival order: commands use positive indices, groups negative, and root zero.
+	treeOrder []int
+	prologues []func() diag.Diagnostics
 
 	scopes      []*Scope
 	scope       *Scope          // active scope; nil uses default state
@@ -203,15 +207,82 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 
 // CommandFunc describes a generated CLI command and its dependency scope.
 type CommandFunc struct {
-	Name  string
-	Help  string
-	Fn    string // package-qualified user function
-	Scope *Scope
-	Pos   token.Position
+	Name    string
+	Help    string
+	Long    string
+	Usage   string
+	Aliases []string
+	Hidden  bool
+	Fn      string // package-qualified user function
+
+	// Path is the full command path; an empty path uses Name, and shared prefixes create intermediate nodes.
+	Path []string
+
+	// Inputs are emitted before the tree so wrappers and fields share handles.
+	Inputs []CommandInput
+
+	// ValueExprs follow scope roots in command parameter order.
+	ValueExprs []string
+
+	Use      []string // package-qualified cli.Middleware expressions, in order
+	Examples []CommandExample
+	Scope    *Scope
+	Pos      token.Position
+}
+
+// CommandGroup decorates a non-executable tree node with metadata and inherited inputs.
+type CommandGroup struct {
+	Path     []string
+	Help     string
+	Long     string
+	Usage    string
+	Aliases  []string
+	Hidden   bool
+	Inputs   []CommandInput
+	Use      []string // package-qualified cli.Middleware expressions, in order
+	Examples []CommandExample
+}
+
+// RootSpec decorates the generated root command.
+type RootSpec struct {
+	Usage    string
+	Version  string
+	Long     string
+	Inputs   []CommandInput
+	Use      []string // package-qualified cli.Middleware expressions, in order
+	Examples []CommandExample
+}
+
+// AddCommandGroup registers group metadata for one path.
+func (g *Gen) AddCommandGroup(cg CommandGroup) {
+	g.commandGroups = append(g.commandGroups, cg)
+	g.treeOrder = append(g.treeOrder, -len(g.commandGroups))
+}
+
+// SetCommandRoot registers the root command's surface.
+func (g *Gen) SetCommandRoot(r RootSpec) {
+	g.commandRoot = &r
+	g.treeOrder = append(g.treeOrder, 0)
+}
+
+// CommandInput is one flag or argument handle declaration.
+type CommandInput struct {
+	Var     string // local name, pre-allocated via Var
+	Builder string // full builder expression for the handle
+	Arg     bool   // positional argument rather than flag
+}
+
+// CommandExample is one --help Examples entry.
+type CommandExample struct {
+	Cmd  string
+	Help string
 }
 
 // AddCommandFunc registers a command shell for the generated tree.
-func (g *Gen) AddCommandFunc(c CommandFunc) { g.commandFuncs = append(g.commandFuncs, c) }
+func (g *Gen) AddCommandFunc(c CommandFunc) {
+	g.commandFuncs = append(g.commandFuncs, c)
+	g.treeOrder = append(g.treeOrder, len(g.commandFuncs))
+}
 
 // CommandCount reports how many commands are registered.
 func (g *Gen) CommandCount() int { return len(g.commandFuncs) }
@@ -488,7 +559,7 @@ func (g *Gen) Stmt(phase Phase, format string, a ...any) {
 
 // Render assembles and formats main.gen.go.
 func (g *Gen) Render() ([]byte, error) {
-	hasCmd := len(g.commandFuncs) > 0
+	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
 	if hasCmd {
 		g.Context()
 	}
@@ -530,7 +601,7 @@ func (g *Gen) Render() ([]byte, error) {
 }
 
 func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
-	if len(g.commandFuncs) > 0 {
+	if len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil {
 		g.writeRunCommands(b, ctxPkg)
 		return
 	}
@@ -566,29 +637,145 @@ func (g *Gen) writeRunCommands(b *bytes.Buffer, ctxPkg string) {
 	fmt.Fprintf(b, "defer %s.Stop(sigc)\n", sigp)
 	fmt.Fprintf(b, "go func() {\n<-sigc\ncancel()\n<-sigc\n%s.Exit(1)\n}()\n\n", osp)
 
+	wrote := false
+	for _, idx := range g.treeOrder {
+		var inputs []CommandInput
+		switch {
+		case idx > 0:
+			inputs = g.commandFuncs[idx-1].Inputs
+		case idx < 0:
+			inputs = g.commandGroups[-idx-1].Inputs
+		default:
+			inputs = g.commandRoot.Inputs
+		}
+		for _, in := range inputs {
+			fmt.Fprintf(b, "%s := %s\n", in.Var, in.Builder)
+			wrote = true
+		}
+	}
+	if wrote {
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(b, "root := &%s.Command{\n", clip)
 	fmt.Fprintf(b, "Name: %q,\n", name)
-	fmt.Fprintf(b, "Subcommands: []*%s.Command{\n", clip)
-	for _, c := range g.commandFuncs {
-		b.WriteString("{\n")
-		fmt.Fprintf(b, "Name: %q,\n", c.Name)
-		if c.Help != "" {
-			fmt.Fprintf(b, "Help: %q,\n", c.Help)
+	if r := g.commandRoot; r != nil {
+		if r.Usage != "" {
+			fmt.Fprintf(b, "Usage: %q,\n", r.Usage)
 		}
-		fmt.Fprintf(b, "Run: func(ctx %s.Context) error {\n", clip)
-		g.writeCommandWrapper(b, c)
-		b.WriteString("},\n")
-		b.WriteString("},\n")
+		if r.Version != "" {
+			fmt.Fprintf(b, "Version: %q,\n", r.Version)
+		}
+		if r.Long != "" {
+			fmt.Fprintf(b, "Long: %q,\n", r.Long)
+		}
+		writeInputFields(b, clip, r.Inputs, r.Use, r.Examples)
+	}
+	fmt.Fprintf(b, "Subcommands: []*%s.Command{\n", clip)
+	for _, n := range buildCommandTree(g.commandFuncs, g.commandGroups, g.treeOrder) {
+		g.writeCommandNode(b, clip, n)
 	}
 	b.WriteString("},\n}\n")
 	fmt.Fprintf(b, "return root.Exec(%s.Args[1:], %s.WithSignalContext(%s))\n", osp, clip, ctx)
 	b.WriteString("}\n\n")
 }
 
+type commandNode struct {
+	name     string
+	cmd      *CommandFunc
+	group    *CommandGroup
+	children []*commandNode
+}
+
+// buildCommandTree merges paths and preserves first-contribution sibling order.
+func buildCommandTree(cs []CommandFunc, groups []CommandGroup, order []int) []*commandNode {
+	root := &commandNode{}
+	at := func(path []string) *commandNode {
+		n := root
+		for _, seg := range path {
+			var child *commandNode
+			for _, existing := range n.children {
+				if existing.name == seg {
+					child = existing
+					break
+				}
+			}
+			if child == nil {
+				child = &commandNode{name: seg}
+				n.children = append(n.children, child)
+			}
+			n = child
+		}
+		return n
+	}
+	if order == nil {
+		for i := range cs {
+			order = append(order, i+1)
+		}
+		for i := range groups {
+			order = append(order, -i-1)
+		}
+	}
+	for _, idx := range order {
+		if idx == 0 {
+			continue
+		}
+		if idx > 0 {
+			c := &cs[idx-1]
+			path := c.Path
+			if len(path) == 0 {
+				path = []string{c.Name}
+			}
+			at(path).cmd = c
+		} else {
+			cg := &groups[-idx-1]
+			at(cg.Path).group = cg
+		}
+	}
+	return root.children
+}
+
+func (g *Gen) writeCommandNode(b *bytes.Buffer, clip string, n *commandNode) {
+	b.WriteString("{\n")
+	fmt.Fprintf(b, "Name: %q,\n", n.name)
+	if c := n.cmd; c != nil {
+		if c.Help != "" {
+			fmt.Fprintf(b, "Help: %q,\n", c.Help)
+		}
+		if c.Long != "" {
+			fmt.Fprintf(b, "Long: %q,\n", c.Long)
+		}
+		writeNodeMeta(b, c.Usage, c.Aliases, c.Hidden)
+		writeCommandInputs(b, clip, *c)
+	} else if cg := n.group; cg != nil {
+		if cg.Help != "" {
+			fmt.Fprintf(b, "Help: %q,\n", cg.Help)
+		}
+		if cg.Long != "" {
+			fmt.Fprintf(b, "Long: %q,\n", cg.Long)
+		}
+		writeNodeMeta(b, cg.Usage, cg.Aliases, cg.Hidden)
+		writeInputFields(b, clip, cg.Inputs, cg.Use, cg.Examples)
+	}
+	if len(n.children) > 0 {
+		fmt.Fprintf(b, "Subcommands: []*%s.Command{\n", clip)
+		for _, child := range n.children {
+			g.writeCommandNode(b, clip, child)
+		}
+		b.WriteString("},\n")
+	}
+	if c := n.cmd; c != nil {
+		fmt.Fprintf(b, "Run: func(ctx %s.Context) error {\n", clip)
+		g.writeCommandWrapper(b, *c)
+		b.WriteString("},\n")
+	}
+	b.WriteString("},\n")
+}
+
 func (g *Gen) writeCommandWrapper(b *bytes.Buffer, c CommandFunc) {
 	s := c.Scope
 	if len(s.nodes) == 0 {
 		args := append([]string{"ctx"}, s.rootExprs...)
+		args = append(args, c.ValueExprs...)
 		fmt.Fprintf(b, "return %s(%s)\n", c.Fn, strings.Join(args, ", "))
 		return
 	}
@@ -607,7 +794,59 @@ func (g *Gen) writeCommandWrapper(b *bytes.Buffer, c CommandFunc) {
 		}
 	}
 	args := append([]string{"ctx"}, vars...)
+	args = append(args, c.ValueExprs...)
 	fmt.Fprintf(b, "return %s(%s)\n", c.Fn, strings.Join(args, ", "))
+}
+
+func writeCommandInputs(b *bytes.Buffer, clip string, c CommandFunc) {
+	writeInputFields(b, clip, c.Inputs, c.Use, c.Examples)
+}
+
+func writeNodeMeta(b *bytes.Buffer, usage string, aliases []string, hidden bool) {
+	if usage != "" {
+		fmt.Fprintf(b, "Usage: %q,\n", usage)
+	}
+	if len(aliases) > 0 {
+		quoted := make([]string, len(aliases))
+		for i, a := range aliases {
+			quoted[i] = fmt.Sprintf("%q", a)
+		}
+		fmt.Fprintf(b, "Aliases: []string{%s},\n", strings.Join(quoted, ", "))
+	}
+	if hidden {
+		b.WriteString("Hidden: true,\n")
+	}
+}
+
+func writeInputFields(b *bytes.Buffer, clip string, inputs []CommandInput, use []string, examples []CommandExample) {
+	var flags, cliargs []string
+	for _, in := range inputs {
+		if in.Arg {
+			cliargs = append(cliargs, in.Var)
+		} else {
+			flags = append(flags, in.Var)
+		}
+	}
+	if len(flags) > 0 {
+		fmt.Fprintf(b, "Flags: %s.Flags(%s),\n", clip, strings.Join(flags, ", "))
+	}
+	if len(cliargs) > 0 {
+		fmt.Fprintf(b, "Args: %s.Args(%s),\n", clip, strings.Join(cliargs, ", "))
+	}
+	if len(use) > 0 {
+		fmt.Fprintf(b, "Use: []%s.Middleware{%s},\n", clip, strings.Join(use, ", "))
+	}
+	if len(examples) > 0 {
+		fmt.Fprintf(b, "Examples: []%s.Example{\n", clip)
+		for _, e := range examples {
+			if e.Help != "" {
+				fmt.Fprintf(b, "{Cmd: %q, Help: %q},\n", e.Cmd, e.Help)
+			} else {
+				fmt.Fprintf(b, "{Cmd: %q},\n", e.Cmd)
+			}
+		}
+		b.WriteString("},\n")
+	}
 }
 
 // wrapperVars avoids locals that shadow imported packages.
