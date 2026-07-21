@@ -1,0 +1,4 @@
+change_type: enhancement
+component: templates
+note: Render HTML or plain-text templates to any writer, with raw `.txt` bodies, optional layouts, and correct HTML response headers.
+issues: [0]

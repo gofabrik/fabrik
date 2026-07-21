@@ -59,12 +59,13 @@ func (*Templates) Meta() gen.Meta {
 		Doc: "**`//fabrik:templates [dir=templates]`**\n\n" +
 			"Declared on an exported `embed.FS` variable: the tree loads at " +
 			"startup into a `*templates.Set`, injectable into handler structs " +
-			"and providers. Pages live in sections (`_default` is the shared " +
-			"fallback for layouts and partials); `dir=` names the " +
-			"subdirectory inside the FS. Use `all:<dir>` so `_layout.html` " +
-			"and `_`-prefixed partials are embedded. Several packages may " +
-			"declare trees: shared can own `_default` while each domain " +
-			"package ships its own section directories. A " +
+			"and providers. Templates live in sections; `_default` provides " +
+			"fallback layouts and partials. `dir=` names the subdirectory " +
+			"inside the FS. `*.html` files use html/template; `*.txt` files " +
+			"use text/template with an optional `_layout.txt`. Use `all:<dir>` so " +
+			"layouts and `_`-prefixed partials are embedded. Several " +
+			"packages may declare trees: shared can own `_default` while " +
+			"each domain package ships its own section directories. A " +
 			"section provided twice is an error, and every tree is " +
 			"validated at generation time by loading it.\n\n" +
 			"```go\n//fabrik:templates\n//go:embed all:templates\nvar Templates embed.FS\n```",
@@ -317,11 +318,12 @@ func (*Funcs) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Template function: [name=NAME]",
 		Doc: "**`//fabrik:templates:func [name=NAME]`**\n\n" +
-			"Adds a package-level function to the template set's FuncMap. " +
+			"Adds a package-level function to the template set's FuncMap, " +
+			"visible to both HTML and text templates. " +
 			"The template-visible name defaults to the function name with a " +
 			"lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` " +
-			"overrides. The signature must be legal for html/template: one " +
-			"result, or two with the second an `error`.\n\n" +
+			"overrides. The signature must be legal for the template " +
+			"engines: one result, or two with the second an `error`.\n\n" +
 			"```go\n//fabrik:templates:func\nfunc HumanizeAge(t time.Time) string { ... }\n```",
 		Example: "//fabrik:templates:func",
 		Attrs: []gen.AttrSpec{

@@ -1,22 +1,25 @@
-// Package templates loads sectioned HTML page templates and renders them
-// through an http.ResponseWriter.
+// Package templates loads sectioned HTML and text templates and renders
+// them into an io.Writer without setting HTTP headers.
 //
-// Pages live in section directories. [_default] supplies fallback layouts
-// and partials for other sections.
+// Templates live in section directories. [_default] supplies fallback
+// layouts and partials for other sections. HTML and text templates resolve
+// their layouts and partials independently.
 //
-// Page keys are bare basenames for _default pages and "section/name" for
-// every other section.
+// Names are bare basenames in [DefaultSection] and section-qualified elsewhere;
+// HTML names omit the extension, while text names retain it.
 package templates
 
 import (
 	"bytes"
 	"fmt"
 	htmltpl "html/template"
+	"io"
 	"io/fs"
-	"net/http"
 	"path"
 	"sort"
 	"strings"
+	texttpl "text/template"
+	"text/template/parse"
 )
 
 // FuncMap is an alias for [html/template.FuncMap].
@@ -26,13 +29,57 @@ type FuncMap = htmltpl.FuncMap
 // and partials act as the fallback for every other section.
 const DefaultSection = "_default"
 
-// LayoutFile is the conventional filename whose presence marks a
-// section's base layout.
+// LayoutFile is the conventional HTML layout filename.
 const LayoutFile = "_layout.html"
 
-// Set is a parsed collection of pages. It is safe for concurrent use.
+// TextLayoutFile is the conventional text layout filename.
+const TextLayoutFile = "_layout.txt"
+
+// TextBody is the template name used by text layouts for the body.
+const TextBody = "content"
+
+type executor interface {
+	ExecuteTemplate(w io.Writer, name string, data any) error
+}
+
+type plane struct {
+	ext    string
+	layout string
+}
+
+var planes = []plane{
+	{".html", LayoutFile},
+	{".txt", TextLayoutFile},
+}
+
+func planeFor(ext string) *plane {
+	for i := range planes {
+		if planes[i].ext == ext {
+			return &planes[i]
+		}
+	}
+	return nil
+}
+
+func parseHTML(funcs FuncMap, files []fileRef) (executor, error) {
+	t := htmltpl.New(LayoutFile).Funcs(funcs)
+	var err error
+	for _, f := range files {
+		if t, err = t.ParseFS(f.fsys, f.path); err != nil {
+			return nil, err
+		}
+	}
+	return t, nil
+}
+
+// Set is a parsed collection of templates. It is safe for concurrent use.
 type Set struct {
-	pages map[string]*htmltpl.Template
+	templates map[string]tmpl
+}
+
+type tmpl struct {
+	tpl  executor
+	root string
 }
 
 // Source is one template tree contributing sections to a [Set].
@@ -41,16 +88,17 @@ type Source struct {
 	Dir string
 }
 
-// Load walks dir under fsys and parses every page it finds.
+// Load parses HTML and text templates in the section directories under dir.
 //
-// Each dir/<section>/ directory is a section. [LayoutFile] is the section
-// layout, _*.html files are partials, and other *.html files are pages.
-// Sections without their own layout or partials fall back to [DefaultSection].
+// Each format resolves layouts and partials independently through
+// [DefaultSection]. HTML templates require a [LayoutFile]; text templates
+// use a [TextLayoutFile] when available and otherwise execute directly.
 //
 // funcMaps are merged after [DefaultFuncs] in call order. Later maps override
-// earlier maps, and nil maps are ignored.
+// earlier maps, and nil maps are ignored. Both formats use the same functions;
+// values with html/template's trusted types render unescaped in text templates.
 //
-// Load fails if a page has no resolvable layout or any file fails to parse.
+// Load rejects text bodies that declare named templates.
 func Load(fsys fs.FS, dir string, funcMaps ...FuncMap) (*Set, error) {
 	return LoadSources([]Source{{FS: fsys, Dir: dir}}, funcMaps...)
 }
@@ -89,7 +137,7 @@ func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
 	}
 
 	defSection, hasDefault := sections[DefaultSection]
-	out := &Set{pages: map[string]*htmltpl.Template{}}
+	out := &Set{templates: map[string]tmpl{}}
 
 	// Keep diagnostics stable when several sections can fail.
 	names := make([]string, 0, len(sections))
@@ -100,71 +148,120 @@ func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
 
 	for _, name := range names {
 		sec := sections[name]
-		layout := sec.layout
-		var partials []fileRef
-		if name != DefaultSection && hasDefault {
-			if layout.path == "" {
-				layout = defSection.layout
+		for _, pl := range planes {
+			sp := sec.planes[pl.ext]
+			if sp == nil {
+				sp = &sectionPlane{}
 			}
-			// Parse fallback partials first; section-local definitions win.
-			localNames := map[string]bool{}
-			for _, p := range sec.partials {
-				localNames[path.Base(p.path)] = true
-			}
-			for _, p := range defSection.partials {
-				if !localNames[path.Base(p.path)] {
-					partials = append(partials, p)
+			layout := sp.layout
+			var partials []fileRef
+			if name != DefaultSection && hasDefault {
+				if dsp := defSection.planes[pl.ext]; dsp != nil {
+					if layout.path == "" {
+						layout = dsp.layout
+					}
+					// Parse fallback partials first; section-local definitions win.
+					localNames := map[string]bool{}
+					for _, p := range sp.partials {
+						localNames[path.Base(p.path)] = true
+					}
+					for _, p := range dsp.partials {
+						if !localNames[path.Base(p.path)] {
+							partials = append(partials, p)
+						}
+					}
 				}
 			}
-		}
-		partials = append(partials, sec.partials...)
+			partials = append(partials, sp.partials...)
 
-		if layout.path == "" {
-			if len(sec.pages) == 0 {
-				continue
-			}
-			return nil, fmt.Errorf("templates.Load: section %q has %d page(s) but no %s (and no %s/%s fallback)",
-				name, len(sec.pages), LayoutFile, DefaultSection, LayoutFile)
-		}
-
-		for _, page := range sec.pages {
-			files := append([]fileRef{layout}, partials...)
-			files = append(files, page)
-			t := htmltpl.New(LayoutFile).Funcs(merged)
-			var err error
-			for _, f := range files {
-				if t, err = t.ParseFS(f.fsys, f.path); err != nil {
-					return nil, fmt.Errorf("templates.Load: parse %s: %w", page.path, err)
+			if layout.path == "" && pl.ext == ".html" {
+				if len(sp.templates) == 0 {
+					continue
 				}
+				return nil, fmt.Errorf("templates.Load: section %q has %d template(s) but no %s (and no %s/%s fallback)",
+					name, len(sp.templates), LayoutFile, DefaultSection, LayoutFile)
 			}
-			key := pageKey(name, page.path)
-			if _, exists := out.pages[key]; exists {
-				return nil, fmt.Errorf("templates.Load: duplicate page key %q (last from %s)", key, page.path)
+
+			for _, tp := range sp.templates {
+				var t executor
+				var err error
+				root := pl.layout
+				if pl.ext == ".txt" {
+					t, root, err = parseTextTemplate(merged, layout, partials, tp)
+				} else {
+					files := append([]fileRef{layout}, partials...)
+					files = append(files, tp)
+					t, err = parseHTML(merged, files)
+				}
+				if err != nil {
+					return nil, fmt.Errorf("templates.Load: parse %s: %w", tp.path, err)
+				}
+				key := templateKey(name, tp.path, pl.ext)
+				if _, exists := out.templates[key]; exists {
+					return nil, fmt.Errorf("templates.Load: duplicate template %q (last from %s)", key, tp.path)
+				}
+				out.templates[key] = tmpl{tpl: t, root: root}
 			}
-			out.pages[key] = t
 		}
 	}
 
-	if len(out.pages) == 0 {
-		return nil, fmt.Errorf("templates.Load: no pages found")
+	if len(out.templates) == 0 {
+		return nil, fmt.Errorf("templates.Load: no templates found")
 	}
 	return out, nil
 }
 
-// Render executes a page by key.
+// parseTextTemplate rejects named definitions so layouts do not change body syntax.
+func parseTextTemplate(funcs FuncMap, layout fileRef, partials []fileRef, tp fileRef) (executor, string, error) {
+	raw, err := fs.ReadFile(tp.fsys, tp.path)
+	if err != nil {
+		return nil, "", err
+	}
+	// The actual parse checks functions after structural validation.
+	probe := parse.New(TextBody)
+	probe.Mode = parse.SkipFuncCheck
+	probeTrees := map[string]*parse.Tree{}
+	if _, err := probe.Parse(string(raw), "", "", probeTrees); err != nil {
+		return nil, "", err
+	}
+	// A define-only body replaces the empty root, so count alone cannot detect it.
+	if len(probeTrees) > 1 || probeTrees[TextBody] != probe {
+		return nil, "", fmt.Errorf("text templates are raw bodies; move {{define}} blocks into _*.txt partials")
+	}
+
+	t := texttpl.New(TextLayoutFile).Funcs(texttpl.FuncMap(funcs))
+	files := partials
+	if layout.path != "" {
+		files = append([]fileRef{layout}, partials...)
+	}
+	for _, f := range files {
+		if t, err = t.ParseFS(f.fsys, f.path); err != nil {
+			return nil, "", err
+		}
+	}
+	if _, err := t.New(TextBody).Parse(string(raw)); err != nil {
+		return nil, "", err
+	}
+	root := TextLayoutFile
+	if layout.path == "" {
+		root = TextBody
+	}
+	return t, root, nil
+}
+
+// Render executes a named template into w.
 //
-// Render buffers output; errors leave the response untouched.
-// On success it sets the HTML Content-Type and flushes the buffer.
-func (s *Set) Render(w http.ResponseWriter, name string, data any) error {
-	t, ok := s.pages[name]
+// Lookup and execution errors leave w untouched; writer errors may leave
+// partial output. Render does not set HTTP headers.
+func (s *Set) Render(w io.Writer, template string, data any) error {
+	t, ok := s.templates[template]
 	if !ok {
-		return fmt.Errorf("templates.Render: unknown page %q", name)
+		return fmt.Errorf("templates.Render: unknown template %q", template)
 	}
 	var buf bytes.Buffer
-	if err := t.ExecuteTemplate(&buf, LayoutFile, data); err != nil {
-		return fmt.Errorf("templates.Render %q: %w", name, err)
+	if err := t.tpl.ExecuteTemplate(&buf, t.root, data); err != nil {
+		return fmt.Errorf("templates.Render %q: %w", template, err)
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -197,10 +294,10 @@ func Sections(fsys fs.FS, dir string) ([]string, error) {
 	return out, nil
 }
 
-// Names returns the registered page keys, sorted.
+// Names returns the template names, sorted.
 func (s *Set) Names() []string {
-	out := make([]string, 0, len(s.pages))
-	for k := range s.pages {
+	out := make([]string, 0, len(s.templates))
+	for k := range s.templates {
 		out = append(out, k)
 	}
 	sort.Strings(out)
@@ -213,9 +310,13 @@ type fileRef struct {
 }
 
 type section struct {
-	layout   fileRef
-	partials []fileRef
-	pages    []fileRef
+	planes map[string]*sectionPlane
+}
+
+type sectionPlane struct {
+	layout    fileRef
+	partials  []fileRef
+	templates []fileRef
 }
 
 // readSections treats direct child directories containing templates as sections.
@@ -235,38 +336,51 @@ func readSections(fsys fs.FS, dir string) (map[string]*section, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", sub, err)
 		}
-		sec := &section{}
+		sec := &section{planes: map[string]*sectionPlane{}}
+		empty := true
 		for _, f := range files {
 			if f.IsDir() {
 				continue
 			}
 			name := f.Name()
-			if !strings.HasSuffix(name, ".html") {
+			pl := planeFor(path.Ext(name))
+			if pl == nil {
 				continue
+			}
+			sp := sec.planes[pl.ext]
+			if sp == nil {
+				sp = &sectionPlane{}
+				sec.planes[pl.ext] = sp
 			}
 			ref := fileRef{fsys: fsys, path: path.Join(sub, name)}
 			switch {
-			case name == LayoutFile:
-				sec.layout = ref
+			case name == pl.layout:
+				sp.layout = ref
 			case strings.HasPrefix(name, "_"):
-				sec.partials = append(sec.partials, ref)
+				sp.partials = append(sp.partials, ref)
 			default:
-				sec.pages = append(sec.pages, ref)
+				sp.templates = append(sp.templates, ref)
 			}
+			empty = false
 		}
-		if sec.layout.path == "" && len(sec.partials) == 0 && len(sec.pages) == 0 {
+		if empty {
 			// Asset or working directories are not template sections.
 			continue
 		}
-		sort.Slice(sec.partials, func(i, j int) bool { return sec.partials[i].path < sec.partials[j].path })
-		sort.Slice(sec.pages, func(i, j int) bool { return sec.pages[i].path < sec.pages[j].path })
+		for _, sp := range sec.planes {
+			sort.Slice(sp.partials, func(i, j int) bool { return sp.partials[i].path < sp.partials[j].path })
+			sort.Slice(sp.templates, func(i, j int) bool { return sp.templates[i].path < sp.templates[j].path })
+		}
 		out[secName] = sec
 	}
 	return out, nil
 }
 
-func pageKey(sectionName, pagePath string) string {
-	base := strings.TrimSuffix(path.Base(pagePath), ".html")
+func templateKey(sectionName, filePath, ext string) string {
+	base := path.Base(filePath)
+	if ext == ".html" {
+		base = strings.TrimSuffix(base, ext)
+	}
 	if sectionName == DefaultSection {
 		return base
 	}

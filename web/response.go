@@ -11,7 +11,7 @@ type Response interface {
 	Respond(w http.ResponseWriter, r *http.Request) error
 }
 
-// View renders page.Template() with page as data.
+// View renders page.Template() as HTML with page as data.
 //
 //	type LoginPage struct{ Error string }
 //	func (LoginPage) Template() string { return "auth/login" }
@@ -21,7 +21,7 @@ func View(page interface{ Template() string }) Response {
 	return renderResponse{name: page.Template(), data: page}
 }
 
-// Template renders a named template with data.
+// Template renders a named HTML template with data.
 func Template(name string, data any) Response {
 	return renderResponse{name: name, data: data}
 }

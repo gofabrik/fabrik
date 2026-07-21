@@ -2,13 +2,14 @@ package web
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 )
 
-// Renderer renders a named template with data.
+// Renderer writes a named template with data.
 type Renderer interface {
-	Render(w http.ResponseWriter, name string, data any) error
+	Render(w io.Writer, name string, data any) error
 }
 
 // ErrorHandler handles adapter and response failures.
@@ -104,6 +105,7 @@ func (a *Adapter) respond(w http.ResponseWriter, r *http.Request, resp Response)
 		if a.renderer == nil {
 			return errors.New("web: View/Template response without a renderer (configure WithRenderer)")
 		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		return a.renderer.Render(w, v.name, v.data)
 	}
 	return resp.Respond(w, r)
