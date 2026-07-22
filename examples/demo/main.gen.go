@@ -335,7 +335,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		return nil, nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
 	}
 
-	webRatelimitMemoryStore, webRatelimitMemoryStoreClose := web.NewRatelimitStore()
+	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -350,10 +350,10 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
 
-	greetlimitMW, err := web.GreetRateLimited(webRatelimitMemoryStore)
+	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
 	if err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -368,8 +368,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 
 	// Jobs
 	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -377,8 +377,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		return nil, nil, nil, err
 	}
 	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -388,8 +388,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
 		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
 	}); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -399,8 +399,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
 		return web.RecordVisit(c, sharedQueryDB, m)
 	}); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -410,8 +410,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
 		return web.PurgeGreetings(c, sharedQueryDB)
 	}); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -426,8 +426,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	r.Method("GET", "/routes", webDocs.List)
 
 	cleanup := func() {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -620,7 +620,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		return nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
 	}
 
-	webRatelimitMemoryStore, webRatelimitMemoryStoreClose := web.NewRatelimitStore()
+	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -635,10 +635,10 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
 
-	greetlimitMW, err := web.GreetRateLimited(webRatelimitMemoryStore)
+	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
 	if err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -653,8 +653,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 
 	// Jobs
 	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -662,8 +662,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		return nil, nil, err
 	}
 	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -673,8 +673,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
 		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
 	}); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -684,8 +684,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
 		return web.RecordVisit(c, sharedQueryDB, m)
 	}); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -695,8 +695,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
 		return web.PurgeGreetings(c, sharedQueryDB)
 	}); err != nil {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -711,8 +711,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	r.Method("GET", "/routes", webDocs.List)
 
 	cleanup := func() {
-		if webRatelimitMemoryStoreClose != nil {
-			webRatelimitMemoryStoreClose()
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
