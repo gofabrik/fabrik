@@ -184,10 +184,52 @@ func TestDemoEndToEnd(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	errorPagesFlow(t, base)
 	sessionFlow(t, port)
 	crossOriginFlow(t, port)
 	formsFlow(t, port)
 	gracefulShutdown(t, server)
+}
+
+func errorPagesFlow(t *testing.T, base string) {
+	t.Helper()
+	resp, err := http.Get(base + "/definitely-missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing route status = %d, want 404", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("404 Content-Type = %q, want the handler-set HTML type", ct)
+	}
+	if !strings.Contains(string(b), "/definitely-missing") {
+		t.Fatalf("404 body should render the template with the path:\n%s", b)
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, base+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = io.ReadAll(resp.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE / status = %d, want 405", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("405 Content-Type = %q, want the handler-set HTML type", ct)
+	}
+	if !strings.Contains(string(b), "DELETE") {
+		t.Fatalf("405 body should render the template with the method:\n%s", b)
+	}
 }
 
 // gracefulShutdown requires SIGTERM to produce a clean exit within the generated grace period.

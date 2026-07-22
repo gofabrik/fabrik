@@ -412,7 +412,7 @@ Positional arguments:
 
 **`//fabrik:templates [dir=templates]`**
 
-Declared on an exported `embed.FS` variable: the tree loads at startup into a `*templates.Set`, injectable into handler structs and providers. Pages live in sections (`_default` is the shared fallback for layouts and partials); `dir=` names the subdirectory inside the FS. Use `all:<dir>` so `_layout.html` and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
+Declared on an exported `embed.FS` variable: the tree loads at startup into a `*templates.Set`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; `*.txt` files use text/template with an optional `_layout.txt`. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
 
 ```go
 //fabrik:templates
@@ -428,7 +428,7 @@ Options:
 
 **`//fabrik:templates:func [name=NAME]`**
 
-Adds a package-level function to the template set's FuncMap. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for html/template: one result, or two with the second an `error`.
+Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
 
 ```go
 //fabrik:templates:func

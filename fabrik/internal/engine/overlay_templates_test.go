@@ -82,4 +82,8 @@ func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
 	wantDiag(t, map[string][]byte{
 		filepath.Join(dir, "web/templates/drafts/page.html"): []byte(`{{ define "content" }}{{ newdirfunc . }}{{ end }}`),
 	}, "newdirfunc")
+
+	wantDiag(t, map[string][]byte{
+		filepath.Join(dir, "web/templates/mail/note.txt"): []byte(`{{ newtextfunc . }}`),
+	}, "newtextfunc")
 }

@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,7 +117,7 @@ func TestResponseHeaderWinsOverRecorded(t *testing.T) {
 
 type fakeRenderer struct{ name string }
 
-func (f *fakeRenderer) Render(w http.ResponseWriter, name string, data any) error {
+func (f *fakeRenderer) Render(w io.Writer, name string, data any) error {
 	f.name = name
 	_, err := w.Write([]byte("rendered"))
 	return err
@@ -131,6 +132,29 @@ func TestViewRendersThroughRenderer(t *testing.T) {
 	})(rec, httptest.NewRequest("GET", "/", nil))
 	if r.name != "auth/login" || rec.Body.String() != "rendered" {
 		t.Fatalf("render = %q body %q", r.name, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want the adapter to label rendered responses", ct)
+	}
+}
+
+type failingRenderer struct{}
+
+func (failingRenderer) Render(io.Writer, string, any) error {
+	return errors.New("render exploded")
+}
+
+func TestViewRenderFailureRestoresHeadersAndErrors(t *testing.T) {
+	a := web.NewAdapter(web.WithRenderer(failingRenderer{}))
+	rec := httptest.NewRecorder()
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.View(loginPage{}), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 through the error handler", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want the pre-render header restored", ct)
 	}
 }
 
