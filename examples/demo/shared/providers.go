@@ -1,7 +1,6 @@
 package shared
 
 import (
-	"context"
 	"database/sql"
 	"log/slog"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/mail"
 	"github.com/gofabrik/fabrik/query"
-	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
 	_ "modernc.org/sqlite"
 )
@@ -108,26 +106,5 @@ func (c MailerConfig) smtp() *mail.SMTP {
 		Username: c.Username,
 		Password: c.Password,
 		TLSMode:  mail.TLSMode(c.TLSMode),
-	}
-}
-
-//fabrik:provider
-func NewRatelimitStore() (*ratelimit.MemoryStore, func()) {
-	store := ratelimit.NewMemoryStore()
-	ticker := time.NewTicker(time.Minute)
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				store.Sweep(context.Background(), time.Now())
-			case <-done:
-				return
-			}
-		}
-	}()
-	return store, func() {
-		ticker.Stop()
-		close(done)
 	}
 }
