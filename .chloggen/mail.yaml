@@ -1,0 +1,4 @@
+change_type: new_component
+component: mail
+note: Add template-rendered transactional email with attachments, pluggable transports, secure context-aware SMTP delivery, and logging and recording options.
+issues: [0]

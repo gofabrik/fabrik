@@ -89,6 +89,7 @@ together by the CLI:
 - [migrations](migrations/README.md) - forward-only SQL migrations for `database/sql`.
 - [query](query/README.md) - typed reads and struct-derived writes over `database/sql`.
 - [jobs](jobs/README.md) - background jobs.
+- [mail](mail/README.md) - transactional email with template-rendered bodies and pluggable transports.
 - [session](session/README.md) - typed HTTP sessions with pluggable stores and tokens.
 - [flash](flash/README.md) - one-shot messages stored in sessions.
 - [validation](validation/README.md) - code-based input validation with field-keyed errors.

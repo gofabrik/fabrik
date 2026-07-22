@@ -16,6 +16,7 @@ module-sets:
       - github.com/gofabrik/fabrik/httpserver
       - github.com/gofabrik/fabrik/jobs
       - github.com/gofabrik/fabrik/jobs/directive
+      - github.com/gofabrik/fabrik/mail
       - github.com/gofabrik/fabrik/migrations
       - github.com/gofabrik/fabrik/migrations/directive
       - github.com/gofabrik/fabrik/query

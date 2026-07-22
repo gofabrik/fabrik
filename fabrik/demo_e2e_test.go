@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -126,6 +127,10 @@ func TestDemoEndToEnd(t *testing.T) {
 	server := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
 	server.Dir = src
 	server.Env = env
+	// A shared buffer is safe because exec serializes writes to identical non-file writers.
+	var serverOut bytes.Buffer
+	server.Stdout = &serverOut
+	server.Stderr = &serverOut
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +194,11 @@ func TestDemoEndToEnd(t *testing.T) {
 	crossOriginFlow(t, port)
 	formsFlow(t, port)
 	gracefulShutdown(t, server)
+
+	logged := serverOut.String()
+	if !strings.Contains(logged, "mail: would send") || !strings.Contains(logged, "greetings@demo.example") || !strings.Contains(logged, "notifier@demo.example") {
+		t.Fatalf("server output missing the greeting notification mail:\n%s", logged)
+	}
 }
 
 func errorPagesFlow(t *testing.T, base string) {
