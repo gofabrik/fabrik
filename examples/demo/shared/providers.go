@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/jobs"
+	"github.com/gofabrik/fabrik/mail"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/session"
 	_ "modernc.org/sqlite"
@@ -83,5 +84,27 @@ func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
 	return jobs.RuntimeConfig{
 		Worker:       jobs.WorkerConfig{Concurrency: cfg.Concurrency, ShutdownTimeout: cfg.ShutdownTimeout.Duration()},
 		RunScheduler: true,
+	}
+}
+
+// Mailer is the app's delivery seam; mailer.kind selects the transport.
+//
+//fabrik:provider:select mailer.kind
+type Mailer = mail.Transport
+
+//fabrik:provider case=log
+func NewLogMailer() *mail.Log { return &mail.Log{} }
+
+//fabrik:provider case=smtp
+func NewSMTPMailer(cfg *MailerConfig) *mail.SMTP {
+	return cfg.smtp()
+}
+
+func (c MailerConfig) smtp() *mail.SMTP {
+	return &mail.SMTP{
+		Addr:     c.Addr,
+		Username: c.Username,
+		Password: c.Password,
+		TLSMode:  mail.TLSMode(c.TLSMode),
 	}
 }

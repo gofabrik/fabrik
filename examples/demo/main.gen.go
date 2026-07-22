@@ -240,17 +240,6 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 
-	// shared.Mailer, selected by mailer.kind
-	var mailTransport shared.Mailer
-	switch sharedMailerConfig.Kind {
-	case "log":
-		mailTransport = shared.NewLogMailer()
-	case "smtp":
-		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
-	default:
-		return nil, nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
-	}
-
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, nil, err
@@ -331,6 +320,20 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 
 	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
 	sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
+
+	// shared.Mailer, selected by mailer.kind
+	var mailTransport shared.Mailer
+	switch sharedMailerConfig.Kind {
+	case "log":
+		mailTransport = shared.NewLogMailer()
+	case "smtp":
+		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
+	default:
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
+	}
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -492,17 +495,6 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 
-	// shared.Mailer, selected by mailer.kind
-	var mailTransport shared.Mailer
-	switch sharedMailerConfig.Kind {
-	case "log":
-		mailTransport = shared.NewLogMailer()
-	case "smtp":
-		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
-	default:
-		return nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
-	}
-
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, err
@@ -582,6 +574,20 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	}
 
 	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
+	// shared.Mailer, selected by mailer.kind
+	var mailTransport shared.Mailer
+	switch sharedMailerConfig.Kind {
+	case "log":
+		mailTransport = shared.NewLogMailer()
+	case "smtp":
+		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
+	default:
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
+	}
 
 	r := router.New()
 	webDocs := &web.Docs{
