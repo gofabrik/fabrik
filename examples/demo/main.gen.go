@@ -235,6 +235,11 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+
 	// shared.Mailer, selected by mailer.kind
 	var mailTransport shared.Mailer
 	switch sharedMailerConfig.Kind {
@@ -245,6 +250,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	default:
 		return nil, nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
 	}
+
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, nil, err
@@ -264,6 +270,13 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		return nil, nil, nil, err
 	}
 	sharedJobsConfig := shared.NewJobsConfig()
+	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	if err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		if sharedSqlDBClose != nil {
@@ -272,13 +285,6 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		return nil, nil, nil, err
 	}
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		if sharedSqlDBClose != nil {
-			sharedSqlDBClose()
-		}
-		return nil, nil, nil, err
-	}
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -298,9 +304,6 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		}
 		return nil, nil, nil, fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind)
 	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
@@ -308,17 +311,14 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		Flash:   sharedFlash,
 		Jobs:    jobsManager,
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
 	webGreetings := &web.Greetings{
-		Session:   sharedSessionManager,
-		Flash:     sharedFlash,
-		Queries:   sharedQueryDB,
-		Mailer:    mailTransport,
-		MailerCfg: sharedMailerConfig,
-		Templates: appTemplates,
+		Session: sharedSessionManager,
+		Flash:   sharedFlash,
+		Queries: sharedQueryDB,
+		Jobs:    jobsManager,
 	}
 
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
@@ -349,14 +349,23 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
-	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
-	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
-	r.Method("GET", "/routes", webDocs.List)
 
 	// Jobs
+	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
 	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
+	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
+	}); err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -378,6 +387,12 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		}
 		return nil, nil, nil, err
 	}
+
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
+	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
+	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
+	r.Method("GET", "/routes", webDocs.List)
 
 	cleanup := func() {
 		if sharedSqlDBClose != nil {
@@ -472,6 +487,11 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+
 	// shared.Mailer, selected by mailer.kind
 	var mailTransport shared.Mailer
 	switch sharedMailerConfig.Kind {
@@ -482,6 +502,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	default:
 		return nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
 	}
+
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, err
@@ -501,6 +522,13 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		return nil, nil, err
 	}
 	sharedJobsConfig := shared.NewJobsConfig()
+	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	if err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		if sharedSqlDBClose != nil {
@@ -509,13 +537,6 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		return nil, nil, err
 	}
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		if sharedSqlDBClose != nil {
-			sharedSqlDBClose()
-		}
-		return nil, nil, err
-	}
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -535,9 +556,6 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		}
 		return nil, nil, fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind)
 	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
@@ -545,17 +563,14 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		Flash:   sharedFlash,
 		Jobs:    jobsManager,
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
 	webGreetings := &web.Greetings{
-		Session:   sharedSessionManager,
-		Flash:     sharedFlash,
-		Queries:   sharedQueryDB,
-		Mailer:    mailTransport,
-		MailerCfg: sharedMailerConfig,
-		Templates: appTemplates,
+		Session: sharedSessionManager,
+		Flash:   sharedFlash,
+		Queries: sharedQueryDB,
+		Jobs:    jobsManager,
 	}
 
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
@@ -585,14 +600,23 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
-	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
-	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
-	r.Method("GET", "/routes", webDocs.List)
 
 	// Jobs
+	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
 	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
+	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
+	}); err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -614,6 +638,12 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		}
 		return nil, nil, err
 	}
+
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
+	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
+	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
+	r.Method("GET", "/routes", webDocs.List)
 
 	cleanup := func() {
 		if sharedSqlDBClose != nil {

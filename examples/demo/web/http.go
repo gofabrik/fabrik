@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"demo/shared"
 	"errors"
 	"fmt"
@@ -12,11 +11,9 @@ import (
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/forms"
 	"github.com/gofabrik/fabrik/jobs"
-	"github.com/gofabrik/fabrik/mail"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
-	"github.com/gofabrik/fabrik/templates"
 	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
 )
@@ -122,12 +119,10 @@ type GreetForm struct {
 func (GreetForm) Template() string { return "web/greet" }
 
 type Greetings struct {
-	Session   *session.Manager[shared.Session]
-	Flash     *flash.Flash
-	Queries   *query.DB
-	Mailer    shared.Mailer
-	MailerCfg *shared.MailerConfig
-	Templates *templates.Set
+	Session *session.Manager[shared.Session]
+	Flash   *flash.Flash
+	Queries *query.DB
+	Jobs    *jobs.Manager
 }
 
 //fabrik:web GET /greet
@@ -157,24 +152,10 @@ func (h *Greetings) Update(req *web.Request) (web.Response, error) {
 	if err := h.Flash.Add(ctx, "success", "Greeting name updated."); err != nil {
 		return nil, err
 	}
-	h.notify(ctx, form.Data.Name)
+	if _, err := h.Jobs.Enqueue(ctx, shared.GreetingNotification{Name: form.Data.Name}); err != nil {
+		return nil, err
+	}
 	return web.Redirect("/"), nil
-}
-
-// notify logs delivery failures because notifications must not fail the request.
-func (h *Greetings) notify(ctx context.Context, name string) {
-	msg := mail.Message{
-		From:    h.MailerCfg.From,
-		To:      []string{h.MailerCfg.To},
-		Subject: "New greeting",
-	}
-	if err := msg.Render(h.Templates, "mail/greeting.txt", "mail/greeting", map[string]any{"Name": name}); err != nil {
-		slog.ErrorContext(ctx, "greeting mail render failed", "error", err)
-		return
-	}
-	if err := h.Mailer.Send(ctx, &msg); err != nil {
-		slog.ErrorContext(ctx, "greeting mail send failed", "error", err)
-	}
 }
 
 // Docs lists the registered routes.
