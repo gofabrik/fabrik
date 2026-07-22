@@ -1,12 +1,17 @@
 # Demo configuration. Environment overrides: DEMO_HTTP_ADDR,
 # DEMO_LOG_LEVEL, DEMO_GREETER_KIND, DEMO_DATABASE_PATH,
-# DEMO_CROSSORIGIN_TRUSTED_ORIGINS.
+# DEMO_CROSSORIGIN_TRUSTED_ORIGINS, and DEMO_MAILER_*.
 http:
   addr: ":8080"
 log:
   level: info
 greeter:
   kind: goodbye
+
+mailer:
+  kind: log
+  from: notifier@demo.example
+  to: greetings@demo.example
 
 database:
   path: demo.db

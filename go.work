@@ -17,6 +17,7 @@ use (
 	./jobs
 	./jobs/dbtest
 	./jobs/directive
+	./mail
 	./migrations
 	./migrations/dbtest
 	./migrations/directive
@@ -49,6 +50,7 @@ replace (
 	github.com/gofabrik/fabrik/httpserver v0.1.0 => ./httpserver
 	github.com/gofabrik/fabrik/jobs v0.1.0 => ./jobs
 	github.com/gofabrik/fabrik/jobs/directive v0.1.0 => ./jobs/directive
+	github.com/gofabrik/fabrik/mail v0.1.0 => ./mail
 	github.com/gofabrik/fabrik/migrations v0.1.0 => ./migrations
 	github.com/gofabrik/fabrik/migrations/directive v0.1.0 => ./migrations/directive
 	github.com/gofabrik/fabrik/query v0.1.0 => ./query

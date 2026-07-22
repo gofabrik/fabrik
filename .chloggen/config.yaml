@@ -12,6 +12,7 @@ components:
   - forms
   - gen
   - jobs
+  - mail
   - migrations
   - query
   - router

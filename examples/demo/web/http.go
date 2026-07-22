@@ -122,6 +122,7 @@ type Greetings struct {
 	Session *session.Manager[shared.Session]
 	Flash   *flash.Flash
 	Queries *query.DB
+	Jobs    *jobs.Manager
 }
 
 //fabrik:web GET /greet
@@ -149,6 +150,9 @@ func (h *Greetings) Update(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 	if err := h.Flash.Add(ctx, "success", "Greeting name updated."); err != nil {
+		return nil, err
+	}
+	if _, err := h.Jobs.Enqueue(ctx, shared.GreetingNotification{Name: form.Data.Name}); err != nil {
 		return nil, err
 	}
 	return web.Redirect("/"), nil

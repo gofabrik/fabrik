@@ -106,7 +106,7 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("http"),
 	)
 	if err != nil {
@@ -116,7 +116,7 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("database"),
 	)
 	if err != nil {
@@ -126,7 +126,7 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 	sharedLogConfig, err := config.Load[shared.LogConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("log"),
 	)
 	if err != nil {
@@ -145,7 +145,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("http"),
 	)
 	if err != nil {
@@ -155,7 +155,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	sharedJobsConfig2, err := config.Load[shared.JobsConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("jobs"),
 	)
 	if err != nil {
@@ -165,7 +165,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("database"),
 	)
 	if err != nil {
@@ -175,7 +175,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	sharedLogConfig, err := config.Load[shared.LogConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("log"),
 	)
 	if err != nil {
@@ -185,8 +185,18 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("crossorigin"),
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	sharedMailerConfig, err := config.Load[shared.MailerConfig](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
+		config.Section("mailer"),
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -195,7 +205,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	webGreeterConfig, err := config.Load[web.GreeterConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("greeter"),
 	)
 	if err != nil {
@@ -249,6 +259,13 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		return nil, nil, nil, err
 	}
 	sharedJobsConfig := shared.NewJobsConfig()
+	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	if err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		if sharedSqlDBClose != nil {
@@ -257,13 +274,6 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		return nil, nil, nil, err
 	}
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		if sharedSqlDBClose != nil {
-			sharedSqlDBClose()
-		}
-		return nil, nil, nil, err
-	}
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -297,6 +307,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
 		Queries: sharedQueryDB,
+		Jobs:    jobsManager,
 	}
 
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
@@ -309,6 +320,20 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 
 	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
 	sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
+
+	// shared.Mailer, selected by mailer.kind
+	var mailTransport shared.Mailer
+	switch sharedMailerConfig.Kind {
+	case "log":
+		mailTransport = shared.NewLogMailer()
+	case "smtp":
+		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
+	default:
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
+	}
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -327,14 +352,23 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
-	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
-	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
-	r.Method("GET", "/routes", webDocs.List)
 
 	// Jobs
+	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
 	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
+	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
+	}); err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -357,6 +391,12 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		return nil, nil, nil, err
 	}
 
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
+	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
+	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
+	r.Method("GET", "/routes", webDocs.List)
+
 	cleanup := func() {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -370,7 +410,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("http"),
 	)
 	if err != nil {
@@ -380,7 +420,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("database"),
 	)
 	if err != nil {
@@ -390,7 +430,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	sharedLogConfig, err := config.Load[shared.LogConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("log"),
 	)
 	if err != nil {
@@ -400,8 +440,18 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("crossorigin"),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sharedMailerConfig, err := config.Load[shared.MailerConfig](
+		config.FileOptional("config.yaml"),
+		config.FileOptional("config.local.yaml"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
+		config.Section("mailer"),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -410,7 +460,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	webGreeterConfig, err := config.Load[web.GreeterConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("greeter"),
 	)
 	if err != nil {
@@ -464,6 +514,13 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		return nil, nil, err
 	}
 	sharedJobsConfig := shared.NewJobsConfig()
+	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	if err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
 	if err != nil {
 		if sharedSqlDBClose != nil {
@@ -472,13 +529,6 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		return nil, nil, err
 	}
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		if sharedSqlDBClose != nil {
-			sharedSqlDBClose()
-		}
-		return nil, nil, err
-	}
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -512,6 +562,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
 		Queries: sharedQueryDB,
+		Jobs:    jobsManager,
 	}
 
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
@@ -523,6 +574,20 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	}
 
 	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
+	// shared.Mailer, selected by mailer.kind
+	var mailTransport shared.Mailer
+	switch sharedMailerConfig.Kind {
+	case "log":
+		mailTransport = shared.NewLogMailer()
+	case "smtp":
+		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
+	default:
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind)
+	}
 
 	r := router.New()
 	webDocs := &web.Docs{
@@ -541,14 +606,23 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	r.Handle("/assets/", assetCompiled.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
-	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
-	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
-	r.Method("GET", "/routes", webDocs.List)
 
 	// Jobs
+	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
 	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
+	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
+	}); err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -571,6 +645,12 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		return nil, nil, err
 	}
 
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
+	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
+	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update))
+	r.Method("GET", "/routes", webDocs.List)
+
 	cleanup := func() {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -584,7 +664,7 @@ func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func(), err
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("database"),
 	)
 	if err != nil {
@@ -594,7 +674,7 @@ func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func(), err
 	sharedLogConfig, err := config.Load[shared.LogConfig](
 		config.FileOptional("config.yaml"),
 		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log"),
+		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer"),
 		config.Section("log"),
 	)
 	if err != nil {
