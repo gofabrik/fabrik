@@ -193,11 +193,74 @@ func TestDemoEndToEnd(t *testing.T) {
 	sessionFlow(t, port)
 	crossOriginFlow(t, port)
 	formsFlow(t, port)
+	rateLimitFlow(t, base)
 	gracefulShutdown(t, server)
 
 	logged := serverOut.String()
 	if !strings.Contains(logged, "mail: would send") || !strings.Contains(logged, "greetings@demo.example") || !strings.Contains(logged, "notifier@demo.example") {
 		t.Fatalf("server output missing the greeting notification mail:\n%s", logged)
+	}
+}
+
+func rateLimitFlow(t *testing.T, base string) {
+	t.Helper()
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	post := func() *http.Response {
+		resp, err := noRedirect.Post(base+"/greet", "application/x-www-form-urlencoded", strings.NewReader("name=limit"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		//nolint:errcheck // response body close after reading is cleanup only
+		defer resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+		io.Copy(io.Discard, resp.Body)
+		return resp
+	}
+	var last *http.Response
+	successes := 0
+	got429 := false
+	for i := 0; i < 20; i++ {
+		last = post()
+		if last.StatusCode == http.StatusTooManyRequests {
+			got429 = true
+			break
+		}
+		if last.StatusCode != http.StatusSeeOther {
+			t.Fatalf("post %d: status %d, want 303 or the terminating 429", i+1, last.StatusCode)
+		}
+		successes++
+	}
+	if !got429 {
+		t.Fatalf("greeting form never rate-limited after 20 rapid posts (last status %d)", last.StatusCode)
+	}
+	if successes == 0 {
+		t.Fatal("no within-limit post succeeded before the denial")
+	}
+	for _, header := range []string{"Retry-After", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
+		if last.Header.Get(header) == "" {
+			t.Fatalf("429 missing %s: %v", header, last.Header)
+		}
+	}
+	if last.Header.Get("RateLimit-Remaining") != "0" {
+		t.Fatalf("RateLimit-Remaining = %q on denial", last.Header.Get("RateLimit-Remaining"))
+	}
+	retry, err := strconv.Atoi(last.Header.Get("Retry-After"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Duration(retry)*time.Second + 200*time.Millisecond)
+	if resp := post(); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("post after Retry-After = %d, want success", resp.StatusCode)
+	}
+	resp, err := http.Get(base + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	//nolint:errcheck // response body close after reading is cleanup only
+	defer resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("RateLimit-Limit") != "" {
+		t.Fatalf("GET / status=%d headers=%v; must be unaffected", resp.StatusCode, resp.Header)
 	}
 }
 

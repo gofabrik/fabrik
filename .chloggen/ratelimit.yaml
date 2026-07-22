@@ -1,0 +1,4 @@
+change_type: new_component
+component: ratelimit
+note: Add a keyed GCRA rate limiter with reservations, memory and SQLite stores, and HTTP middleware.
+issues: [0]
