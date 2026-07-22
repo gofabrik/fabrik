@@ -15,6 +15,7 @@ components:
   - mail
   - migrations
   - query
+  - ratelimit
   - router
   - session
   - templates

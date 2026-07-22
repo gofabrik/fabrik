@@ -3,6 +3,7 @@ package shared
 import (
 	"net/http"
 
+	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/router/middleware"
 	"github.com/gofabrik/fabrik/session"
 )
@@ -29,4 +30,9 @@ func NoStore(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		next.ServeHTTP(w, r)
 	})
+}
+
+//fabrik:http:middleware name=ratelimit
+func RateLimited(l *ratelimit.Limiter) func(http.Handler) http.Handler {
+	return ratelimit.Middleware(l)
 }

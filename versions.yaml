@@ -20,6 +20,7 @@ module-sets:
       - github.com/gofabrik/fabrik/migrations
       - github.com/gofabrik/fabrik/migrations/directive
       - github.com/gofabrik/fabrik/query
+      - github.com/gofabrik/fabrik/ratelimit
       - github.com/gofabrik/fabrik/router
       - github.com/gofabrik/fabrik/router/directive
       - github.com/gofabrik/fabrik/session
@@ -34,6 +35,7 @@ excluded-modules:
   - github.com/gofabrik/fabrik/jobs/dbtest
   - github.com/gofabrik/fabrik/migrations/dbtest
   - github.com/gofabrik/fabrik/query/dbtest
+  - github.com/gofabrik/fabrik/ratelimit/dbtest
   - github.com/gofabrik/fabrik/router/bench
   - github.com/gofabrik/fabrik/session/dbtest
   # Release tools are pinned separately and never tagged.

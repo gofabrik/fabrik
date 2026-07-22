@@ -23,6 +23,8 @@ use (
 	./migrations/directive
 	./query
 	./query/dbtest
+	./ratelimit
+	./ratelimit/dbtest
 	./router
 	./router/bench
 	./router/directive
@@ -54,6 +56,7 @@ replace (
 	github.com/gofabrik/fabrik/migrations v0.1.0 => ./migrations
 	github.com/gofabrik/fabrik/migrations/directive v0.1.0 => ./migrations/directive
 	github.com/gofabrik/fabrik/query v0.1.0 => ./query
+	github.com/gofabrik/fabrik/ratelimit v0.1.0 => ./ratelimit
 	github.com/gofabrik/fabrik/router v0.1.0 => ./router
 	github.com/gofabrik/fabrik/router/directive v0.1.0 => ./router/directive
 	github.com/gofabrik/fabrik/session v0.1.0 => ./session

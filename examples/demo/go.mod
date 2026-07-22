@@ -12,6 +12,7 @@ require (
 	github.com/gofabrik/fabrik/mail v0.1.0
 	github.com/gofabrik/fabrik/migrations v0.1.0
 	github.com/gofabrik/fabrik/query v0.1.0
+	github.com/gofabrik/fabrik/ratelimit v0.1.0
 	github.com/gofabrik/fabrik/router v0.1.0
 	github.com/gofabrik/fabrik/session v0.1.0
 	github.com/gofabrik/fabrik/templates v0.1.0
