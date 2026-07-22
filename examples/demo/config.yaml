@@ -1,6 +1,6 @@
 # Demo configuration. Environment overrides: DEMO_HTTP_ADDR,
 # DEMO_LOG_LEVEL, DEMO_GREETER_KIND, DEMO_DATABASE_PATH,
-# DEMO_CROSSORIGIN_TRUSTED_ORIGINS, DEMO_MAILER_*, and DEMO_RATELIMIT_*.
+# DEMO_CROSSORIGIN_TRUSTED_ORIGINS, DEMO_MAILER_*, and DEMO_GREET_RATELIMIT_*.
 http:
   addr: ":8080"
 log:
@@ -19,7 +19,7 @@ database:
 crossorigin:
   trusted_origins: []
 
-ratelimit:
+greet_ratelimit:
   rate: 60
   period: 1m
   burst: 12

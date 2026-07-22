@@ -34,8 +34,8 @@ together:
 r, err := lim.Reserve(ctx, key)
 ```
 
-Schedule the absolute `ReadyAt` value directly, for example with
-`jobs.At(r.ReadyAt)`, instead of recomputing a delay on another clock.
+Schedule the absolute `ReadyAt` value directly instead of recomputing a
+delay on another clock.
 Reservations beyond the default 24-hour horizon return an error without
 consuming capacity; `WithReservationHorizon` changes the horizon.
 `lim.Wait(ctx, r)` provides cancellable in-process pacing.
@@ -74,20 +74,3 @@ func RateLimited(l *ratelimit.Limiter) func(http.Handler) http.Handler {
 	return ratelimit.Middleware(l)
 }
 ```
-
-## Job integration
-
-For producer-side shaping, call `Reserve` before enqueue and schedule
-with `jobs.At(r.ReadyAt)`. The reservation remains consumed if enqueue
-fails.
-
-For handler-side enforcement, use `Allow` and retry with backoff, or use
-`Reserve` with `Wait` for short, exact pacing under the job's heartbeat.
-
-Producer reservations and handler admissions double-charge the same
-namespace, so use distinct namespaces when combining them:
-
-  ```go
-  shaper, _ := ratelimit.New(limit, store, ratelimit.WithNamespace("mail-shape"))
-  enforcer, _ := ratelimit.New(limit, store, ratelimit.WithNamespace("mail-send"))
-  ```

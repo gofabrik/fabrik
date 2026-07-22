@@ -32,7 +32,11 @@ func NoStore(next http.Handler) http.Handler {
 	})
 }
 
-//fabrik:http:middleware name=ratelimit
-func RateLimited(l *ratelimit.Limiter) func(http.Handler) http.Handler {
-	return ratelimit.Middleware(l)
+//fabrik:http:middleware name=greetlimit
+func GreetRateLimited(cfg *GreetRatelimitConfig, store *ratelimit.MemoryStore) (func(http.Handler) http.Handler, error) {
+	l, err := ratelimit.New(ratelimit.Limit{Rate: cfg.Rate, Period: cfg.Period.Duration(), Burst: cfg.Burst}, store)
+	if err != nil {
+		return nil, err
+	}
+	return ratelimit.Middleware(l), nil
 }

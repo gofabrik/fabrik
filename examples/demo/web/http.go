@@ -130,7 +130,7 @@ func (h *Greetings) Show(req *web.Request) (web.Response, error) {
 	return web.View(GreetForm{Form: &forms.Form[GreetInput]{}}), nil
 }
 
-//fabrik:web POST /greet middleware=ratelimit
+//fabrik:web POST /greet middleware=greetlimit
 func (h *Greetings) Update(req *web.Request) (web.Response, error) {
 	form, err := forms.Bind[GreetInput](req.HTTP())
 	if err != nil {

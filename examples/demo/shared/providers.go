@@ -131,8 +131,3 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func()) {
 		close(done)
 	}
 }
-
-//fabrik:provider
-func NewRateLimiter(cfg *RatelimitConfig, store *ratelimit.MemoryStore) (*ratelimit.Limiter, error) {
-	return ratelimit.New(cfg.limit(), store)
-}

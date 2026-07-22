@@ -61,17 +61,13 @@ func (c MailerConfig) Validate() error {
 	return nil
 }
 
-//fabrik:config ratelimit
-type RatelimitConfig struct {
-	Rate   int             `yaml:"rate" env:"DEMO_RATELIMIT_RATE" default:"60"`
-	Period config.Duration `yaml:"period" env:"DEMO_RATELIMIT_PERIOD" default:"1m"`
-	Burst  int             `yaml:"burst" env:"DEMO_RATELIMIT_BURST" default:"12"`
+//fabrik:config greet_ratelimit
+type GreetRatelimitConfig struct {
+	Rate   int             `yaml:"rate" env:"DEMO_GREET_RATELIMIT_RATE" default:"60"`
+	Period config.Duration `yaml:"period" env:"DEMO_GREET_RATELIMIT_PERIOD" default:"1m"`
+	Burst  int             `yaml:"burst" env:"DEMO_GREET_RATELIMIT_BURST" default:"12"`
 }
 
-func (c RatelimitConfig) Validate() error {
-	return c.limit().Validate()
-}
-
-func (c RatelimitConfig) limit() ratelimit.Limit {
-	return ratelimit.Limit{Rate: c.Rate, Period: c.Period.Duration(), Burst: c.Burst}
+func (c GreetRatelimitConfig) Validate() error {
+	return ratelimit.Limit{Rate: c.Rate, Period: c.Period.Duration(), Burst: c.Burst}.Validate()
 }
