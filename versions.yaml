@@ -4,6 +4,7 @@ module-sets:
     modules:
       - github.com/gofabrik/fabrik/assetmapper
       - github.com/gofabrik/fabrik/assetmapper/directive
+      - github.com/gofabrik/fabrik/cache
       - github.com/gofabrik/fabrik/cli
       - github.com/gofabrik/fabrik/cli/directive
       - github.com/gofabrik/fabrik/config
@@ -33,6 +34,7 @@ module-sets:
 excluded-modules:
   # Test, example, and benchmark modules are built only in the workspace.
   - demo
+  - github.com/gofabrik/fabrik/cache/dbtest
   - github.com/gofabrik/fabrik/jobs/dbtest
   - github.com/gofabrik/fabrik/migrations/dbtest
   - github.com/gofabrik/fabrik/query/dbtest

@@ -1,5 +1,7 @@
 package web
 
+import "github.com/gofabrik/fabrik/cache"
+
 // Greeter builds greeting messages; greeter.kind decides which variant is
 // wired at startup.
 //
@@ -21,3 +23,8 @@ func (*GoodbyeGreeter) Greet(name string) string { return "Goodbye, " + name + "
 
 //fabrik:provider case=goodbye
 func NewGoodbyeGreeter() *GoodbyeGreeter { return &GoodbyeGreeter{} }
+
+//fabrik:provider
+func NewGreetingCache(store cache.Store) (*cache.Cache[[]Greeting], error) {
+	return cache.New[[]Greeting](store, cache.WithNamespace("greetings"))
+}

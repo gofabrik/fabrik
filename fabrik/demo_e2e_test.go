@@ -38,6 +38,20 @@ func TestDemoEndToEnd(t *testing.T) {
 	tmp := t.TempDir()
 	// Local replacements make the copied demo use this checkout's modules.
 	src := copyDemoWithLocalReplaces(t, demoDir, repoRoot)
+	poison := filepath.Join(src, "shared", "migrations", "0006_cache_poison.sql")
+	// RAISE(FAIL) preserves the disarming update, so only the first
+	// sentinel deletion fails.
+	trigger := `CREATE TABLE IF NOT EXISTS cache_poison_armed (armed INTEGER NOT NULL);
+INSERT INTO cache_poison_armed (armed) VALUES (1);
+CREATE TRIGGER IF NOT EXISTS cache_poison BEFORE DELETE ON cache_entries
+WHEN CAST(OLD.value AS TEXT) LIKE '%poison-sentinel%' AND (SELECT armed FROM cache_poison_armed) = 1
+BEGIN
+    UPDATE cache_poison_armed SET armed = 0;
+    SELECT RAISE(FAIL, 'poisoned cache row');
+END;`
+	if err := os.WriteFile(poison, []byte(trigger), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	bin := filepath.Join(tmp, "demo-bin")
 	build := exec.Command("go", "build", "-o", bin, ".") // #nosec G204 -- launches the go toolchain with controlled args
 	build.Dir = src
@@ -196,12 +210,26 @@ func TestDemoEndToEnd(t *testing.T) {
 	crossOriginFlow(t, port)
 	formsFlow(t, port)
 	filesFlow(t, base)
+	// Invalidation failure is logged without failing the committed write.
+	postGreet(t, c, base, "poison-sentinel")
+	if _, body := visit(); !strings.Contains(body, "poison-sentinel") {
+		t.Fatalf("sentinel greeting not cached:\n%s", body)
+	}
+	postGreet(t, c, base, "casualty")
+
 	rateLimitFlow(t, base)
 	gracefulShutdown(t, server)
 
 	logged := serverOut.String()
 	if !strings.Contains(logged, "mail: would send") || !strings.Contains(logged, "greetings@demo.example") || !strings.Contains(logged, "notifier@demo.example") {
 		t.Fatalf("server output missing the greeting notification mail:\n%s", logged)
+	}
+	// The poisoned deletion is the only expected cache failure.
+	if strings.Contains(logged, "cache fault ignored") {
+		t.Fatalf("cache operations degraded to fail-open:\n%s", logged)
+	}
+	if got := strings.Count(logged, "greeting cache delete failed"); got != 1 {
+		t.Fatalf("invalidation failures logged %d times, want exactly 1 (the poisoned delete):\n%s", got, logged)
 	}
 }
 

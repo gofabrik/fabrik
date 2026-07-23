@@ -91,6 +91,7 @@ together by the CLI:
 - [jobs](jobs/README.md) - background jobs.
 - [mail](mail/README.md) - transactional email with template-rendered bodies and pluggable transports.
 - [ratelimit](ratelimit/README.md) - keyed rate limiting with exact retry timing and pluggable stores.
+- [cache](cache/README.md) - cache computed values by key for a chosen duration.
 - [storage](storage/README.md) - blob storage by key over pluggable backends (memory, local directory, S3-compatible).
 - [session](session/README.md) - typed HTTP sessions with pluggable stores and tokens.
 - [flash](flash/README.md) - one-shot messages stored in sessions.

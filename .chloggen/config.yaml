@@ -6,6 +6,7 @@ default_change_logs:
 components:
   - fabrik
   - assetmapper
+  - cache
   - config
   - diag
   - flash
