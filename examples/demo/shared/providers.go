@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gofabrik/fabrik/flash"
@@ -13,6 +14,7 @@ import (
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
+	"github.com/gofabrik/fabrik/storage"
 	_ "modernc.org/sqlite"
 )
 
@@ -130,4 +132,16 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func()) {
 		ticker.Stop()
 		close(done)
 	}
+}
+
+//fabrik:provider
+func NewStorage(cfg *StorageConfig) (storage.Storage, func(), error) {
+	if err := os.MkdirAll(cfg.Path, 0o755); err != nil {
+		return nil, nil, err
+	}
+	local, err := storage.NewLocal(cfg.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return local, func() { local.Close() }, nil
 }

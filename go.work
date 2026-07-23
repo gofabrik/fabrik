@@ -30,6 +30,7 @@ use (
 	./router/directive
 	./session
 	./session/dbtest
+	./storage
 	./templates
 	./templates/directive
 	./validation
@@ -60,6 +61,7 @@ replace (
 	github.com/gofabrik/fabrik/router v0.1.0 => ./router
 	github.com/gofabrik/fabrik/router/directive v0.1.0 => ./router/directive
 	github.com/gofabrik/fabrik/session v0.1.0 => ./session
+	github.com/gofabrik/fabrik/storage v0.1.0 => ./storage
 	github.com/gofabrik/fabrik/templates v0.1.0 => ./templates
 	github.com/gofabrik/fabrik/templates/directive v0.1.0 => ./templates/directive
 	github.com/gofabrik/fabrik/validation v0.1.0 => ./validation

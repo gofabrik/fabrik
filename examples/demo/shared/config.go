@@ -59,3 +59,15 @@ func (c MailerConfig) Validate() error {
 	}
 	return nil
 }
+
+//fabrik:config storage
+type StorageConfig struct {
+	Path string `yaml:"path" env:"DEMO_STORAGE_PATH" default:"demo-files"`
+}
+
+func (c StorageConfig) Validate() error {
+	if c.Path == "" {
+		return errors.New("storage.path is required")
+	}
+	return nil
+}
