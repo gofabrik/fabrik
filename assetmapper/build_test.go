@@ -370,3 +370,90 @@ func TestBuildStreamsLargePassthrough(t *testing.T) {
 		t.Fatalf("Content-Length = %q, want %d", got, len(big))
 	}
 }
+
+func TestCompiled_RenderImportmap(t *testing.T) {
+	src := fstest.MapFS{"app.js": {Data: []byte(`console.log("a");`)}}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	compiled, err := assetmapper.Build([]assetmapper.Root{{FS: src}}, im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts.InlineScripts) != 2 || !strings.Contains(parts.HTML, `type="importmap"`) {
+		t.Fatalf("RenderImportmap = %d scripts:\n%s", len(parts.InlineScripts), parts.HTML)
+	}
+	fn := compiled.FuncMap()["importmap"].(func(...string) (template.HTML, error))
+	helperHTML, err := fn("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(helperHTML) != parts.HTML {
+		t.Fatal("FuncMap helper and RenderImportmap diverge")
+	}
+}
+
+func TestBuild_SnapshotsImportmap(t *testing.T) {
+	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	compiled, err := assetmapper.Build([]assetmapper.Root{{FS: src}}, im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im.Entries["evil"] = assetmapper.ImportmapEntry{Version: "1.0.0"}
+	delete(im.Entries, "app")
+	after, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.HTML != after.HTML {
+		t.Fatal("source-importmap mutation changed RenderImportmap")
+	}
+	if len(before.InlineScripts) != len(after.InlineScripts) {
+		t.Fatal("source-importmap mutation changed the inline script count")
+	}
+	for i := range before.InlineScripts {
+		if before.InlineScripts[i] != after.InlineScripts[i] {
+			t.Fatalf("source-importmap mutation changed inline script %d (the hash material)", i)
+		}
+	}
+	fn := compiled.FuncMap()["importmap"].(func(...string) (template.HTML, error))
+	helperHTML, err := fn("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(helperHTML) != before.HTML {
+		t.Fatal("source-importmap mutation changed FuncMap rendering")
+	}
+}
+
+func TestBuild_FreezesPreloadGraph(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js": {Data: []byte(`import "./dep.js";`)},
+		"dep.js": {Data: []byte("x")},
+		"new.js": {Data: []byte("y")},
+	}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	compiled, err := assetmapper.Build([]assetmapper.Root{{FS: src}}, im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first render uses the source graph captured by Build.
+	src["app.js"] = &fstest.MapFile{Data: []byte(`import "./new.js";`)}
+	parts, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(parts.HTML, "dep") || strings.Contains(parts.HTML, "new") {
+		t.Fatalf("preload graph followed the mutated source:\n%s", parts.HTML)
+	}
+}

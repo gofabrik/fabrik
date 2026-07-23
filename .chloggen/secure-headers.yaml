@@ -1,0 +1,4 @@
+change_type: enhancement
+component: router
+note: Add security response headers middleware with strict Content-Security-Policy support.
+issues: [0]

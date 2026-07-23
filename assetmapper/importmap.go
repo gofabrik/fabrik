@@ -32,6 +32,9 @@ type Importmap struct {
 
 	// preloadCache is used only in prod mode, where source files do not change at runtime.
 	preloadCache sync.Map // map[preloadCacheKey]preloadResult
+
+	// frozenRefs prevents preload walks from following post-Build source changes.
+	frozenRefs map[string][]ref
 }
 
 // preloadCacheKey identifies one cached preload graph result.
@@ -132,6 +135,12 @@ type RenderOptions struct {
 	Nonce string
 }
 
+// Rendered contains importmap HTML and its inline script bodies in emission order.
+type Rendered struct {
+	HTML          string
+	InlineScripts []string
+}
+
 // Render renders importmap, preload, stylesheet, and entrypoint tags.
 func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 	return im.RenderWithOptions(m, RenderOptions{Entrypoints: entrypoints})
@@ -157,11 +166,22 @@ func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 //
 // Use [FuncMap] for html/template helpers that return [template.HTML].
 func (im *Importmap) RenderWithOptions(m *Mapper, opts RenderOptions) (string, error) {
+	r, err := im.renderParts("assetmapper.Importmap.Render", m, opts)
+	return r.HTML, err
+}
+
+// RenderParts returns the rendered importmap and inline script bodies, whose
+// hashes remain valid only while the importmap and assets remain unchanged.
+func (im *Importmap) RenderParts(m *Mapper, opts RenderOptions) (Rendered, error) {
+	return im.renderParts("assetmapper.Importmap.RenderParts", m, opts)
+}
+
+func (im *Importmap) renderParts(op string, m *Mapper, opts RenderOptions) (Rendered, error) {
 	if m == nil {
-		return "", fmt.Errorf("assetmapper.Importmap.Render: nil Mapper")
+		return Rendered{}, fmt.Errorf("%s: nil Mapper", op)
 	}
 	if err := im.validateEntrypoints(opts.Entrypoints); err != nil {
-		return "", fmt.Errorf("assetmapper.Importmap.Render: %w", err)
+		return Rendered{}, fmt.Errorf("%s: %w", op, err)
 	}
 
 	keys := make([]string, 0, len(im.Entries))
@@ -174,7 +194,7 @@ func (im *Importmap) RenderWithOptions(m *Mapper, opts RenderOptions) (string, e
 	for _, k := range keys {
 		url, err := im.resolveEntry(m, k, im.Entries[k])
 		if err != nil {
-			return "", fmt.Errorf("assetmapper.Importmap.Render: resolve %q: %w", k, err)
+			return Rendered{}, fmt.Errorf("%s: resolve %q: %w", op, k, err)
 		}
 		resolved[k] = url
 	}
@@ -182,26 +202,32 @@ func (im *Importmap) RenderWithOptions(m *Mapper, opts RenderOptions) (string, e
 	nonce := nonceAttr(opts.Nonce)
 
 	var out strings.Builder
+	var inline []string
 	// json.Marshal escapes < > & by default, so embedding inside a
 	// <script> tag is safe even for URLs that include those chars.
 	out.WriteString(`<script type="importmap"`)
 	out.WriteString(nonce)
-	out.WriteString(`>{"imports":{`)
+	out.WriteString(">")
+	var mapBody strings.Builder
+	mapBody.WriteString(`{"imports":{`)
 	for i, k := range keys {
 		if i > 0 {
-			out.WriteByte(',')
+			mapBody.WriteByte(',')
 		}
 		kb, _ := json.Marshal(k)
 		vb, _ := json.Marshal(resolved[k])
-		out.Write(kb)
-		out.WriteByte(':')
-		out.Write(vb)
+		mapBody.Write(kb)
+		mapBody.WriteByte(':')
+		mapBody.Write(vb)
 	}
-	out.WriteString("}}</script>")
+	mapBody.WriteString("}}")
+	inline = append(inline, mapBody.String())
+	out.WriteString(mapBody.String())
+	out.WriteString("</script>")
 
 	preloads, err := im.preloadGraph(m, opts.Entrypoints)
 	if err != nil {
-		return "", fmt.Errorf("assetmapper.Importmap.Render: build preload graph: %w", err)
+		return Rendered{}, fmt.Errorf("%s: build preload graph: %w", op, err)
 	}
 	for _, url := range preloads.JSURLs {
 		out.WriteString("\n")
@@ -234,13 +260,56 @@ func (im *Importmap) RenderWithOptions(m *Mapper, opts RenderOptions) (string, e
 		default:
 			out.WriteString(`<script type="module"`)
 			out.WriteString(nonce)
-			out.WriteString(">import ")
+			out.WriteString(">")
 			nb, _ := json.Marshal(name)
-			out.Write(nb)
-			out.WriteString(";</script>")
+			body := "import " + string(nb) + ";"
+			inline = append(inline, body)
+			out.WriteString(body)
+			out.WriteString("</script>")
 		}
 	}
-	return out.String(), nil
+	return Rendered{HTML: out.String(), InlineScripts: inline}, nil
+}
+
+// readRefs treats missing or unreadable files as having no references.
+func (im *Importmap) readRefs(m *Mapper, logical string) []ref {
+	root, sub, err := m.resolveFile(logical)
+	if err != nil {
+		return nil
+	}
+	content, err := fs.ReadFile(root.FS, sub)
+	if err != nil {
+		return nil
+	}
+	return extractRefs(logical, content, kindJS)
+}
+
+func (im *Importmap) freezeRefs(m *Mapper) {
+	im.frozenRefs = map[string][]ref{}
+	seen := map[string]bool{}
+	var visit func(logical string)
+	visit = func(logical string) {
+		if logical == "" || seen[logical] || kindOf(logical) != kindJS {
+			return
+		}
+		seen[logical] = true
+		refs := im.readRefs(m, logical)
+		im.frozenRefs[logical] = refs
+		for _, r := range refs {
+			if r.resolved != "" {
+				visit(r.resolved)
+				continue
+			}
+			if entry, ok := im.Entries[r.spec]; ok {
+				visit(logicalForEntry(r.spec, entry))
+			}
+		}
+	}
+	for name, entry := range im.Entries {
+		if entry.Entrypoint {
+			visit(logicalForEntry(name, entry))
+		}
+	}
 }
 
 // ModulePreloadLinks renders JS modulepreload tags.
@@ -356,17 +425,13 @@ func (im *Importmap) computePreloadGraph(m *Mapper, entrypoints []string) (prelo
 
 		js = append(js, url)
 
-		// Best-effort source read for transitive deps.
-		root, sub, err := m.resolveFile(logical)
-		if err != nil {
-			return nil
+		var refs []ref
+		if im.frozenRefs != nil {
+			refs = im.frozenRefs[logical]
+		} else {
+			refs = im.readRefs(m, logical)
 		}
-		content, err := fs.ReadFile(root.FS, sub)
-		if err != nil {
-			return nil
-		}
-
-		for _, r := range extractRefs(logical, content, kindJS) {
+		for _, r := range refs {
 			if r.resolved != "" {
 				if err := visit(r.resolved); err != nil {
 					return err

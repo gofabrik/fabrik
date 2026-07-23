@@ -400,6 +400,25 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
+
+	secureHeadersMiddlewareMW, err := shared.SecureHeadersMiddleware(assetCompiled)
+	if err != nil {
+		if sharedStorageClose != nil {
+			sharedStorageClose()
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
+	r.Use(secureHeadersMiddlewareMW)
+
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
@@ -785,6 +804,25 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
+
+	secureHeadersMiddlewareMW, err := shared.SecureHeadersMiddleware(assetCompiled)
+	if err != nil {
+		if sharedStorageClose != nil {
+			sharedStorageClose()
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
+	r.Use(secureHeadersMiddlewareMW)
+
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)

@@ -45,7 +45,8 @@ func Check(roots []Root, im *Importmap, opts ...BuildOption) error {
 
 // Compiled is the in-memory result of [Build].
 //
-// A Compiled is immutable after Build and safe for concurrent use.
+// A Compiled is safe for concurrent use: [Build] fixes importmap rendering,
+// while [Compiled.Handler] serves unchanged files from the source filesystem.
 type Compiled struct {
 	mapper  *Mapper
 	im      *Importmap
@@ -69,6 +70,12 @@ func (c *Compiled) Asset(logical string) (string, error) {
 // see [FuncMap] for the helper reference.
 func (c *Compiled) FuncMap() template.FuncMap {
 	return FuncMap(c.mapper, c.im)
+}
+
+// RenderImportmap returns the template helper's HTML and stable inline script
+// bodies suitable for Content-Security-Policy hashes.
+func (c *Compiled) RenderImportmap(opts RenderOptions) (Rendered, error) {
+	return c.im.renderParts("assetmapper.Compiled.RenderImportmap", c.mapper, opts)
 }
 
 // URLPrefix returns the resolved asset URL prefix.
@@ -254,9 +261,16 @@ func build(context string, roots []Root, im *Importmap, opts []BuildOption) (*Co
 	for logical, hashed := range hashedNames {
 		manifest.Entries[logical] = hashed
 	}
+	// Rendering remains fixed despite later importmap or source changes.
+	snapshot := NewImportmap()
+	for k, v := range im.Entries {
+		snapshot.Entries[k] = v
+	}
+	mapper := &Mapper{roots: roots, urlPrefix: prefix, manifest: manifest}
+	snapshot.freezeRefs(mapper)
 	return &Compiled{
-		mapper:  &Mapper{roots: roots, urlPrefix: prefix, manifest: manifest},
-		im:      im,
+		mapper:  mapper,
+		im:      snapshot,
 		entries: entries,
 	}, nil
 }
