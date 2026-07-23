@@ -62,7 +62,7 @@ func (c MailerConfig) Validate() error {
 
 //fabrik:config storage
 type StorageConfig struct {
-	Path string `yaml:"path" env:"DEMO_STORAGE_PATH" default:"demo-files"`
+	Path string `yaml:"path" env:"DEMO_STORAGE_PATH" default:"storage"`
 }
 
 func (c StorageConfig) Validate() error {

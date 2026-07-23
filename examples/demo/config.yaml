@@ -20,4 +20,4 @@ crossorigin:
   trusted_origins: []
 
 storage:
-  path: demo-files
+  path: storage
