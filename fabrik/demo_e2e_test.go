@@ -50,7 +50,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	env := append(os.Environ(),
 		"DEMO_HTTP_ADDR=:"+port,
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
-		"DEMO_STORAGE_PATH="+filepath.Join(tmp, "files"),
+		"DEMO_STORAGE_PATH="+filepath.Join(tmp, "storage"),
 		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
 	)
 	// An invalid config verifies that help and command listing skip construction.

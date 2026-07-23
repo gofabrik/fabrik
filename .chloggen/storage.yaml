@@ -1,4 +1,4 @@
 change_type: new_component
 component: storage
-note: Add a standalone blob-storage library with memory, local-directory, and S3-compatible backends, a conformance kit, and demo file upload, listing, and download support.
+note: Add a standalone blob-storage library with memory, local-directory, and S3-compatible backends and a conformance test kit.
 issues: [0]
