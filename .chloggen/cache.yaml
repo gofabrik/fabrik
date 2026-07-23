@@ -1,0 +1,4 @@
+change_type: new_component
+component: cache
+note: Add a cache library.
+issues: [0]

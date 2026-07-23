@@ -290,6 +290,13 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		}
 		return nil, nil, nil, err
 	}
+	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDB)
+	if err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
+	}
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webGreeterConfig.Kind {
@@ -298,10 +305,23 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	case "hello":
 		webGreeter = web.NewHelloGreeter()
 	default:
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
 		return nil, nil, nil, fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind)
+	}
+	webCache, err := web.NewGreetingCache(sharedCacheStore)
+	if err != nil {
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, nil, err
 	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
@@ -309,6 +329,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
 		Jobs:    jobsManager,
+		Cache:   webCache,
 	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
@@ -318,10 +339,14 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		Flash:   sharedFlash,
 		Queries: sharedQueryDB,
 		Jobs:    jobsManager,
+		Cache:   webCache,
 	}
 
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 	if err != nil {
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -339,6 +364,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	case "smtp":
 		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
 	default:
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -351,6 +379,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	if err != nil {
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -382,6 +413,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -401,6 +435,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -412,6 +449,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		}
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -427,6 +467,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -441,6 +484,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -454,6 +500,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		}
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -476,6 +525,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		}
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -624,6 +676,13 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		}
 		return nil, nil, err
 	}
+	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDB)
+	if err != nil {
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
+	}
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webGreeterConfig.Kind {
@@ -632,10 +691,23 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	case "hello":
 		webGreeter = web.NewHelloGreeter()
 	default:
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
 		return nil, nil, fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind)
+	}
+	webCache, err := web.NewGreetingCache(sharedCacheStore)
+	if err != nil {
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
+		if sharedSqlDBClose != nil {
+			sharedSqlDBClose()
+		}
+		return nil, nil, err
 	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
@@ -643,6 +715,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
 		Jobs:    jobsManager,
+		Cache:   webCache,
 	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
@@ -652,10 +725,14 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		Flash:   sharedFlash,
 		Queries: sharedQueryDB,
 		Jobs:    jobsManager,
+		Cache:   webCache,
 	}
 
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 	if err != nil {
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -672,6 +749,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	case "smtp":
 		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
 	default:
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -684,6 +764,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	if err != nil {
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -715,6 +798,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -734,6 +820,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -745,6 +834,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		}
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -760,6 +852,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -774,6 +869,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
 		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
+		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
 		}
@@ -787,6 +885,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		}
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -809,6 +910,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		}
 		if sharedRatelimitMemoryStoreClose != nil {
 			sharedRatelimitMemoryStoreClose()
+		}
+		if sharedCacheStoreClose != nil {
+			sharedCacheStoreClose()
 		}
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()

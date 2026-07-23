@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	"context"
+
+	"github.com/gofabrik/fabrik/cache"
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/forms"
 	"github.com/gofabrik/fabrik/jobs"
@@ -50,6 +53,7 @@ type Handlers struct {
 	Session *session.Manager[shared.Session]
 	Flash   *flash.Flash
 	Jobs    *jobs.Manager
+	Cache   *cache.Cache[[]Greeting]
 }
 
 //fabrik:web GET /{$} middleware=nocache
@@ -82,8 +86,11 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	recent, err := query.All[Greeting](ctx, h.Queries,
-		"SELECT * FROM greetings ORDER BY id DESC LIMIT 5")
+	recent, err := h.Cache.GetOrLoad(ctx, "recent", 10*time.Second,
+		func(ctx context.Context) ([]Greeting, error) {
+			return query.All[Greeting](ctx, h.Queries,
+				"SELECT * FROM greetings ORDER BY id DESC LIMIT 5")
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +132,7 @@ type Greetings struct {
 	Flash   *flash.Flash
 	Queries *query.DB
 	Jobs    *jobs.Manager
+	Cache   *cache.Cache[[]Greeting]
 }
 
 //fabrik:web GET /greet
@@ -150,6 +158,9 @@ func (h *Greetings) Update(req *web.Request) (web.Response, error) {
 	}
 	if _, err := h.Queries.Insert(ctx, "greetings", Greeting{Name: form.Data.Name, Created: time.Now()}); err != nil {
 		return nil, err
+	}
+	if err := h.Cache.Delete(ctx, "recent"); err != nil {
+		slog.WarnContext(ctx, "greeting cache delete failed", "error", err)
 	}
 	if err := h.Flash.Add(ctx, "success", "Greeting name updated."); err != nil {
 		return nil, err

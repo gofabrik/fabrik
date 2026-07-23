@@ -3,11 +3,14 @@ package shared
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/gofabrik/fabrik/cache"
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/mail"
@@ -62,6 +65,39 @@ func NewSession(db *sql.DB) (*session.Manager[Session], error) {
 //fabrik:provider
 func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 	return flash.New(m)
+}
+
+//fabrik:provider
+func NewCacheStore(db *sql.DB) (cache.Store, func(), error) {
+	// Schema creation belongs to migration 0005_cache.sql.
+	store, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{AutoCreate: false})
+	if err != nil {
+		return nil, nil, err
+	}
+	// Reads leave expired rows in place; sweep them out periodically.
+	// Cleanup joins the goroutine so no sweep can outlive the database.
+	ctx, cancel := context.WithCancel(context.Background())
+	ticker := time.NewTicker(time.Hour)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := store.Sweep(ctx, time.Now()); err != nil && !errors.Is(err, context.Canceled) {
+					slog.Warn("cache sweep failed", "error", err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return store, func() {
+		ticker.Stop()
+		cancel()
+		wg.Wait()
+	}, nil
 }
 
 //fabrik:provider
