@@ -3,6 +3,7 @@ package shared
 import (
 	"net/http"
 
+	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/router/middleware"
 	"github.com/gofabrik/fabrik/session"
 )
@@ -12,6 +13,15 @@ func Logged(next http.Handler) http.Handler { return middleware.Logger(next) }
 
 //fabrik:http:middleware
 func Recovered(next http.Handler) http.Handler { return middleware.Recover(next) }
+
+//fabrik:http:middleware
+func SecureHeadersMiddleware(assets *assetmapper.Compiled) func(http.Handler) http.Handler {
+	return middleware.SecureHeaders(
+		middleware.WithCSP(middleware.CSP{
+			ScriptSrc: []string{middleware.CSPSelf, assets.CSPImportmapHash()},
+		}),
+	)
+}
 
 //fabrik:http:middleware
 func CrossOriginMiddleware(c *http.CrossOriginProtection) func(http.Handler) http.Handler {

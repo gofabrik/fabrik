@@ -2,6 +2,7 @@ package assetmapper_test
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -88,8 +89,8 @@ func TestImportmap_RendersJSEntrypoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Entrypoint as a bare-specifier import resolved by the
-	// importmap: <script type="module">import "app";</script>
-	if !strings.Contains(html, `<script type="module">import "app";</script>`) {
+	// entrypoint: <script type="module" src="/assets/app-<hash>.js"></script>
+	if !regexp.MustCompile(`<script type="module" src="/assets/app-[^"]+\.js"></script>`).MatchString(html) {
 		t.Errorf("missing JS entrypoint import; got:\n%s", html)
 	}
 }
@@ -127,7 +128,7 @@ func TestImportmap_RendersMultipleEntrypoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(html, `import "app";`) {
+	if !regexp.MustCompile(`<script type="module" src="/assets/app-[^"]+\.js"></script>`).MatchString(html) {
 		t.Errorf("missing JS entrypoint; got:\n%s", html)
 	}
 	if !strings.Contains(html, `<link rel="stylesheet"`) {
@@ -294,7 +295,7 @@ func TestImportmap_RenderWithOptions_AddsNonceToAllTags(t *testing.T) {
 		`<link rel="modulepreload" href="/assets/app-`,
 		` nonce="abc123">`,
 		`<link rel="stylesheet" href="/assets/styles/main-`,
-		`<script type="module" nonce="abc123">import "app";</script>`,
+		` nonce="abc123"></script>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("missing %q in:\n%s", want, html)
@@ -401,5 +402,101 @@ func TestImportmap_ModulePreloadLinksWithOptions_EmptyNonceMatchesPlain(t *testi
 	}
 	if plain != withOpts {
 		t.Errorf("output diverged:\nplain:\n%s\nwithOpts:\n%s", plain, withOpts)
+	}
+}
+
+var inlineScriptRE = regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`)
+
+func TestRender_SingleInlineBodyAcrossVariants(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js": {Data: []byte(`console.log("app");`)},
+		"lib.js": {Data: []byte(`console.log("lib");`)},
+	}
+	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	im.Entries["lib"] = assetmapper.ImportmapEntry{Path: "lib.js", Entrypoint: true}
+
+	variants := map[string]assetmapper.RenderOptions{
+		"both":       {Entrypoints: []string{"app", "lib"}},
+		"one":        {Entrypoints: []string{"app"}},
+		"none":       {},
+		"with-nonce": {Entrypoints: []string{"app"}, Nonce: "n1"},
+	}
+	var body string
+	for name, opts := range variants {
+		out, err := im.RenderWithOptions(m, opts)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		bodies := inlineBodies(out)
+		if len(bodies) != 1 {
+			t.Fatalf("%s: inline scripts = %d, want 1:\n%s", name, len(bodies), out)
+		}
+		if body == "" {
+			body = bodies[0]
+		} else if bodies[0] != body {
+			t.Fatalf("%s: inline body differs across variants", name)
+		}
+	}
+}
+
+func inlineBodies(html string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`).FindAllStringSubmatch(html, -1) {
+		if strings.Contains(m[1], "src=") {
+			continue
+		}
+		out = append(out, m[2])
+	}
+	return out
+}
+
+func TestRender_NonceOnAllTags(t *testing.T) {
+	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
+	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	out, err := im.RenderWithOptions(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}, Nonce: "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{`<script type="importmap" nonce="abc">`, `nonce="abc"></script>`} {
+		if !strings.Contains(out, tag) {
+			t.Fatalf("nonce missing from %q:\n%s", tag, out)
+		}
+	}
+	plain, err := im.RenderWithOptions(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inlineBodies(plain)[0] != inlineBodies(out)[0] {
+		t.Fatal("nonce changed the inline body")
+	}
+}
+
+func TestRender_CSSEntrypointStaysStylesheet(t *testing.T) {
+	src := fstest.MapFS{"main.css": {Data: []byte("body{}")}}
+	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := assetmapper.NewImportmap()
+	im.Entries["main"] = assetmapper.ImportmapEntry{Path: "main.css", Type: "css", Entrypoint: true}
+	out, err := im.RenderWithOptions(m, assetmapper.RenderOptions{Entrypoints: []string{"main"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `<link rel="stylesheet"`) || strings.Contains(out, `type="module"`) {
+		t.Fatalf("css entrypoint shape wrong:\n%s", out)
+	}
+	if n := len(inlineBodies(out)); n != 1 {
+		t.Fatalf("inline scripts = %d, want 1 (the importmap)", n)
 	}
 }

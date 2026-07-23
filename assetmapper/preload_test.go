@@ -237,7 +237,7 @@ func TestRender_IncludesPreloadsBeforeEntrypointScript(t *testing.T) {
 	}
 	im1 := strings.Index(got, `<script type="importmap">`)
 	preload := strings.Index(got, `<link rel="modulepreload"`)
-	module := strings.Index(got, `<script type="module">import "app";</script>`)
+	module := strings.Index(got, `<script type="module" src="`)
 	if im1 < 0 || preload < 0 || module < 0 {
 		t.Fatalf("missing one of importmap/preload/entrypoint:\n%s", got)
 	}

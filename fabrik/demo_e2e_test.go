@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -217,6 +219,7 @@ END;`
 	}
 	postGreet(t, c, base, "casualty")
 
+	secureHeadersFlow(t, base)
 	rateLimitFlow(t, base)
 	gracefulShutdown(t, server)
 
@@ -303,6 +306,149 @@ func filesFlow(t *testing.T, base string) {
 	}
 }
 
+func secureHeadersFlow(t *testing.T, base string) {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	fetch := func(method, url string, mod func(*http.Request)) *http.Response {
+		req, err := http.NewRequest(method, url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mod != nil {
+			mod(req)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	assertBaseline := func(kind string, resp *http.Response, wantStatus int) {
+		t.Helper()
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		if resp.StatusCode != wantStatus {
+			t.Fatalf("%s status = %d, want %d", kind, resp.StatusCode, wantStatus)
+		}
+		assertBaselineHeaders(t, kind, resp.Header)
+	}
+
+	home := fetch(http.MethodGet, base+"/", nil)
+	homeCSP := home.Header.Get("Content-Security-Policy")
+	body, _ := io.ReadAll(home.Body)
+	home.Body.Close() //nolint:errcheck
+	if home.StatusCode != http.StatusOK {
+		t.Fatalf("home status = %d", home.StatusCode)
+	}
+	assertBaselineHeaders(t, "home", home.Header)
+	// Exactly one inline script (the importmap) is served; the CSP's
+	// hash set must equal its hash - nothing missing, nothing extra.
+	var inline []string
+	for _, m := range regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`).FindAllStringSubmatch(string(body), -1) {
+		if strings.Contains(m[1], "src=") {
+			continue
+		}
+		inline = append(inline, m[2])
+	}
+	if len(inline) != 1 {
+		t.Fatalf("inline scripts = %d, want exactly 1 (the importmap):\n%s", len(inline), body)
+	}
+	sum := sha256.Sum256([]byte(inline[0]))
+	wantHash := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	cspHashes := regexp.MustCompile(`'sha256-[^']+'`).FindAllString(homeCSP, -1)
+	if len(cspHashes) != 1 || cspHashes[0] != wantHash {
+		t.Fatalf("CSP hash set %v, want exactly [%s]", cspHashes, wantHash)
+	}
+	if !strings.Contains(homeCSP, "script-src 'self' ") {
+		t.Fatalf("script-src missing 'self': %q", homeCSP)
+	}
+	if !regexp.MustCompile(`<script type="module" src="/assets/[^"]+"[^>]*></script>`).MatchString(string(body)) {
+		t.Fatalf("no external module entrypoint on home:\n%s", body)
+	}
+	// The CSP requires htmx indicator styles to come from the stylesheet.
+	src := regexp.MustCompile(`src="(/assets/[^"]+app-[^"]+\.js)"`).FindStringSubmatch(string(body))
+	imports := regexp.MustCompile(`"app":"(/assets/[^"]+)"`).FindStringSubmatch(string(body))
+	appURL := ""
+	if src != nil {
+		appURL = src[1]
+	} else if imports != nil {
+		appURL = imports[1]
+	}
+	if appURL == "" {
+		t.Fatalf("cannot find the app module URL in the page:\n%s", body)
+	}
+	appResp := fetch(http.MethodGet, base+appURL, nil)
+	appJS, _ := io.ReadAll(appResp.Body)
+	appResp.Body.Close() //nolint:errcheck
+	if !strings.Contains(string(appJS), "includeIndicatorStyles = false") {
+		t.Fatal("served app.js does not disable htmx indicator styles")
+	}
+	cssURL := regexp.MustCompile(`href="(/assets/[^"]+\.css)"`).FindStringSubmatch(string(body))
+	if cssURL == nil {
+		t.Fatalf("no stylesheet link on home:\n%s", body)
+	}
+	cssResp := fetch(http.MethodGet, base+cssURL[1], nil)
+	css, _ := io.ReadAll(cssResp.Body)
+	cssResp.Body.Close() //nolint:errcheck
+	// The stylesheet preserves htmx's indicator visibility transitions.
+	for _, rule := range []string{
+		".htmx-indicator",
+		"visibility: hidden",
+		".htmx-request .htmx-indicator",
+		".htmx-request.htmx-indicator",
+		"visibility: visible",
+		"transition: opacity 200ms ease-in",
+	} {
+		if !strings.Contains(string(css), rule) {
+			t.Fatalf("stylesheet missing htmx indicator rule %q", rule)
+		}
+	}
+
+	assertBaseline("asset", fetch(http.MethodGet, base+appURL, nil), http.StatusOK)
+	assertBaseline("404", fetch(http.MethodGet, base+"/definitely-not-here", nil), http.StatusNotFound)
+	redirect := fetch(http.MethodPost, base+"/greet", func(r *http.Request) {
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Body = io.NopCloser(strings.NewReader("name=headers"))
+	})
+	assertBaseline("redirect", redirect, http.StatusSeeOther)
+	// The uploaded file exercises storage serving rather than listing.
+	assertBaseline("storage serve", fetch(http.MethodGet, base+"/files/uploads/hello.txt", nil), http.StatusOK)
+	assertBaseline("cross-origin 403", fetch(http.MethodPost, base+"/greet", func(r *http.Request) {
+		r.Header.Set("Origin", "https://evil.example")
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+	}), http.StatusForbidden)
+}
+
+func assertBaselineHeaders(t *testing.T, kind string, h http.Header) {
+	t.Helper()
+	want := map[string]string{
+		"X-Content-Type-Options":            "nosniff",
+		"X-Frame-Options":                   "DENY",
+		"Referrer-Policy":                   "no-referrer",
+		"Permissions-Policy":                "geolocation=(), camera=(), microphone=(), payment=(), usb=()",
+		"Cross-Origin-Opener-Policy":        "same-origin",
+		"Cross-Origin-Resource-Policy":      "same-origin",
+		"X-Permitted-Cross-Domain-Policies": "none",
+		"X-DNS-Prefetch-Control":            "off",
+	}
+	for name, v := range want {
+		if got := h.Get(name); got != v {
+			t.Fatalf("%s response %s = %q, want %q", kind, name, got, v)
+		}
+	}
+	csp := h.Get("Content-Security-Policy")
+	for _, directive := range []string{"default-src 'self'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'", "form-action 'self'"} {
+		if !strings.Contains(csp, directive) {
+			t.Fatalf("%s response CSP missing %q: %s", kind, directive, csp)
+		}
+	}
+	if h.Get("Strict-Transport-Security") != "" {
+		t.Fatalf("%s response carries HSTS on plain HTTP", kind)
+	}
+}
+
 func rateLimitFlow(t *testing.T, base string) {
 	t.Helper()
 	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -325,6 +471,7 @@ func rateLimitFlow(t *testing.T, base string) {
 		last = post()
 		if last.StatusCode == http.StatusTooManyRequests {
 			got429 = true
+			assertBaselineHeaders(t, "rate-limit 429", last.Header)
 			break
 		}
 		if last.StatusCode != http.StatusSeeOther {

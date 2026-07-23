@@ -64,6 +64,57 @@ r.Handle("/static/", http.StripPrefix("/static", fileServer))
 r.Handle("/api/", http.StripPrefix("/api", subApp))
 ```
 
+## Middleware
+
+The `middleware` package ships common handlers: `RequestID` (a random
+ID in the request context), `Logger` (one line per request), `Recover`
+(turn panics into 500s), and `SecureHeaders`.
+
+`SecureHeaders()` sets a baseline of security response headers that
+works over plain HTTP:
+
+- `Content-Security-Policy: default-src 'self'; form-action 'self';
+  base-uri 'self'; object-src 'none'; frame-ancestors 'none'` -
+  restrict content to the page's own origin; block plugins, base-URL
+  injection, foreign form posts, and framing.
+- `X-Content-Type-Options: nosniff` - never guess content types, so
+  disguised HTML cannot execute.
+- `X-Frame-Options: DENY` - framing fallback for browsers without CSP
+  frame-ancestors.
+- `Referrer-Policy: no-referrer` - do not leak the current URL to
+  other sites.
+- `Permissions-Policy: geolocation=(), camera=(), microphone=(),
+  payment=(), usb=()` - disable the listed browser features; unlisted
+  features keep their defaults.
+- `Cross-Origin-Opener-Policy: same-origin` - other sites cannot keep
+  a scriptable handle to your windows (affects OAuth popups; override
+  with `WithCrossOriginOpenerPolicy`).
+- `Cross-Origin-Resource-Policy: same-origin` - other origins cannot
+  embed your responses (override with `WithCrossOriginResourcePolicy`
+  if they should).
+- `X-Permitted-Cross-Domain-Policies: none` - refuse Flash/PDF
+  cross-domain policy lookups.
+- `X-DNS-Prefetch-Control: off` - do not leak visited hostnames
+  through DNS prefetching.
+
+`Strict-Transport-Security` is opt-in because it pins browsers to
+HTTPS for a long time: `WithHSTS()` sends `max-age=63072000` on TLS
+requests, `WithHSTSMaxAge` stages the lifetime (zero withdraws),
+`WithHSTSIncludeSubDomains()` extends it to subdomains (only when all
+of them serve HTTPS), and `WithForceHSTS()` covers servers behind a
+TLS-terminating proxy, which must itself redirect HTTP to HTTPS.
+`X-XSS-Protection` is never sent because the obsolete header can
+introduce vulnerabilities. `Cross-Origin-Embedder-Policy` is
+also left out: `require-corp` breaks any embedded resource that does
+not send CORP or CORS headers, so it must be a deliberate app choice.
+The CSP omits `upgrade-insecure-requests`, which would rewrite
+http:// URLs to https:// and break plain-HTTP development; add it via
+`WithContentSecurityPolicy` where TLS terminates.
+
+Typed options such as `WithContentSecurityPolicy` and
+`WithReferrerPolicy` replace individual values; `WithoutHeader` drops
+one. Handlers can still override any header per response.
+
 ## Behavior
 
 Routing follows `http.ServeMux` rules:

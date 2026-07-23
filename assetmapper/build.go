@@ -45,11 +45,13 @@ func Check(roots []Root, im *Importmap, opts ...BuildOption) error {
 
 // Compiled is the in-memory result of [Build].
 //
-// A Compiled is immutable after Build and safe for concurrent use.
+// A Compiled is safe for concurrent use: [Build] fixes importmap rendering,
+// while [Compiled.Handler] serves unchanged files from the source filesystem.
 type Compiled struct {
-	mapper  *Mapper
-	im      *Importmap
-	entries map[string]serveEntry // hashed relative path → how to serve it
+	mapper           *Mapper
+	im               *Importmap
+	entries          map[string]serveEntry // hashed relative path → how to serve it
+	cspImportmapHash string
 }
 
 // serveEntry is one compiled file addressable by hashed path.
@@ -69,6 +71,14 @@ func (c *Compiled) Asset(logical string) (string, error) {
 // see [FuncMap] for the helper reference.
 func (c *Compiled) FuncMap() template.FuncMap {
 	return FuncMap(c.mapper, c.im)
+}
+
+// CSPImportmapHash returns the Content-Security-Policy hash source,
+// "'sha256-<base64>'", for the one inline script the importmap helpers
+// emit. The body is independent of entrypoint selection and nonce, and
+// Build freezes it, so the value holds for the life of the Compiled.
+func (c *Compiled) CSPImportmapHash() string {
+	return c.cspImportmapHash
 }
 
 // URLPrefix returns the resolved asset URL prefix.
@@ -254,10 +264,22 @@ func build(context string, roots []Root, im *Importmap, opts []BuildOption) (*Co
 	for logical, hashed := range hashedNames {
 		manifest.Entries[logical] = hashed
 	}
+	// Rendering remains fixed despite later importmap or source changes.
+	snapshot := NewImportmap()
+	for k, v := range im.Entries {
+		snapshot.Entries[k] = v
+	}
+	mapper := &Mapper{roots: roots, urlPrefix: prefix, manifest: manifest}
+	snapshot.freezeRefs(mapper)
+	hash, err := snapshot.importmapBodyHash(mapper)
+	if err != nil {
+		return nil, fmt.Errorf("assetmapper.Build: %w", err)
+	}
 	return &Compiled{
-		mapper:  &Mapper{roots: roots, urlPrefix: prefix, manifest: manifest},
-		im:      im,
-		entries: entries,
+		mapper:           mapper,
+		im:               snapshot,
+		entries:          entries,
+		cspImportmapHash: hash,
 	}, nil
 }
 
