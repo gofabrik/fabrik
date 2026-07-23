@@ -1,12 +1,15 @@
 package assetmapper_test
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -371,28 +374,78 @@ func TestBuildStreamsLargePassthrough(t *testing.T) {
 	}
 }
 
-func TestCompiled_RenderImportmap(t *testing.T) {
+func TestCompiled_CSPImportmapHashMatchesRenderedBody(t *testing.T) {
 	src := fstest.MapFS{"app.js": {Data: []byte(`console.log("a");`)}}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	im.Entries["lib"] = assetmapper.ImportmapEntry{Path: "app.js"}
+	compiled, err := assetmapper.Build([]assetmapper.Root{{FS: src}}, im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := compiled.FuncMap()["importmap"].(func(...string) (template.HTML, error))
+	nonceFn := compiled.FuncMap()["importmap_nonce"].(func(string, ...string) (template.HTML, error))
+
+	// The hash must equal the exact bytes of the sole inline body, for
+	// every entrypoint selection and nonce variant.
+	for name, html := range map[string]func() (template.HTML, error){
+		"plain":      func() (template.HTML, error) { return fn("app") },
+		"no-entry":   func() (template.HTML, error) { return fn() },
+		"with-nonce": func() (template.HTML, error) { return nonceFn("n1", "app") },
+	} {
+		out, err := html()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		bodies := inlineScriptBodies(string(out))
+		if len(bodies) != 1 {
+			t.Fatalf("%s: inline scripts = %d, want exactly 1:\n%s", name, len(bodies), out)
+		}
+		sum := sha256.Sum256([]byte(bodies[0]))
+		want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+		if got := compiled.CSPImportmapHash(); got != want {
+			t.Fatalf("%s: CSPImportmapHash = %s, want %s", name, got, want)
+		}
+	}
+}
+
+// inlineScriptBodies returns the bodies of scripts WITHOUT a src
+// attribute; external module tags carry src and an empty body.
+func inlineScriptBodies(html string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`).FindAllStringSubmatch(html, -1) {
+		if strings.Contains(m[1], "src=") {
+			continue
+		}
+		out = append(out, m[2])
+	}
+	return out
+}
+
+func TestCompiled_EntrypointIsExternalModule(t *testing.T) {
+	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
 	im := assetmapper.NewImportmap()
 	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
 	compiled, err := assetmapper.Build([]assetmapper.Root{{FS: src}}, im)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(parts.InlineScripts) != 2 || !strings.Contains(parts.HTML, `type="importmap"`) {
-		t.Fatalf("RenderImportmap = %d scripts:\n%s", len(parts.InlineScripts), parts.HTML)
-	}
 	fn := compiled.FuncMap()["importmap"].(func(...string) (template.HTML, error))
-	helperHTML, err := fn("app")
+	out, err := fn("app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(helperHTML) != parts.HTML {
-		t.Fatal("FuncMap helper and RenderImportmap diverge")
+	html := string(out)
+	if strings.Contains(html, `import "app"`) {
+		t.Fatalf("inline entrypoint wrapper still emitted:\n%s", html)
+	}
+	srcRE := regexp.MustCompile(`<script type="module" src="(/assets/app-[^"]+\.js)"></script>`)
+	m := srcRE.FindStringSubmatch(html)
+	if m == nil {
+		t.Fatalf("no external module script:\n%s", html)
+	}
+	if !strings.Contains(html, `<link rel="modulepreload" href="`+m[1]+`"`) {
+		t.Fatalf("entrypoint src %s not in the modulepreload set:\n%s", m[1], html)
 	}
 }
 
@@ -404,34 +457,23 @@ func TestBuild_SnapshotsImportmap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	fn := compiled.FuncMap()["importmap"].(func(...string) (template.HTML, error))
+	before, err := fn("app")
 	if err != nil {
 		t.Fatal(err)
 	}
+	hashBefore := compiled.CSPImportmapHash()
 	im.Entries["evil"] = assetmapper.ImportmapEntry{Version: "1.0.0"}
 	delete(im.Entries, "app")
-	after, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	after, err := fn("app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.HTML != after.HTML {
-		t.Fatal("source-importmap mutation changed RenderImportmap")
-	}
-	if len(before.InlineScripts) != len(after.InlineScripts) {
-		t.Fatal("source-importmap mutation changed the inline script count")
-	}
-	for i := range before.InlineScripts {
-		if before.InlineScripts[i] != after.InlineScripts[i] {
-			t.Fatalf("source-importmap mutation changed inline script %d (the hash material)", i)
-		}
-	}
-	fn := compiled.FuncMap()["importmap"].(func(...string) (template.HTML, error))
-	helperHTML, err := fn("app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(helperHTML) != before.HTML {
+	if before != after {
 		t.Fatal("source-importmap mutation changed FuncMap rendering")
+	}
+	if compiled.CSPImportmapHash() != hashBefore {
+		t.Fatal("source-importmap mutation changed the importmap hash")
 	}
 }
 
@@ -449,11 +491,12 @@ func TestBuild_FreezesPreloadGraph(t *testing.T) {
 	}
 	// The first render uses the source graph captured by Build.
 	src["app.js"] = &fstest.MapFile{Data: []byte(`import "./new.js";`)}
-	parts, err := compiled.RenderImportmap(assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	fn := compiled.FuncMap()["importmap"].(func(...string) (template.HTML, error))
+	out, err := fn("app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(parts.HTML, "dep") || strings.Contains(parts.HTML, "new") {
-		t.Fatalf("preload graph followed the mutated source:\n%s", parts.HTML)
+	if !strings.Contains(string(out), "dep") || strings.Contains(string(out), "new") {
+		t.Fatalf("preload graph followed the mutated source:\n%s", out)
 	}
 }

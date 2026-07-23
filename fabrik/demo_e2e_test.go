@@ -343,16 +343,29 @@ func secureHeadersFlow(t *testing.T, base string) {
 		t.Fatalf("home status = %d", home.StatusCode)
 	}
 	assertBaselineHeaders(t, "home", home.Header)
-	inline := regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`).FindAllStringSubmatch(string(body), -1)
-	if len(inline) == 0 {
-		t.Fatal("home has no inline scripts; the hash assertion would be vacuous")
-	}
-	for _, m := range inline {
-		sum := sha256.Sum256([]byte(m[1]))
-		hash := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-		if !strings.Contains(homeCSP, hash) {
-			t.Fatalf("inline script not covered by CSP hash %s:\n%s", hash, homeCSP)
+	// Exactly one inline script (the importmap) is served; the CSP's
+	// hash set must equal its hash - nothing missing, nothing extra.
+	var inline []string
+	for _, m := range regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`).FindAllStringSubmatch(string(body), -1) {
+		if strings.Contains(m[1], "src=") {
+			continue
 		}
+		inline = append(inline, m[2])
+	}
+	if len(inline) != 1 {
+		t.Fatalf("inline scripts = %d, want exactly 1 (the importmap):\n%s", len(inline), body)
+	}
+	sum := sha256.Sum256([]byte(inline[0]))
+	wantHash := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	cspHashes := regexp.MustCompile(`'sha256-[^']+'`).FindAllString(homeCSP, -1)
+	if len(cspHashes) != 1 || cspHashes[0] != wantHash {
+		t.Fatalf("CSP hash set %v, want exactly [%s]", cspHashes, wantHash)
+	}
+	if !strings.Contains(homeCSP, "script-src 'self' ") {
+		t.Fatalf("script-src missing 'self': %q", homeCSP)
+	}
+	if !regexp.MustCompile(`<script type="module" src="/assets/[^"]+"[^>]*></script>`).MatchString(string(body)) {
+		t.Fatalf("no external module entrypoint on home:\n%s", body)
 	}
 	// The CSP requires htmx indicator styles to come from the stylesheet.
 	src := regexp.MustCompile(`src="(/assets/[^"]+app-[^"]+\.js)"`).FindStringSubmatch(string(body))

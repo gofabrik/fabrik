@@ -48,9 +48,10 @@ func Check(roots []Root, im *Importmap, opts ...BuildOption) error {
 // A Compiled is safe for concurrent use: [Build] fixes importmap rendering,
 // while [Compiled.Handler] serves unchanged files from the source filesystem.
 type Compiled struct {
-	mapper  *Mapper
-	im      *Importmap
-	entries map[string]serveEntry // hashed relative path → how to serve it
+	mapper           *Mapper
+	im               *Importmap
+	entries          map[string]serveEntry // hashed relative path → how to serve it
+	cspImportmapHash string
 }
 
 // serveEntry is one compiled file addressable by hashed path.
@@ -72,10 +73,12 @@ func (c *Compiled) FuncMap() template.FuncMap {
 	return FuncMap(c.mapper, c.im)
 }
 
-// RenderImportmap returns the template helper's HTML and stable inline script
-// bodies suitable for Content-Security-Policy hashes.
-func (c *Compiled) RenderImportmap(opts RenderOptions) (Rendered, error) {
-	return c.im.renderParts("assetmapper.Compiled.RenderImportmap", c.mapper, opts)
+// CSPImportmapHash returns the Content-Security-Policy hash source,
+// "'sha256-<base64>'", for the one inline script the importmap helpers
+// emit. The body is independent of entrypoint selection and nonce, and
+// Build freezes it, so the value holds for the life of the Compiled.
+func (c *Compiled) CSPImportmapHash() string {
+	return c.cspImportmapHash
 }
 
 // URLPrefix returns the resolved asset URL prefix.
@@ -268,10 +271,15 @@ func build(context string, roots []Root, im *Importmap, opts []BuildOption) (*Co
 	}
 	mapper := &Mapper{roots: roots, urlPrefix: prefix, manifest: manifest}
 	snapshot.freezeRefs(mapper)
+	hash, err := snapshot.importmapBodyHash(mapper)
+	if err != nil {
+		return nil, fmt.Errorf("assetmapper.Build: %w", err)
+	}
 	return &Compiled{
-		mapper:  mapper,
-		im:      snapshot,
-		entries: entries,
+		mapper:           mapper,
+		im:               snapshot,
+		entries:          entries,
+		cspImportmapHash: hash,
 	}, nil
 }
 

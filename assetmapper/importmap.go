@@ -1,6 +1,8 @@
 package assetmapper
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -135,12 +137,6 @@ type RenderOptions struct {
 	Nonce string
 }
 
-// Rendered contains importmap HTML and its inline script bodies in emission order.
-type Rendered struct {
-	HTML          string
-	InlineScripts []string
-}
-
 // Render renders importmap, preload, stylesheet, and entrypoint tags.
 func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 	return im.RenderWithOptions(m, RenderOptions{Entrypoints: entrypoints})
@@ -159,29 +155,22 @@ func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 //     reached via `import "./x.css"` from JS. CSS entrypoints get
 //     the full stylesheet link in step 4 instead.
 //  4. <link rel="stylesheet"> tags, one per CSS entrypoint.
-//  5. <script type="module">import "name";</script> tags, one per
-//     JS entrypoint. The browser uses the importmap from step 1 to
-//     resolve the bare specifier to a URL (already cached thanks to
-//     step 2).
+//  5. <script type="module" src="..."></script> tags, one per JS
+//     entrypoint, referencing the resolved asset URL. Bare imports
+//     inside the module resolve through the importmap from step 1;
+//     the importmap stays the page's only inline script.
 //
 // Use [FuncMap] for html/template helpers that return [template.HTML].
 func (im *Importmap) RenderWithOptions(m *Mapper, opts RenderOptions) (string, error) {
-	r, err := im.renderParts("assetmapper.Importmap.Render", m, opts)
-	return r.HTML, err
+	return im.render("assetmapper.Importmap.Render", m, opts)
 }
 
-// RenderParts returns the rendered importmap and inline script bodies, whose
-// hashes remain valid only while the importmap and assets remain unchanged.
-func (im *Importmap) RenderParts(m *Mapper, opts RenderOptions) (Rendered, error) {
-	return im.renderParts("assetmapper.Importmap.RenderParts", m, opts)
-}
-
-func (im *Importmap) renderParts(op string, m *Mapper, opts RenderOptions) (Rendered, error) {
+func (im *Importmap) render(op string, m *Mapper, opts RenderOptions) (string, error) {
 	if m == nil {
-		return Rendered{}, fmt.Errorf("%s: nil Mapper", op)
+		return "", fmt.Errorf("%s: nil Mapper", op)
 	}
 	if err := im.validateEntrypoints(opts.Entrypoints); err != nil {
-		return Rendered{}, fmt.Errorf("%s: %w", op, err)
+		return "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	keys := make([]string, 0, len(im.Entries))
@@ -194,7 +183,7 @@ func (im *Importmap) renderParts(op string, m *Mapper, opts RenderOptions) (Rend
 	for _, k := range keys {
 		url, err := im.resolveEntry(m, k, im.Entries[k])
 		if err != nil {
-			return Rendered{}, fmt.Errorf("%s: resolve %q: %w", op, k, err)
+			return "", fmt.Errorf("%s: resolve %q: %w", op, k, err)
 		}
 		resolved[k] = url
 	}
@@ -202,32 +191,15 @@ func (im *Importmap) renderParts(op string, m *Mapper, opts RenderOptions) (Rend
 	nonce := nonceAttr(opts.Nonce)
 
 	var out strings.Builder
-	var inline []string
-	// json.Marshal escapes < > & by default, so embedding inside a
-	// <script> tag is safe even for URLs that include those chars.
 	out.WriteString(`<script type="importmap"`)
 	out.WriteString(nonce)
 	out.WriteString(">")
-	var mapBody strings.Builder
-	mapBody.WriteString(`{"imports":{`)
-	for i, k := range keys {
-		if i > 0 {
-			mapBody.WriteByte(',')
-		}
-		kb, _ := json.Marshal(k)
-		vb, _ := json.Marshal(resolved[k])
-		mapBody.Write(kb)
-		mapBody.WriteByte(':')
-		mapBody.Write(vb)
-	}
-	mapBody.WriteString("}}")
-	inline = append(inline, mapBody.String())
-	out.WriteString(mapBody.String())
+	out.WriteString(importmapBody(keys, resolved))
 	out.WriteString("</script>")
 
 	preloads, err := im.preloadGraph(m, opts.Entrypoints)
 	if err != nil {
-		return Rendered{}, fmt.Errorf("%s: build preload graph: %w", op, err)
+		return "", fmt.Errorf("%s: build preload graph: %w", op, err)
 	}
 	for _, url := range preloads.JSURLs {
 		out.WriteString("\n")
@@ -258,17 +230,58 @@ func (im *Importmap) renderParts(op string, m *Mapper, opts RenderOptions) (Rend
 			out.WriteString(nonce)
 			out.WriteString(">")
 		default:
-			out.WriteString(`<script type="module"`)
+			// External module scripts keep the importmap as the sole
+			// inline script; bare imports inside the module still
+			// resolve through the map.
+			out.WriteString(`<script type="module" src="`)
+			out.WriteString(html.EscapeString(resolved[name]))
+			out.WriteString(`"`)
 			out.WriteString(nonce)
-			out.WriteString(">")
-			nb, _ := json.Marshal(name)
-			body := "import " + string(nb) + ";"
-			inline = append(inline, body)
-			out.WriteString(body)
-			out.WriteString("</script>")
+			out.WriteString("></script>")
 		}
 	}
-	return Rendered{HTML: out.String(), InlineScripts: inline}, nil
+	return out.String(), nil
+}
+
+// importmapBody serializes the inline importmap script body. Rendering
+// and build-time hashing share this one implementation so the CSP hash
+// always matches the emitted bytes. json.Marshal escapes < > & so the
+// body is safe inside a <script> element.
+func importmapBody(keys []string, resolved map[string]string) string {
+	var body strings.Builder
+	body.WriteString(`{"imports":{`)
+	for i, k := range keys {
+		if i > 0 {
+			body.WriteByte(',')
+		}
+		kb, _ := json.Marshal(k)
+		vb, _ := json.Marshal(resolved[k])
+		body.Write(kb)
+		body.WriteByte(':')
+		body.Write(vb)
+	}
+	body.WriteString("}}")
+	return body.String()
+}
+
+// importmapBodyHash resolves every entry and hashes the exact inline
+// body the render path emits, as a CSP hash source.
+func (im *Importmap) importmapBodyHash(m *Mapper) (string, error) {
+	keys := make([]string, 0, len(im.Entries))
+	for k := range im.Entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	resolved := make(map[string]string, len(keys))
+	for _, k := range keys {
+		url, err := im.resolveEntry(m, k, im.Entries[k])
+		if err != nil {
+			return "", fmt.Errorf("resolve %q: %w", k, err)
+		}
+		resolved[k] = url
+	}
+	sum := sha256.Sum256([]byte(importmapBody(keys, resolved)))
+	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'", nil
 }
 
 // readRefs treats missing or unreadable files as having no references.

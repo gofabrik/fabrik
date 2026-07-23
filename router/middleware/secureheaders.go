@@ -10,7 +10,7 @@ import (
 var secureDefaults = [][2]string{
 	// Restrict content to the page's own origin; block plugins, base-URL
 	// injection, foreign form posts, and all framing.
-	{"Content-Security-Policy", "default-src 'self'; form-action 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"},
+	{"Content-Security-Policy", ""}, // value filled from the CSP serializer below
 	// Never guess content types, so disguised HTML cannot execute.
 	{"X-Content-Type-Options", "nosniff"},
 	// Framing fallback for browsers without CSP frame-ancestors.
@@ -150,6 +150,14 @@ func mustValidValue(name, value string) {
 	}
 	if !trimmed {
 		panic(fmt.Sprintf("middleware.SecureHeaders: empty %s value", name))
+	}
+}
+
+func init() {
+	for i := range secureDefaults {
+		if secureDefaults[i][0] == "Content-Security-Policy" {
+			secureDefaults[i][1] = serializeCSP(&CSP{})
+		}
 	}
 }
 

@@ -97,9 +97,12 @@ none means empty). Entries map bare specifiers to local assets
 
 `{{ importmap "app" }}` emits the `<script type="importmap">` block,
 `<link rel="modulepreload">` tags for the transitive module graph,
-and the entrypoint tag. CSP variants (`importmap_nonce`,
-`module_preload_links_nonce`) take a nonce for
-`script-src 'nonce-...'` policies.
+and the entrypoint tag. JS entrypoints load as external module
+scripts, so the importmap is the page's only inline script. CSP
+variants (`importmap_nonce`, `module_preload_links_nonce`) take a
+nonce for `script-src 'nonce-...'` policies; for hash-based policies,
+`Compiled.CSPImportmapHash()` returns the ready
+`'sha256-...'` source for that one inline script, fixed at build.
 
 ## Adding a third-party package
 

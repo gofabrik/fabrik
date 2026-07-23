@@ -1,7 +1,6 @@
 package assetmapper_test
 
 import (
-	"html/template"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -90,8 +89,8 @@ func TestImportmap_RendersJSEntrypoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Entrypoint as a bare-specifier import resolved by the
-	// importmap: <script type="module">import "app";</script>
-	if !strings.Contains(html, `<script type="module">import "app";</script>`) {
+	// entrypoint: <script type="module" src="/assets/app-<hash>.js"></script>
+	if !regexp.MustCompile(`<script type="module" src="/assets/app-[^"]+\.js"></script>`).MatchString(html) {
 		t.Errorf("missing JS entrypoint import; got:\n%s", html)
 	}
 }
@@ -129,7 +128,7 @@ func TestImportmap_RendersMultipleEntrypoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(html, `import "app";`) {
+	if !regexp.MustCompile(`<script type="module" src="/assets/app-[^"]+\.js"></script>`).MatchString(html) {
 		t.Errorf("missing JS entrypoint; got:\n%s", html)
 	}
 	if !strings.Contains(html, `<link rel="stylesheet"`) {
@@ -296,7 +295,7 @@ func TestImportmap_RenderWithOptions_AddsNonceToAllTags(t *testing.T) {
 		`<link rel="modulepreload" href="/assets/app-`,
 		` nonce="abc123">`,
 		`<link rel="stylesheet" href="/assets/styles/main-`,
-		`<script type="module" nonce="abc123">import "app";</script>`,
+		` nonce="abc123"></script>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("missing %q in:\n%s", want, html)
@@ -408,7 +407,7 @@ func TestImportmap_ModulePreloadLinksWithOptions_EmptyNonceMatchesPlain(t *testi
 
 var inlineScriptRE = regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`)
 
-func TestRenderParts_InlineScriptsMatchHTML(t *testing.T) {
+func TestRender_SingleInlineBodyAcrossVariants(t *testing.T) {
 	src := fstest.MapFS{
 		"app.js": {Data: []byte(`console.log("app");`)},
 		"lib.js": {Data: []byte(`console.log("lib");`)},
@@ -421,28 +420,68 @@ func TestRenderParts_InlineScriptsMatchHTML(t *testing.T) {
 	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
 	im.Entries["lib"] = assetmapper.ImportmapEntry{Path: "lib.js", Entrypoint: true}
 
-	parts, err := im.RenderParts(m, assetmapper.RenderOptions{Entrypoints: []string{"app", "lib"}})
-	if err != nil {
-		t.Fatal(err)
+	variants := map[string]assetmapper.RenderOptions{
+		"both":       {Entrypoints: []string{"app", "lib"}},
+		"one":        {Entrypoints: []string{"app"}},
+		"none":       {},
+		"with-nonce": {Entrypoints: []string{"app"}, Nonce: "n1"},
 	}
-	var bodies []string
-	for _, match := range inlineScriptRE.FindAllStringSubmatch(parts.HTML, -1) {
-		bodies = append(bodies, match[1])
-	}
-	if len(bodies) != 3 {
-		t.Fatalf("inline scripts in HTML = %d, want 3:\n%s", len(bodies), parts.HTML)
-	}
-	if len(parts.InlineScripts) != len(bodies) {
-		t.Fatalf("InlineScripts = %d entries, want %d", len(parts.InlineScripts), len(bodies))
-	}
-	for i := range bodies {
-		if parts.InlineScripts[i] != bodies[i] {
-			t.Fatalf("InlineScripts[%d] = %q, HTML body = %q", i, parts.InlineScripts[i], bodies[i])
+	var body string
+	for name, opts := range variants {
+		out, err := im.RenderWithOptions(m, opts)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		bodies := inlineBodies(out)
+		if len(bodies) != 1 {
+			t.Fatalf("%s: inline scripts = %d, want 1:\n%s", name, len(bodies), out)
+		}
+		if body == "" {
+			body = bodies[0]
+		} else if bodies[0] != body {
+			t.Fatalf("%s: inline body differs across variants", name)
 		}
 	}
 }
 
-func TestRenderParts_CSSEntrypointAddsNoScript(t *testing.T) {
+func inlineBodies(html string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`).FindAllStringSubmatch(html, -1) {
+		if strings.Contains(m[1], "src=") {
+			continue
+		}
+		out = append(out, m[2])
+	}
+	return out
+}
+
+func TestRender_NonceOnAllTags(t *testing.T) {
+	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
+	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	out, err := im.RenderWithOptions(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}, Nonce: "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{`<script type="importmap" nonce="abc">`, `nonce="abc"></script>`} {
+		if !strings.Contains(out, tag) {
+			t.Fatalf("nonce missing from %q:\n%s", tag, out)
+		}
+	}
+	plain, err := im.RenderWithOptions(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inlineBodies(plain)[0] != inlineBodies(out)[0] {
+		t.Fatal("nonce changed the inline body")
+	}
+}
+
+func TestRender_CSSEntrypointStaysStylesheet(t *testing.T) {
 	src := fstest.MapFS{"main.css": {Data: []byte("body{}")}}
 	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
 	if err != nil {
@@ -450,100 +489,14 @@ func TestRenderParts_CSSEntrypointAddsNoScript(t *testing.T) {
 	}
 	im := assetmapper.NewImportmap()
 	im.Entries["main"] = assetmapper.ImportmapEntry{Path: "main.css", Type: "css", Entrypoint: true}
-	parts, err := im.RenderParts(m, assetmapper.RenderOptions{Entrypoints: []string{"main"}})
+	out, err := im.RenderWithOptions(m, assetmapper.RenderOptions{Entrypoints: []string{"main"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(parts.InlineScripts) != 1 {
-		t.Fatalf("InlineScripts = %d, want 1", len(parts.InlineScripts))
+	if !strings.Contains(out, `<link rel="stylesheet"`) || strings.Contains(out, `type="module"`) {
+		t.Fatalf("css entrypoint shape wrong:\n%s", out)
 	}
-}
-
-func TestRenderParts_NonceLeavesBodiesUnchanged(t *testing.T) {
-	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
-	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	im := assetmapper.NewImportmap()
-	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
-
-	plain, err := im.RenderParts(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonced, err := im.RenderParts(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}, Nonce: "abc"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(nonced.HTML, `nonce="abc"`) {
-		t.Fatal("nonce attribute missing")
-	}
-	if len(plain.InlineScripts) != len(nonced.InlineScripts) {
-		t.Fatal("nonce changed the script count")
-	}
-	for i := range plain.InlineScripts {
-		if plain.InlineScripts[i] != nonced.InlineScripts[i] {
-			t.Fatalf("nonce changed body %d", i)
-		}
-	}
-}
-
-func TestRenderWithOptions_MatchesRenderPartsHTML(t *testing.T) {
-	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
-	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	im := assetmapper.NewImportmap()
-	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
-	opts := assetmapper.RenderOptions{Entrypoints: []string{"app"}, Nonce: "n1"}
-	html, err := im.RenderWithOptions(m, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parts, err := im.RenderParts(m, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if html != parts.HTML {
-		t.Fatal("RenderWithOptions and RenderParts.HTML diverge")
-	}
-}
-
-func TestFuncMapHelpers_MatchRenderParts(t *testing.T) {
-	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
-	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: src}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	im := assetmapper.NewImportmap()
-	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
-	fm := assetmapper.FuncMap(m, im)
-
-	plain, err := im.RenderParts(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	helper := fm["importmap"].(func(...string) (template.HTML, error))
-	got, err := helper("app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != plain.HTML {
-		t.Fatal("importmap helper diverges from RenderParts.HTML")
-	}
-
-	nonced, err := im.RenderParts(m, assetmapper.RenderOptions{Entrypoints: []string{"app"}, Nonce: "n2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonceHelper := fm["importmap_nonce"].(func(string, ...string) (template.HTML, error))
-	gotNonced, err := nonceHelper("n2", "app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(gotNonced) != nonced.HTML {
-		t.Fatal("importmap_nonce helper diverges from RenderParts.HTML")
+	if n := len(inlineBodies(out)); n != 1 {
+		t.Fatalf("inline scripts = %d, want 1 (the importmap)", n)
 	}
 }

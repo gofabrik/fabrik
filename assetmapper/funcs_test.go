@@ -79,7 +79,7 @@ func TestFuncMap_ImportmapRendersScriptAndPreloads(t *testing.T) {
 		`<script type="importmap">`,
 		`<link rel="modulepreload" href="/assets/app-`,
 		`<link rel="modulepreload" href="/assets/util-`,
-		`<script type="module">import "app";</script>`,
+		`<script type="module" src="/assets/app-`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -167,7 +167,7 @@ func TestFuncMap_EndToEndPage(t *testing.T) {
 		`<script type="importmap">`,
 		`<link rel="modulepreload" href="/assets/app-`,
 		`<link rel="stylesheet" href="/assets/styles/main-`,
-		`<script type="module">import "app";</script>`,
+		`<script type="module" src="/assets/app-`,
 		`<img src="/assets/images/logo-`,
 	} {
 		if !strings.Contains(out, want) {
