@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -49,6 +50,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	env := append(os.Environ(),
 		"DEMO_HTTP_ADDR=:"+port,
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
+		"DEMO_STORAGE_PATH="+filepath.Join(tmp, "storage"),
 		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
 	)
 	// An invalid config verifies that help and command listing skip construction.
@@ -193,12 +195,83 @@ func TestDemoEndToEnd(t *testing.T) {
 	sessionFlow(t, port)
 	crossOriginFlow(t, port)
 	formsFlow(t, port)
+	filesFlow(t, base)
 	rateLimitFlow(t, base)
 	gracefulShutdown(t, server)
 
 	logged := serverOut.String()
 	if !strings.Contains(logged, "mail: would send") || !strings.Contains(logged, "greetings@demo.example") || !strings.Contains(logged, "notifier@demo.example") {
 		t.Fatalf("server output missing the greeting notification mail:\n%s", logged)
+	}
+}
+
+func filesFlow(t *testing.T, base string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "hello.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw.Write([]byte("hello storage"))
+	mw.Close()
+	resp, err := http.Post(base+"/files", mw.FormDataContentType(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("upload: %d", resp.StatusCode)
+	}
+
+	resp, err = http.Get(base + "/files/uploads/hello.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "hello storage" {
+		t.Fatalf("serve = %q", body)
+	}
+
+	req, _ := http.NewRequest("GET", base+"/files/uploads/hello.txt", nil)
+	req.Header.Set("Range", "bytes=0-4")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent || string(body) != "hello" {
+		t.Fatalf("range: %d %q", resp.StatusCode, body)
+	}
+	if resp.Header.Get("X-Content-Type-Options") != "nosniff" || resp.Header.Get("Content-Disposition") != "attachment" {
+		t.Fatalf("uploaded content must not serve same-origin inline: %v", resp.Header)
+	}
+
+	resp, err = http.Get(base + "/files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "uploads/hello.txt") {
+		t.Fatalf("listing missing upload:\n%s", body)
+	}
+
+	// Encoded dot segments bypass mux canonicalization and must be rejected by Serve.
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err = noRedirect.Get(base + "/files/%2e%2e/%2e%2e/etc/passwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("encoded traversal: %d, want the handler's 400 (CheckKey rejection)", resp.StatusCode)
 	}
 }
 

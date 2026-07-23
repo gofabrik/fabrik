@@ -1,0 +1,13 @@
+{{ define "title" }}Files{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Files</h1>
+  <form method="post" action="/files" enctype="multipart/form-data">
+    <label>Upload <input type="file" name="file" required></label>
+    <button type="submit">Save</button>
+  </form>
+  <ul>
+  {{ range .Entries }}<li class="file"><a href="/files/{{ .Key }}">{{ .Key }}</a> ({{ .Size }} bytes)</li>
+  {{ end }}</ul>
+{{ end }}

@@ -4,6 +4,7 @@ import (
 	"demo/shared"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
+	"github.com/gofabrik/fabrik/storage"
 	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
 )
@@ -172,4 +174,79 @@ func (d *Docs) List(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, "%s %s\n", method, rt.Pattern) //nolint:errcheck // response write; nothing to do on client disconnect
 	}
+}
+
+const maxUpload = 8 << 20
+
+type FilesPage struct {
+	Entries []storage.Info
+}
+
+func (FilesPage) Template() string { return "web/files" }
+
+type Files struct {
+	Store storage.Storage
+}
+
+//fabrik:web GET /files
+func (f *Files) Show(req *web.Request) (web.Response, error) {
+	var entries []storage.Info
+	for info, err := range f.Store.List(req.Context(), "") {
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, info)
+	}
+	return web.View(FilesPage{Entries: entries}), nil
+}
+
+//fabrik:web POST /files
+func (f *Files) Upload(req *web.Request) (web.Response, error) {
+	r := req.HTTP()
+	// Bind enforces both the total request limit and multipart memory limit.
+	if _, err := forms.Bind[struct{}](r, forms.WithMaxBytes(maxUpload)); err != nil {
+		if errors.Is(err, forms.ErrBodyTooLarge) {
+			return web.Status(http.StatusRequestEntityTooLarge), nil
+		}
+		return web.Status(http.StatusBadRequest), nil
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return web.Status(http.StatusBadRequest), nil
+	}
+	defer file.Close()
+	key := "uploads/" + header.Filename
+	if err := storage.CheckKey(key); err != nil {
+		return web.Redirect("/files"), nil
+	}
+	if err := f.Store.Put(req.Context(), key, file); err != nil {
+		return nil, err
+	}
+	return web.Redirect("/files"), nil
+}
+
+//fabrik:http GET /files/{key...}
+func (f *Files) Serve(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	rc, err := f.Store.Open(r.Context(), key)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer rc.Close()
+	// Force downloads so untrusted uploads cannot render as same-origin content.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment")
+	rs, ok := rc.(io.ReadSeeker)
+	if !ok {
+		io.Copy(w, rc)
+		return
+	}
+	// A zero modtime avoids a racy Stat of a potentially newer version.
+	http.ServeContent(w, r, key, time.Time{}, rs)
 }
