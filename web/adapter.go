@@ -63,7 +63,12 @@ func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
 		} else {
 			slog.ErrorContext(r.Context(), "web: handler failed", "method", r.Method, "path", r.URL.Path, "status", status, "error", err)
 		}
-		http.Error(w, http.StatusText(status), status)
+		text := http.StatusText(status)
+		if text == "" {
+			// Extension codes (499, 599) have no standard text.
+			text = "request error"
+		}
+		http.Error(w, text, status)
 		return
 	}
 	slog.ErrorContext(r.Context(), "web: handler failed", "method", r.Method, "path", r.URL.Path, "error", err)

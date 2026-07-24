@@ -235,6 +235,11 @@ func TestFile_JSONValuesRejectNullAndAbsentStayZero(t *testing.T) {
 			t.Fatalf("json %s = %v, want a 400-status error", body, err)
 		}
 	}
+	dup := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"attachments":null,"attachments":[]}`))
+	dup.Header.Set("Content-Type", "application/json")
+	if _, err := forms.Bind[multiInput](dup); err == nil {
+		t.Fatal("duplicate-key JSON with a trailing array bound a file slice")
+	}
 	for _, body := range []string{`{"attachments":null}`, `{}`} {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -256,6 +261,23 @@ func TestFile_JSONValuesRejectNullAndAbsentStayZero(t *testing.T) {
 		if form.Data.File.Present() {
 			t.Fatalf("json %s bound a file", body)
 		}
+	}
+}
+
+func TestBind_MalformedBodiesCarry400(t *testing.T) {
+	badJSON := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"label":`))
+	badJSON.Header.Set("Content-Type", "application/json")
+	_, err := forms.Bind[uploadInput](badJSON)
+	var se interface{ HTTPStatus() int }
+	if err == nil || !errors.As(err, &se) || se.HTTPStatus() != http.StatusBadRequest {
+		t.Fatalf("malformed JSON = %v, want a 400-status error", err)
+	}
+
+	badForm := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("a=%zz"))
+	badForm.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	_, err = forms.Bind[uploadInput](badForm)
+	if err == nil || !errors.As(err, &se) || se.HTTPStatus() != http.StatusBadRequest {
+		t.Fatalf("malformed urlencoded = %v, want a 400-status error", err)
 	}
 }
 

@@ -561,6 +561,8 @@ func TestDefaultErrorHandlerHonorsStatusBearingErrors(t *testing.T) {
 	}{
 		{413, 413, slog.LevelInfo, "Request Entity Too Large\n"},
 		{503, 503, slog.LevelError, "Service Unavailable\n"},
+		{499, 499, slog.LevelInfo, "request error\n"},
+		{599, 599, slog.LevelError, "request error\n"},
 		{200, 500, slog.LevelError, "internal server error\n"},
 		{700, 500, slog.LevelError, "internal server error\n"},
 	}

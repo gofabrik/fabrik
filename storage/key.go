@@ -8,9 +8,10 @@ import (
 // UniqueKey derives a collision-resistant key under dir: a random
 // 128-bit hex prefix keeps name only when every rune is an RFC 3986
 // unreserved character, so the key embeds in URL paths untouched; an
-// unusable name leaves the bare prefix. dir is used as given, so the
-// result satisfies [CheckKey] exactly when dir does. crypto/rand
-// never returns an error (it aborts on entropy failure).
+// unusable name leaves the bare prefix. dir is used as given: with a
+// valid non-empty dir the result satisfies [CheckKey], and with an
+// empty dir the bare key does on its own. crypto/rand never returns
+// an error (it aborts on entropy failure).
 func UniqueKey(dir, name string) string {
 	var buf [16]byte
 	rand.Read(buf[:]) //nolint:errcheck // never fails by contract
