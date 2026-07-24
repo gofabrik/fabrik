@@ -1,8 +1,11 @@
 package web_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -489,4 +492,114 @@ type headerThenFail struct{}
 func (headerThenFail) Respond(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("X-RateLimit", "10") // touched, then fails pre-commit
 	return errors.New("gave up before committing")
+}
+
+type statusCarrier struct{ status int }
+
+func (e statusCarrier) Error() string   { return "carrier" }
+func (e statusCarrier) HTTPStatus() int { return e.status }
+
+func TestErrorStatusAcceptsOnlyErrorRange(t *testing.T) {
+	cases := []struct {
+		status int
+		ok     bool
+	}{{400, true}, {413, true}, {599, true}, {503, true}, {200, false}, {399, false}, {600, false}, {0, false}, {-1, false}}
+	for _, c := range cases {
+		got, ok := web.ErrorStatus(statusCarrier{c.status})
+		if ok != c.ok || (ok && got != c.status) {
+			t.Errorf("ErrorStatus(%d) = %d, %v; want ok=%v", c.status, got, ok, c.ok)
+		}
+	}
+	if _, ok := web.ErrorStatus(errors.New("plain")); ok {
+		t.Error("plain error reported a status")
+	}
+	if _, ok := web.ErrorStatus(fmt.Errorf("wrapped: %w", statusCarrier{404})); !ok {
+		t.Error("wrapped status-bearing error not discovered")
+	}
+
+	counter := &countingCarrier{status: 418}
+	if status, ok := web.ErrorStatus(counter); !ok || status != 418 {
+		t.Fatalf("counting carrier = %d, %v", status, ok)
+	}
+	if counter.calls != 1 {
+		t.Errorf("HTTPStatus called %d times, want exactly once", counter.calls)
+	}
+}
+
+type countingCarrier struct {
+	status int
+	calls  int
+}
+
+func (e *countingCarrier) Error() string { return "counting" }
+func (e *countingCarrier) HTTPStatus() int {
+	e.calls++
+	return e.status
+}
+
+type captureLogs struct{ records *[]slog.Record }
+
+func (c captureLogs) Enabled(context.Context, slog.Level) bool { return true }
+func (c captureLogs) Handle(_ context.Context, r slog.Record) error {
+	*c.records = append(*c.records, r)
+	return nil
+}
+func (c captureLogs) WithAttrs([]slog.Attr) slog.Handler { return c }
+func (c captureLogs) WithGroup(string) slog.Handler      { return c }
+
+func TestDefaultErrorHandlerHonorsStatusBearingErrors(t *testing.T) {
+	var records []slog.Record
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureLogs{records: &records}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	cases := []struct {
+		status    int
+		wantCode  int
+		wantLevel slog.Level
+		wantBody  string
+	}{
+		{413, 413, slog.LevelInfo, "Request Entity Too Large\n"},
+		{503, 503, slog.LevelError, "Service Unavailable\n"},
+		{499, 499, slog.LevelInfo, "request error\n"},
+		{599, 599, slog.LevelError, "request error\n"},
+		{200, 500, slog.LevelError, "internal server error\n"},
+		{700, 500, slog.LevelError, "internal server error\n"},
+	}
+	for _, c := range cases {
+		records = records[:0]
+		h := web.NewAdapter().Wrap(func(*web.Request) (web.Response, error) {
+			return nil, statusCarrier{c.status}
+		})
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Code != c.wantCode {
+			t.Errorf("status %d: code = %d, want %d", c.status, rec.Code, c.wantCode)
+		}
+		if body := rec.Body.String(); body != c.wantBody {
+			t.Errorf("status %d: body = %q, want %q", c.status, body, c.wantBody)
+		}
+		if len(records) != 1 {
+			t.Errorf("status %d: logged %d records, want 1", c.status, len(records))
+		} else if records[0].Level != c.wantLevel {
+			t.Errorf("status %d: log level = %v, want %v", c.status, records[0].Level, c.wantLevel)
+		}
+	}
+}
+
+func TestCustomErrorHandlerCanReuseErrorStatus(t *testing.T) {
+	h := web.NewAdapter(web.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+		if status, ok := web.ErrorStatus(err); ok {
+			w.WriteHeader(status)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	})).Wrap(func(*web.Request) (web.Response, error) {
+		return nil, statusCarrier{429}
+	})
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != 429 {
+		t.Fatalf("custom handler code = %d, want 429", rec.Code)
+	}
 }

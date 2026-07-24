@@ -6,7 +6,8 @@
 //
 // GET and HEAD use query values; form-encoded and multipart requests use body
 // values; JSON requests decode the body. Field names come from form tags or the
-// snake_case field name, and unknown submitted fields are ignored.
+// snake_case field name, and unknown submitted fields are ignored. [File]
+// fields bind uploaded files from multipart requests.
 //
 // Validation remains HTTP-free; this package owns request binding.
 package forms
@@ -17,15 +18,33 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 
 	"github.com/gofabrik/fabrik/validation"
 )
 
-// ErrBodyTooLarge is returned by [Bind] when the request body exceeds
-// the configured limit (see [WithMaxBytes]).
-var ErrBodyTooLarge = errors.New("forms: request body too large")
+// ErrBodyTooLarge reports that a request body exceeds the limit set by [WithMaxBytes] and carries HTTP status 413.
+var ErrBodyTooLarge error = &statusErr{msg: "forms: request body too large", status: 413}
+
+// ErrFormConsumed reports that [Bind] detected a parsed body form whose limits
+// it cannot enforce; direct body reads cannot be detected.
+var ErrFormConsumed = errors.New("forms: request form already parsed before Bind")
+
+type statusErr struct {
+	msg    string
+	status int
+	cause  error
+}
+
+func (e *statusErr) Error() string   { return e.msg }
+func (e *statusErr) HTTPStatus() int { return e.status }
+func (e *statusErr) Unwrap() error   { return e.cause }
+
+func badRequest(err error) error {
+	return &statusErr{msg: err.Error(), status: 400, cause: err}
+}
 
 const (
 	defaultMaxBytes  = 10 << 20 // 10 MiB
@@ -57,7 +76,9 @@ type config struct {
 type Option func(*config)
 
 // WithMaxBytes caps the request body (default 10 MiB). A larger body makes
-// [Bind] return [ErrBodyTooLarge].
+// [Bind] return [ErrBodyTooLarge]; multipart framing counts toward the
+// cap, so it is not a per-file size policy - validate [File.Size] for
+// that.
 func WithMaxBytes(n int64) Option { return func(c *config) { c.maxBytes = n } }
 
 // WithMaxMemory sets the multipart in-memory threshold before file
@@ -87,6 +108,9 @@ func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
 			if err := json.Unmarshal(body, &form.Data); err != nil {
 				return nil, jsonErr(err)
 			}
+			if err := rejectJSONFiles(&form.Data); err != nil {
+				return nil, badRequest(err)
+			}
 		}
 	} else {
 		values, err := requestValues(r, cfg)
@@ -94,7 +118,11 @@ func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
 			return nil, err
 		}
 		form.raw = values
-		decode(values, &form.Errors, &form.Data)
+		var files map[string][]*multipart.FileHeader
+		if r.MultipartForm != nil {
+			files = r.MultipartForm.File
+		}
+		decode(values, files, &form.Errors, &form.Data)
 	}
 
 	// Add is first-wins, so decode errors take precedence.
@@ -109,6 +137,10 @@ func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
 // requestValues parses non-JSON submissions.
 func requestValues(r *http.Request, cfg config) (url.Values, error) {
 	if mediaType(r) == "multipart/form-data" {
+		// Reject prior parsing because ParseMultipartForm would silently reuse its limits.
+		if r.MultipartForm != nil || r.PostForm != nil {
+			return nil, ErrFormConsumed
+		}
 		if err := r.ParseMultipartForm(cfg.maxMemory); err != nil { // #nosec G120 -- input is length-bounded above
 			return nil, parseErr(err)
 		}
@@ -117,27 +149,59 @@ func requestValues(r *http.Request, cfg config) (url.Values, error) {
 		}
 		return url.Values{}, nil
 	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if err := r.ParseForm(); err != nil {
+			return nil, parseErr(err)
+		}
+		return r.Form, nil
+	}
+	// Reject prior parsing when ParseForm may have consumed a body outside Bind's limits.
+	if bodyParseMethod(r.Method) && r.PostForm != nil {
+		mt, err := parsedMediaType(r)
+		if err != nil || mt == "application/x-www-form-urlencoded" {
+			return nil, ErrFormConsumed
+		}
+	}
 	if err := r.ParseForm(); err != nil {
 		return nil, parseErr(err)
 	}
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		return r.Form, nil
-	}
 	return r.PostForm, nil
+}
+
+func bodyParseMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		return true
+	}
+	return false
+}
+
+// parsedMediaType surfaces Content-Type parse failures; mediaType
+// collapses them to "", which would skip the consumed-form guard.
+func parsedMediaType(r *http.Request) (string, error) {
+	ct := r.Header.Get("Content-Type")
+	if ct == "" {
+		return "", nil
+	}
+	mt, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return "", err
+	}
+	return mt, nil
 }
 
 func parseErr(err error) error {
 	if tooLarge(err) {
 		return ErrBodyTooLarge
 	}
-	return fmt.Errorf("forms: parse request: %w", err)
+	return badRequest(fmt.Errorf("forms: parse request: %w", err))
 }
 
 func jsonErr(err error) error {
 	if tooLarge(err) {
 		return ErrBodyTooLarge
 	}
-	return fmt.Errorf("forms: decode json: %w", err)
+	return badRequest(fmt.Errorf("forms: decode json: %w", err))
 }
 
 func tooLarge(err error) bool {

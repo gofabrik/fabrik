@@ -2,6 +2,7 @@ package forms
 
 import (
 	"errors"
+	"mime/multipart"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -10,9 +11,7 @@ import (
 	"github.com/gofabrik/fabrik/validation"
 )
 
-// decode fills dst from values and records conversion errors. Non-struct dst is
-// ignored.
-func decode(values url.Values, errs *validation.Errors, dst any) {
+func decode(values url.Values, files map[string][]*multipart.FileHeader, errs *validation.Errors, dst any) {
 	rv := reflect.ValueOf(dst).Elem()
 	if rv.Kind() != reflect.Struct {
 		return
@@ -29,6 +28,9 @@ func decode(values url.Values, errs *validation.Errors, dst any) {
 		}
 		if name == "" {
 			name = snakeCase(ft.Name)
+		}
+		if setFile(rv.Field(i), files[name]) {
+			continue
 		}
 		submitted, present := values[name]
 		if err := setField(rv.Field(i), submitted, present); err != nil {
