@@ -1,7 +1,6 @@
 package shared
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gofabrik/fabrik/assetmapper"
@@ -16,22 +15,12 @@ func Logged(next http.Handler) http.Handler { return middleware.Logger(next) }
 func Recovered(next http.Handler) http.Handler { return middleware.Recover(next) }
 
 //fabrik:http:middleware
-func SecureHeadersMiddleware(assets assetmapper.Runtime, sec *SecurityConfig) (func(http.Handler) http.Handler, error) {
-	scriptSrc := []string{middleware.CSPSelf}
-	src, ok := assets.ImportmapCSPSource()
-	switch {
-	case ok:
-		scriptSrc = append(scriptSrc, src)
-	case sec.AllowUnsafeInline:
-		scriptSrc = append(scriptSrc, middleware.CSPUnsafeInline)
-	default:
-		return nil, errors.New("assets have no build-time script hash; set security.allow_unsafe_inline to serve source assets")
-	}
+func SecureHeadersMiddleware(assets assetmapper.Server) func(http.Handler) http.Handler {
 	return middleware.SecureHeaders(
 		middleware.WithCSP(middleware.CSP{
-			ScriptSrc: scriptSrc,
+			ScriptSrc: append([]string{middleware.CSPSelf}, assets.ImportmapCSPSources()...),
 		}),
-	), nil
+	)
 }
 
 //fabrik:http:middleware

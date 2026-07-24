@@ -1,5 +1,5 @@
 The asset switch and an application consumer of
-*assetmapper.RuntimeConfig share one generated load.
+*assetmapper.Options share one generated load.
 -- go.mod --
 module app
 
@@ -35,10 +35,10 @@ import (
 var Assets embed.FS
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.RuntimeConfig
+type AssetsConfig = assetmapper.Options
 
 //fabrik:hook setup
-func AnnounceAssets(c *assetmapper.RuntimeConfig) error {
+func AnnounceAssets(c *assetmapper.Options) error {
 	fmt.Println("assets:", c.Kind)
 	return nil
 }
@@ -87,7 +87,7 @@ func run() int {
 		if fabrikEnv == "development" {
 			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
 		}
-		assetmapperRuntimeConfig, err := config.Load[assetmapper.RuntimeConfig](append(fabrikConfigOpts,
+		assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
 			config.KnownSections("assets"),
 			config.Section("assets"),
 		)...)
@@ -96,23 +96,23 @@ func run() int {
 		}
 
 		// Setup: after config, before providers
-		if err := web.AnnounceAssets(assetmapperRuntimeConfig); err != nil {
+		if err := web.AnnounceAssets(assetmapperOptions); err != nil {
 			return err
 		}
 
 		// Providers
-		assetKind, err := assetmapperRuntimeConfig.Mode()
+		assetKind, err := assetmapperOptions.Mode()
 		if err != nil {
 			return err
 		}
-		var assetRuntime assetmapper.Runtime
+		var assetServer assetmapper.Server
 		switch assetKind {
 		case assetmapper.KindSource:
-			assetRuntime, err = assetmapper.NewSource([]assetmapper.Root{
+			assetServer, err = assetmapper.NewSource([]assetmapper.Root{
 				{FS: os.DirFS("web/assets")},
 			}, nil)
 		case assetmapper.KindCompiled:
-			assetRuntime, err = assetmapper.Build([]assetmapper.Root{
+			assetServer, err = assetmapper.Build([]assetmapper.Root{
 				{FS: web.Assets, Dir: "assets"},
 			}, nil)
 		}
@@ -123,7 +123,7 @@ func run() int {
 		r := router.New()
 
 		// Register
-		r.Handle("/assets/", assetRuntime.Handler())
+		r.Handle("/assets/", assetServer.Handler())
 		r.Method("GET", "/{$}", web.Home)
 		return nil
 	}(); err != nil {

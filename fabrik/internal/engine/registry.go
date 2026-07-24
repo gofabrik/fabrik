@@ -30,7 +30,7 @@ func New() []gen.Directive {
 	host := routerdir.NewHost(group, routes, mw)
 	tpl := tpldir.NewTemplates()
 	cfg := configdir.New()
-	assetsConfig := runtimeConfigSource{cfg: cfg}
+	assetsConfig := assetOptionsSource{cfg: cfg}
 	provider := core.NewProvider(cfg)
 	jobsJob, jobsCron := jobsdir.New()
 	cliCmd, cliFlag, cliArg, cliExample, cliGroup, cliRoot, cliMW := clidir.New()
@@ -113,22 +113,22 @@ func valuesNote(kind gen.ValueKind, values []string) string {
 	return " - e.g. " + strings.Join(values, ", ")
 }
 
-type runtimeConfigSource struct {
+type assetOptionsSource struct {
 	cfg *configdir.Config
 }
 
-const runtimeConfigPtr = "*github.com/gofabrik/fabrik/assetmapper.RuntimeConfig"
+const assetOptionsPtr = "*github.com/gofabrik/fabrik/assetmapper.Options"
 
-func (r runtimeConfigSource) Node() (string, token.Position, bool) {
-	nd := r.cfg.NodeByType(runtimeConfigPtr)
+func (r assetOptionsSource) Node() (string, token.Position, bool) {
+	nd := r.cfg.NodeByType(assetOptionsPtr)
 	if nd == nil {
 		return "", token.Position{}, false
 	}
 	return nd.Section(), nd.Pos(), true
 }
 
-func (r runtimeConfigSource) Load(g *gen.Gen) (string, diag.Diagnostics, bool) {
-	nd := r.cfg.NodeByType(runtimeConfigPtr)
+func (r assetOptionsSource) Load(g *gen.Gen) (string, diag.Diagnostics, bool) {
+	nd := r.cfg.NodeByType(assetOptionsPtr)
 	// Reuse the flow's lazy binding when application code also injects the config.
 	return g.Instance(types.NewPointer(nd.Named()), "")
 }

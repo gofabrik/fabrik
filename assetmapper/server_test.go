@@ -11,7 +11,7 @@ import (
 	"github.com/gofabrik/fabrik/assetmapper"
 )
 
-var _ assetmapper.Runtime = (*assetmapper.Compiled)(nil)
+var _ assetmapper.Server = (*assetmapper.Compiled)(nil)
 
 func writeAsset(t *testing.T, dir, name, content string) {
 	t.Helper()
@@ -20,7 +20,7 @@ func writeAsset(t *testing.T, dir, name, content string) {
 	}
 }
 
-func sourceRuntime(t *testing.T, dir string) assetmapper.Runtime {
+func sourceServer(t *testing.T, dir string) assetmapper.Server {
 	t.Helper()
 	rt, err := assetmapper.NewSource([]assetmapper.Root{{FS: os.DirFS(dir)}}, nil)
 	if err != nil {
@@ -32,7 +32,7 @@ func sourceRuntime(t *testing.T, dir string) assetmapper.Runtime {
 func TestNewSource_ServesEditsWithoutRestart(t *testing.T) {
 	dir := t.TempDir()
 	writeAsset(t, dir, "app.js", `console.log("one");`)
-	rt := sourceRuntime(t, dir)
+	rt := sourceServer(t, dir)
 
 	before, err := rt.Asset("app.js")
 	if err != nil {
@@ -120,7 +120,7 @@ func TestNewSource_SnapshotsImportmap(t *testing.T) {
 func TestNewSource_ETagRevalidatesAcrossEdit(t *testing.T) {
 	dir := t.TempDir()
 	writeAsset(t, dir, "app.js", "one")
-	rt := sourceRuntime(t, dir)
+	rt := sourceServer(t, dir)
 	url, err := rt.Asset("app.js")
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestNewSource_URLPrefixParityWithCompiled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, rt := range map[string]assetmapper.Runtime{"source": src, "compiled": compiled} {
+	for name, rt := range map[string]assetmapper.Server{"source": src, "compiled": compiled} {
 		u, err := rt.Asset("app.js")
 		if err != nil {
 			t.Fatal(err)
@@ -181,19 +181,19 @@ func TestNewSource_URLPrefixParityWithCompiled(t *testing.T) {
 	}
 }
 
-func TestNewSource_ImportmapCSPSourceUnavailable(t *testing.T) {
+func TestNewSource_ImportmapCSPSourcesRelaxed(t *testing.T) {
 	dir := t.TempDir()
 	writeAsset(t, dir, "app.js", "export {}")
-	src, ok := sourceRuntime(t, dir).ImportmapCSPSource()
-	if ok || src != "" {
-		t.Fatalf("source mode reported a stable CSP source: %q, %v", src, ok)
+	srcs := sourceServer(t, dir).ImportmapCSPSources()
+	if len(srcs) != 1 || srcs[0] != "'unsafe-inline'" {
+		t.Fatalf("source mode CSP sources = %v, want the explicit inline relaxation", srcs)
 	}
 }
 
 func TestNewSource_FuncMapCarriesAssetHelpers(t *testing.T) {
 	dir := t.TempDir()
 	writeAsset(t, dir, "app.js", "export {}")
-	fm := sourceRuntime(t, dir).FuncMap()
+	fm := sourceServer(t, dir).FuncMap()
 	for _, name := range []string{"asset", "importmap", "module_preload_links"} {
 		if _, ok := fm[name]; !ok {
 			t.Errorf("FuncMap is missing %q", name)
@@ -205,7 +205,7 @@ func TestNewSource_DiscoversImportmapFromRoots(t *testing.T) {
 	dir := t.TempDir()
 	writeAsset(t, dir, "app.js", "export {}")
 	writeAsset(t, dir, "importmap.json", `{"app":{"path":"app.js"}}`)
-	rt := sourceRuntime(t, dir)
+	rt := sourceServer(t, dir)
 
 	render := rt.FuncMap()["importmap"].(func(...string) (template.HTML, error))
 	html, err := render()
@@ -217,19 +217,16 @@ func TestNewSource_DiscoversImportmapFromRoots(t *testing.T) {
 	}
 }
 
-func TestCompiled_ImportmapCSPSource(t *testing.T) {
+func TestCompiled_ImportmapCSPSources(t *testing.T) {
 	dir := t.TempDir()
 	writeAsset(t, dir, "app.js", "export {}")
 	c, err := assetmapper.Build([]assetmapper.Root{{FS: os.DirFS(dir)}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, ok := c.ImportmapCSPSource()
-	if !ok {
-		t.Fatal("compiled mode reported no stable CSP source")
-	}
-	if src != c.CSPImportmapHash() {
-		t.Fatalf("ImportmapCSPSource = %q, CSPImportmapHash = %q", src, c.CSPImportmapHash())
+	srcs := c.ImportmapCSPSources()
+	if len(srcs) != 1 || srcs[0] != c.CSPImportmapHash() {
+		t.Fatalf("ImportmapCSPSources = %v, want the importmap hash %q", srcs, c.CSPImportmapHash())
 	}
 }
 
@@ -245,7 +242,7 @@ func TestRuntimeConfig_Mode(t *testing.T) {
 		{"bundler", "", true},
 	}
 	for _, c := range cases {
-		got, err := assetmapper.RuntimeConfig{Kind: c.kind}.Mode()
+		got, err := assetmapper.Options{Kind: c.kind}.Mode()
 		if c.err {
 			if err == nil {
 				t.Errorf("Kind %q: expected error", c.kind)

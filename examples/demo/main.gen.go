@@ -120,21 +120,21 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
 	}
 	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("http"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
 	)...)
 	if err != nil {
@@ -167,77 +167,70 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
 	}
 	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("http"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sharedJobsConfig2, err := config.Load[shared.JobsConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("jobs"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	assetmapperRuntimeConfig, err := config.Load[assetmapper.RuntimeConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+	assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("assets"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("session"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	sharedSecurityConfig, err := config.Load[shared.SecurityConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
-		config.Section("security"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("crossorigin"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("mailer"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("storage"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	webGreeterConfig, err := config.Load[web.GreeterConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("greeter"),
 	)...)
 	if err != nil {
@@ -250,19 +243,19 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	}
 
 	// Providers
-	assetKind, err := assetmapperRuntimeConfig.Mode()
+	assetKind, err := assetmapperOptions.Mode()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	var assetRuntime assetmapper.Runtime
+	var assetServer assetmapper.Server
 	switch assetKind {
 	case assetmapper.KindSource:
-		assetRuntime, err = assetmapper.NewSource([]assetmapper.Root{
+		assetServer, err = assetmapper.NewSource([]assetmapper.Root{
 			{FS: os.DirFS("shared/assets")},
 			{FS: os.DirFS("web/assets")},
 		}, nil)
 	case assetmapper.KindCompiled:
-		assetRuntime, err = assetmapper.Build([]assetmapper.Root{
+		assetServer, err = assetmapper.Build([]assetmapper.Root{
 			{FS: shared.Assets, Dir: "assets"},
 			{FS: web.Assets, Dir: "assets"},
 		}, nil)
@@ -273,7 +266,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	appTemplates, err := templates.LoadSources([]templates.Source{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetRuntime.FuncMap(), templates.FuncMap{
+	}, assetServer.FuncMap(), templates.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})
@@ -435,25 +428,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
-
-	secureHeadersMiddlewareMW, err := shared.SecureHeadersMiddleware(assetRuntime, sharedSecurityConfig)
-	if err != nil {
-		if sharedStorageClose != nil {
-			sharedStorageClose()
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			sharedRatelimitMemoryStoreClose()
-		}
-		if sharedCacheStoreClose != nil {
-			sharedCacheStoreClose()
-		}
-		if sharedSqlDBClose != nil {
-			sharedSqlDBClose()
-		}
-		return nil, nil, nil, err
-	}
+	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
 	r.Use(secureHeadersMiddlewareMW)
-
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
@@ -477,7 +453,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	}
 
 	// Register
-	r.Handle("/assets/", assetRuntime.Handler())
+	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 
@@ -609,70 +585,63 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
 	}
 	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("http"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-	assetmapperRuntimeConfig, err := config.Load[assetmapper.RuntimeConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+	assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("assets"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("session"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-	sharedSecurityConfig, err := config.Load[shared.SecurityConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
-		config.Section("security"),
-	)...)
-	if err != nil {
-		return nil, nil, err
-	}
 	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("crossorigin"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("mailer"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("storage"),
 	)...)
 	if err != nil {
 		return nil, nil, err
 	}
 	webGreeterConfig, err := config.Load[web.GreeterConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("greeter"),
 	)...)
 	if err != nil {
@@ -685,19 +654,19 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	}
 
 	// Providers
-	assetKind, err := assetmapperRuntimeConfig.Mode()
+	assetKind, err := assetmapperOptions.Mode()
 	if err != nil {
 		return nil, nil, err
 	}
-	var assetRuntime assetmapper.Runtime
+	var assetServer assetmapper.Server
 	switch assetKind {
 	case assetmapper.KindSource:
-		assetRuntime, err = assetmapper.NewSource([]assetmapper.Root{
+		assetServer, err = assetmapper.NewSource([]assetmapper.Root{
 			{FS: os.DirFS("shared/assets")},
 			{FS: os.DirFS("web/assets")},
 		}, nil)
 	case assetmapper.KindCompiled:
-		assetRuntime, err = assetmapper.Build([]assetmapper.Root{
+		assetServer, err = assetmapper.Build([]assetmapper.Root{
 			{FS: shared.Assets, Dir: "assets"},
 			{FS: web.Assets, Dir: "assets"},
 		}, nil)
@@ -708,7 +677,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	appTemplates, err := templates.LoadSources([]templates.Source{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetRuntime.FuncMap(), templates.FuncMap{
+	}, assetServer.FuncMap(), templates.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})
@@ -869,25 +838,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
-
-	secureHeadersMiddlewareMW, err := shared.SecureHeadersMiddleware(assetRuntime, sharedSecurityConfig)
-	if err != nil {
-		if sharedStorageClose != nil {
-			sharedStorageClose()
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			sharedRatelimitMemoryStoreClose()
-		}
-		if sharedCacheStoreClose != nil {
-			sharedCacheStoreClose()
-		}
-		if sharedSqlDBClose != nil {
-			sharedSqlDBClose()
-		}
-		return nil, nil, err
-	}
+	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
 	r.Use(secureHeadersMiddlewareMW)
-
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
@@ -911,7 +863,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	}
 
 	// Register
-	r.Handle("/assets/", assetRuntime.Handler())
+	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 
@@ -1043,14 +995,14 @@ func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func(), err
 		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
 	}
 	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "security", "session", "storage"),
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
 	)...)
 	if err != nil {

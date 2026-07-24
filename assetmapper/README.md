@@ -140,10 +140,10 @@ the CLI calls.
 - `Mapper` in dev mode serves sources directly, re-reading and
   re-hashing on every request with `no-cache` + ETag revalidation -
   edits show up on reload with no compile step and no watcher.
-- `NewSource` wraps that dev mode behind the `Runtime` interface,
+- `NewSource` wraps that dev mode behind the `Server` interface,
   which `Build`'s `Compiled` also satisfies, so an application can
-  switch between live source serving and compiled assets on a
-  `RuntimeConfig` value.
+  switch between live source serving and compiled assets on an
+  `Options` value.
 - `Compile` materializes the hashed tree plus a `manifest.json` to a
   directory for CDN workflows that want files on disk; `Mapper` in
   prod mode resolves URLs from that manifest.

@@ -15,12 +15,12 @@ func InitLogger(l *LogConfig) error {
 	opts := &slog.HandlerOptions{Level: level}
 	var handler slog.Handler
 	switch l.Format {
-	case "text":
+	case LogFormatText:
 		handler = slog.NewTextHandler(os.Stderr, opts)
-	case "json":
+	case LogFormatJSON:
 		handler = slog.NewJSONHandler(os.Stderr, opts)
 	default:
-		return fmt.Errorf("log: invalid format %q (want text or json)", l.Format)
+		return fmt.Errorf("log: invalid format %q (want %s or %s)", l.Format, LogFormatText, LogFormatJSON)
 	}
 	slog.SetDefault(slog.New(handler))
 	return nil

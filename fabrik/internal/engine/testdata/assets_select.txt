@@ -1,5 +1,5 @@
-RuntimeConfig emits a source/compiled switch with module-root-relative
-source paths and binds consumers through assetmapper.Runtime.
+Declaring assetmapper.Options emits a source/compiled switch with module-root-relative
+source paths and binds consumers through assetmapper.Server.
 -- go.mod --
 module app
 
@@ -36,7 +36,7 @@ import (
 var Assets embed.FS
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.RuntimeConfig
+type AssetsConfig = assetmapper.Options
 -- web/assets/app.css --
 body {}
 -- web/templates.go --
@@ -62,7 +62,7 @@ import (
 )
 
 type Handlers struct {
-	Assets    assetmapper.Runtime
+	Assets    assetmapper.Server
 	Templates *templates.Set
 }
 
@@ -105,7 +105,7 @@ func run() int {
 		if fabrikEnv == "development" {
 			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
 		}
-		assetmapperRuntimeConfig, err := config.Load[assetmapper.RuntimeConfig](append(fabrikConfigOpts,
+		assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
 			config.KnownSections("assets"),
 			config.Section("assets"),
 		)...)
@@ -114,37 +114,37 @@ func run() int {
 		}
 
 		// Providers
-		assetKind, err := assetmapperRuntimeConfig.Mode()
+		assetKind, err := assetmapperOptions.Mode()
 		if err != nil {
 			return err
 		}
-		var assetRuntime assetmapper.Runtime
+		var assetServer assetmapper.Server
 		switch assetKind {
 		case assetmapper.KindSource:
-			assetRuntime, err = assetmapper.NewSource([]assetmapper.Root{
+			assetServer, err = assetmapper.NewSource([]assetmapper.Root{
 				{FS: os.DirFS("web/assets")},
 			}, nil)
 		case assetmapper.KindCompiled:
-			assetRuntime, err = assetmapper.Build([]assetmapper.Root{
+			assetServer, err = assetmapper.Build([]assetmapper.Root{
 				{FS: web.Assets, Dir: "assets"},
 			}, nil)
 		}
 		if err != nil {
 			return err
 		}
-		webTemplates, err := templates.Load(web.Templates, "templates", assetRuntime.FuncMap())
+		webTemplates, err := templates.Load(web.Templates, "templates", assetServer.FuncMap())
 		if err != nil {
 			return err
 		}
 		webHandlers := &web.Handlers{
-			Assets:    assetRuntime,
+			Assets:    assetServer,
 			Templates: webTemplates,
 		}
 
 		r := router.New()
 
 		// Register
-		r.Handle("/assets/", assetRuntime.Handler())
+		r.Handle("/assets/", assetServer.Handler())
 		r.Method("GET", "/{$}", webHandlers.Home)
 		return nil
 	}(); err != nil {

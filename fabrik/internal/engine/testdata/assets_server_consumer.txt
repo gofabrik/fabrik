@@ -1,5 +1,5 @@
-Without RuntimeConfig, assets use compiled construction and bind both
-*assetmapper.Compiled and assetmapper.Runtime.
+Without assetmapper.Options, assets use compiled construction and bind both
+*assetmapper.Compiled and assetmapper.Server.
 -- go.mod --
 module app
 
@@ -34,7 +34,7 @@ import (
 )
 
 type Handlers struct {
-	Assets assetmapper.Runtime
+	Assets assetmapper.Server
 }
 
 //fabrik:http GET /{$}

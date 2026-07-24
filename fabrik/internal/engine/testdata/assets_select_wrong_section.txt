@@ -1,4 +1,4 @@
-RuntimeConfig must use the assets section so the switch reads assets.kind.
+assetmapper.Options must use the assets section so the switch reads assets.kind.
 -- go.mod --
 module app
 
@@ -33,7 +33,7 @@ import (
 var Assets embed.FS
 
 //fabrik:config frontend
-type AssetsConfig = assetmapper.RuntimeConfig
+type AssetsConfig = assetmapper.Options
 -- web/assets/app.css --
 body {}
 -- web/web.go --
@@ -44,7 +44,7 @@ import "net/http"
 //fabrik:http GET /{$}
 func Home(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
-error: web/assets.go:13:1: assetmapper.RuntimeConfig must be declared under //fabrik:config assets, not section "frontend"
+error: web/assets.go:13:1: assetmapper.Options must be declared under //fabrik:config assets, not section "frontend"
   help: the switch is keyed by the documented assets.kind value
-warning: web/assets.go:13:1: config struct RuntimeConfig is never used
+warning: web/assets.go:13:1: config struct Options is never used
   help: inject it into a provider, hook, or handler struct, or remove the directive

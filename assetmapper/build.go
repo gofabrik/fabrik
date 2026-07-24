@@ -81,9 +81,9 @@ func (c *Compiled) CSPImportmapHash() string {
 	return c.cspImportmapHash
 }
 
-// ImportmapCSPSource returns the stable CSP source for compiled assets.
-func (c *Compiled) ImportmapCSPSource() (string, bool) {
-	return c.cspImportmapHash, true
+// ImportmapCSPSources returns the stable CSP source for compiled assets.
+func (c *Compiled) ImportmapCSPSources() []string {
+	return []string{c.cspImportmapHash}
 }
 
 // URLPrefix returns the resolved asset URL prefix.

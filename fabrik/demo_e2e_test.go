@@ -254,7 +254,6 @@ END;`
 	}
 
 	developmentFlow(t, src, bin, tmp)
-	relaxationRequiredFlow(t, src, bin, tmp)
 	envIdentityFlow(t, src, bin, tmp)
 	productionIgnoresLocalFlow(t, src, bin, tmp)
 	fabrikRunFlow(t, src, tmp)
@@ -446,23 +445,6 @@ func developmentFlow(t *testing.T, src, bin, tmp string) {
 	gracefulShutdown(t, server)
 	if logged := out.String(); !strings.Contains(logged, "level=") {
 		t.Fatalf("development logs are not text:\n%s", logged)
-	}
-}
-
-func relaxationRequiredFlow(t *testing.T, src, bin, tmp string) {
-	t.Helper()
-	local := filepath.Join(src, "config.local.yaml")
-	if err := os.WriteFile(local, []byte("security:\n  allow_unsafe_inline: false\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(local) //nolint:errcheck // test cleanup
-
-	cmd := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
-	cmd.Dir = src
-	cmd.Env = developmentEnv(t, tmp, freePort(t))
-	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "allow_unsafe_inline") {
-		t.Fatalf("source assets without the relaxation must fail startup: err=%v\n%s", err, out)
 	}
 }
 

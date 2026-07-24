@@ -24,6 +24,11 @@ type DatabaseConfig struct {
 	Path string `yaml:"path" env:"DEMO_DATABASE_PATH" default:"demo.db"`
 }
 
+const (
+	LogFormatText = "text"
+	LogFormatJSON = "json"
+)
+
 //fabrik:config log
 type LogConfig struct {
 	Format string `yaml:"format" env:"DEMO_LOG_FORMAT" default:"json"`
@@ -31,16 +36,11 @@ type LogConfig struct {
 }
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.RuntimeConfig
+type AssetsConfig = assetmapper.Options
 
 //fabrik:config session
 type SessionConfig struct {
 	CookieSecure bool `yaml:"cookie_secure" env:"DEMO_SESSION_COOKIE_SECURE" default:"true"`
-}
-
-//fabrik:config security
-type SecurityConfig struct {
-	AllowUnsafeInline bool `yaml:"allow_unsafe_inline"`
 }
 
 //fabrik:config crossorigin

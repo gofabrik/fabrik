@@ -21,7 +21,7 @@ const assetmapperPath = "github.com/gofabrik/fabrik/assetmapper"
 
 const compiledPath = "*" + assetmapperPath + ".Compiled"
 
-const runtimePath = assetmapperPath + ".Runtime"
+const serverPath = assetmapperPath + ".Server"
 
 // urlPrefix is fabrik's asset URL root; standalone users pick their
 // own via assetmapper.WithURLPrefix.
@@ -42,8 +42,8 @@ type FuncContributor interface {
 	ContributeFuncs(names []string, build func(g *gen.Gen) (string, diag.Diagnostics))
 }
 
-// RuntimeConfigSource locates and loads the application's asset configuration.
-type RuntimeConfigSource interface {
+// OptionsSource locates and loads the application's asset configuration.
+type OptionsSource interface {
 	// Node returns the declaration's section and position.
 	Node() (section string, pos token.Position, ok bool)
 	// Load returns the shared config instance for the current flow.
@@ -54,7 +54,7 @@ type RuntimeConfigSource interface {
 type Assets struct {
 	host   *routerdir.Host
 	funcs  FuncContributor
-	config RuntimeConfigSource
+	config OptionsSource
 
 	decls      []*assetNode
 	registered bool
@@ -64,7 +64,7 @@ type Assets struct {
 }
 
 // NewAssets returns an Assets directive for one run.
-func NewAssets(host *routerdir.Host, funcs FuncContributor, config RuntimeConfigSource) *Assets {
+func NewAssets(host *routerdir.Host, funcs FuncContributor, config OptionsSource) *Assets {
 	return &Assets{
 		host:   host,
 		funcs:  funcs,
@@ -96,11 +96,11 @@ func (*Assets) Meta() gen.Meta {
 			"An `importmap.json` at the top of one tree maps bare module " +
 			"specifiers; edits to assets or the importmap never require a " +
 			"rewire. Every tree is compile-checked at generation time. " +
-			"Declaring `type AssetsConfig = assetmapper.RuntimeConfig` " +
+			"Declaring `type AssetsConfig = assetmapper.Options` " +
 			"under `//fabrik:config assets` switches construction on the " +
 			"`assets.kind` value - `source` serves straight from the " +
 			"source trees (run from the module root), `compiled` embeds " +
-			"as before - and binds `assetmapper.Runtime` instead of " +
+			"as before - and binds `assetmapper.Server` instead of " +
 			"`*assetmapper.Compiled`.\n\n" +
 			"```go\n//fabrik:assets\n//go:embed all:assets\nvar Assets embed.FS\n```",
 		Example: "//fabrik:assets",
@@ -178,7 +178,7 @@ func (as *Assets) Check(n any, ty gen.Typed) diag.Diagnostics {
 // PrepareNode binds the HTTP server for asset routes.
 func (as *Assets) PrepareNode(_ any, g *gen.Gen) { as.host.BindHTTPServer(g) }
 
-// Emit binds Runtime in switch mode and both Runtime and *Compiled otherwise.
+// Emit binds Server in switch mode and both Server and *Compiled otherwise.
 func (as *Assets) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*assetNode)
 	if nd.varName == "" || as.registered {
@@ -189,7 +189,7 @@ func (as *Assets) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		section, pos, ok := as.config.Node()
 		if ok && section != "assets" {
 			var ds diag.Diagnostics
-			ds.Error(pos, fmt.Sprintf("assetmapper.RuntimeConfig must be declared under //fabrik:config assets, not section %q", section),
+			ds.Error(pos, fmt.Sprintf("assetmapper.Options must be declared under //fabrik:config assets, not section %q", section),
 				"the switch is keyed by the documented assets.kind value")
 			return ds
 		}
@@ -198,11 +198,11 @@ func (as *Assets) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	servePath := compiledPath
 	if as.switchMode {
-		servePath = runtimePath
-		g.BindLazyPath(runtimePath, as.emitSwitch(g))
+		servePath = serverPath
+		g.BindLazyPath(serverPath, as.emitSwitch(g))
 	} else {
 		g.BindLazyPath(compiledPath, as.emitBuild(g))
-		g.BindLazyPath(runtimePath, func() (string, diag.Diagnostics) {
+		g.BindLazyPath(serverPath, func() (string, diag.Diagnostics) {
 			expr, ds, ok := g.InstancePath(compiledPath)
 			if !ok {
 				return "", ds
@@ -262,7 +262,7 @@ func (as *Assets) emitSwitch(g *gen.Gen) func() (string, diag.Diagnostics) {
 		}
 		amPkg := g.Import(assetmapperPath)
 		kind := g.Var("assetKind")
-		v := g.Var("assetRuntime")
+		v := g.Var("assetServer")
 		g.Node(&gen.Raw{
 			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
 			Lines: []string{
@@ -270,7 +270,7 @@ func (as *Assets) emitSwitch(g *gen.Gen) func() (string, diag.Diagnostics) {
 				"if err != nil {",
 				"return err",
 				"}",
-				"var " + v + " " + amPkg + ".Runtime",
+				"var " + v + " " + amPkg + ".Server",
 				"switch " + kind + " {",
 				"case " + amPkg + ".KindSource:",
 				v + ", err = " + amPkg + ".NewSource(" + srcRoots + ", nil)",
@@ -426,12 +426,12 @@ func (as *Assets) MissingHint(ty types.Type) (string, bool) {
 	switch types.TypeString(types.Unalias(ty), nil) {
 	case assetmapperPath + ".Compiled":
 		if as.switchMode {
-			return "with a source/compiled asset switch only assetmapper.Runtime is injectable; take assetmapper.Runtime", true
+			return "with a source/compiled asset switch only assetmapper.Server is injectable; take assetmapper.Server", true
 		}
 		return "compiled assets are injected as pointers; take *assetmapper.Compiled", true
 	case "*" + assetmapperPath + ".Compiled":
 		if as.switchMode {
-			return "with a source/compiled asset switch only assetmapper.Runtime is injectable; take assetmapper.Runtime", true
+			return "with a source/compiled asset switch only assetmapper.Server is injectable; take assetmapper.Server", true
 		}
 	}
 	return "", false

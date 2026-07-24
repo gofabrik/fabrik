@@ -1,5 +1,5 @@
 Switch mode cannot bind *assetmapper.Compiled because source mode only
-satisfies assetmapper.Runtime.
+satisfies assetmapper.Server.
 -- go.mod --
 module app
 
@@ -34,7 +34,7 @@ import (
 var Assets embed.FS
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.RuntimeConfig
+type AssetsConfig = assetmapper.Options
 -- web/assets/app.css --
 body {}
 -- web/web.go --
@@ -54,4 +54,4 @@ type Handlers struct {
 func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
 error: web/web.go:10:2: no provider for *assetmapper.Compiled (field Assets of web.Handlers)
-  help: with a source/compiled asset switch only assetmapper.Runtime is injectable; take assetmapper.Runtime
+  help: with a source/compiled asset switch only assetmapper.Server is injectable; take assetmapper.Server

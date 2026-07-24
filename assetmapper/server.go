@@ -7,13 +7,15 @@ import (
 	"net/http"
 )
 
-// Runtime exposes asset serving independently of source or compiled mode.
-type Runtime interface {
+// Server serves an application's assets in either source or compiled mode.
+type Server interface {
 	Asset(logical string) (string, error)
 	Handler() http.Handler
 	FuncMap() template.FuncMap
-	// ImportmapCSPSource returns a stable CSP source hash, or false in source mode.
-	ImportmapCSPSource() (source string, ok bool)
+	// ImportmapCSPSources returns the script sources the inline
+	// importmap needs: its stable hash when compiled, 'unsafe-inline'
+	// when serving live sources (no stable hash exists).
+	ImportmapCSPSources() []string
 }
 
 // Kind names an asset serving mode.
@@ -24,13 +26,18 @@ const (
 	KindCompiled Kind = "compiled"
 )
 
-// RuntimeConfig enables generated source/compiled switching when used as the assets configuration.
-type RuntimeConfig struct {
+// cspUnsafeInline is the CSP keyword source live source serving needs
+// for the inline importmap script.
+const cspUnsafeInline = "'unsafe-inline'"
+
+// Options enables generated source/compiled switching when used as
+// the assets configuration.
+type Options struct {
 	Kind string `yaml:"kind" default:"compiled"`
 }
 
 // Mode validates Kind, treating an empty value as KindCompiled.
-func (c RuntimeConfig) Mode() (Kind, error) {
+func (c Options) Mode() (Kind, error) {
 	switch c.Kind {
 	case "", string(KindCompiled):
 		return KindCompiled, nil
@@ -44,7 +51,7 @@ func (c RuntimeConfig) Mode() (Kind, error) {
 // NewSource serves freshly read assets, resolves relative disk roots from the
 // process working directory, and snapshots the importmap at construction.
 // A nil im discovers a top-level importmap.json from the roots.
-func NewSource(roots []Root, im *Importmap, opts ...BuildOption) (Runtime, error) {
+func NewSource(roots []Root, im *Importmap, opts ...BuildOption) (Server, error) {
 	var cfg buildConfig
 	for _, o := range opts {
 		o(&cfg)
@@ -73,16 +80,16 @@ func NewSource(roots []Root, im *Importmap, opts ...BuildOption) (Runtime, error
 	for k, v := range im.Entries {
 		snapshot.Entries[k] = v
 	}
-	return &sourceRuntime{m: m, im: snapshot}, nil
+	return &sourceServer{m: m, im: snapshot}, nil
 }
 
-type sourceRuntime struct {
+type sourceServer struct {
 	m  *Mapper
 	im *Importmap
 }
 
-func (s *sourceRuntime) Asset(logical string) (string, error) { return s.m.Asset(logical) }
-func (s *sourceRuntime) Handler() http.Handler                { return s.m.Handler() }
-func (s *sourceRuntime) FuncMap() template.FuncMap            { return FuncMap(s.m, s.im) }
+func (s *sourceServer) Asset(logical string) (string, error) { return s.m.Asset(logical) }
+func (s *sourceServer) Handler() http.Handler                { return s.m.Handler() }
+func (s *sourceServer) FuncMap() template.FuncMap            { return FuncMap(s.m, s.im) }
 
-func (s *sourceRuntime) ImportmapCSPSource() (string, bool) { return "", false }
+func (s *sourceServer) ImportmapCSPSources() []string { return []string{cspUnsafeInline} }
