@@ -1,12 +1,21 @@
-Setup hook parameters are context or config only; provider types move to start.
+Hook parameters accept context and config types through aliases; provider
+types are rejected with guidance, duplicate configs (through an alias too)
+and defined derivatives are diagnosed.
+Provider types, duplicate configs, and distinct look-alike types are rejected.
 -- go.mod --
 module app
 
 go 1.26
 
-require github.com/gofabrik/fabrik/cli v0.0.0
+require (
+	github.com/gofabrik/fabrik/cli v0.0.0
+	github.com/gofabrik/fabrik/config v0.0.0
+)
 
-replace github.com/gofabrik/fabrik/cli => CLIDIR
+replace (
+	github.com/gofabrik/fabrik/cli => CLIDIR
+	github.com/gofabrik/fabrik/config => CONFIGDIR
+)
 -- main.go --
 package main
 
@@ -16,7 +25,24 @@ func main() { os.Exit(run()) }
 -- web/web.go --
 package web
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
+
+//fabrik:config log
+type LogConfig struct {
+	Level string `yaml:"level" default:"info"`
+}
+
+// DerivedLog copies LogConfig's shape but is a distinct type.
+type DerivedLog LogConfig
+
+type Ctx = context.Context
+
+type E = error
+
+type LC = LogConfig
 
 type Dep struct{}
 
@@ -24,7 +50,28 @@ type Dep struct{}
 func NewDep() *Dep { return &Dep{} }
 
 //fabrik:hook setup
-func BadSetup(d *Dep) {}
+func BadSetup(_ context.Context, d *Dep) error {
+	_ = d
+	return nil
+}
+
+//fabrik:hook setup
+func DupConfig(_ context.Context, a *LogConfig, b *LC) error {
+	_, _ = a, b
+	return nil
+}
+
+//fabrik:hook setup
+func Derived(_ context.Context, d *DerivedLog) error {
+	_ = d
+	return nil
+}
+
+//fabrik:hook setup
+func Aliased(_ Ctx, c *LC) E {
+	_ = c
+	return nil
+}
 
 type Handlers struct {
 	Dep *Dep
@@ -33,5 +80,9 @@ type Handlers struct {
 //fabrik:http GET /
 func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
-error: web/web.go:11:15: setup hooks run before providers; parameters must be context.Context or //fabrik:config structs
+error: web/web.go:28:34: a setup wire hook's parameters are context.Context then //fabrik:config structs; providers do not exist yet
+  help: construct the resource in a //fabrik:provider and inject it into a command
+error: web/web.go:34:49: hook DupConfig declares *app/web.LogConfig twice
+  help: one parameter per config type; multiple hooks may share a config
+error: web/web.go:40:33: a setup wire hook's parameters are context.Context then //fabrik:config structs; providers do not exist yet
   help: construct the resource in a //fabrik:provider and inject it into a command

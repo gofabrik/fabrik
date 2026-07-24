@@ -76,7 +76,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		appTemplates, err := templates.LoadSources([]templates.Source{
 			{FS: shared.Templates, Dir: "templates"},

@@ -1,5 +1,6 @@
-Providers may return a cleanup: (T, func(), error) and (T, func()); the
-generated code guards nil and defers release in reverse construction order.
+Providers may return (T, func() error) or (T, func() error, error). Generated
+code guards nil, releases in reverse construction order, and joins failures
+into the run error.
 -- go.mod --
 module app
 
@@ -18,12 +19,12 @@ import "net/http"
 type DB struct{}
 
 //fabrik:provider
-func NewDB() (*DB, func(), error) { db := &DB{}; return db, func() {}, nil }
+func NewDB() (*DB, func() error, error) { db := &DB{}; return db, func() error { return nil }, nil }
 
 type Cache struct{}
 
 //fabrik:provider
-func NewCache(db *DB) (*Cache, func()) { return &Cache{}, nil }
+func NewCache(db *DB) (*Cache, func() error) { return &Cache{}, nil }
 
 type Index struct{}
 
@@ -45,6 +46,7 @@ func (h *H) Get(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -54,18 +56,22 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		webDB, webDBClose, err := web.NewDB()
 		if err != nil {
 			return err
 		}
 		if webDBClose != nil {
-			defer webDBClose()
+			defer func() {
+				err = errors.Join(err, webDBClose())
+			}()
 		}
 		webCache, webCacheClose := web.NewCache(webDB)
 		if webCacheClose != nil {
-			defer webCacheClose()
+			defer func() {
+				err = errors.Join(err, webCacheClose())
+			}()
 		}
 		webIndex, err := web.NewIndex(webCache)
 		if err != nil {

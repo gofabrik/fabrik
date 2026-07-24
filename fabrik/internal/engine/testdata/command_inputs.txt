@@ -93,7 +93,7 @@ func run() int {
 				Examples: []cli.Example{
 					{Cmd: "app migrate up", Help: "Apply all pending migrations."},
 				},
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					store, err := buildMigrate(ctx)
 					if err != nil {
 						return err

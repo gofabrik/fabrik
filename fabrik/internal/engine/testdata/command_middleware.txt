@@ -96,7 +96,7 @@ func run() int {
 						Name: "migrate",
 						Help: "Apply pending migrations",
 						Use:  []cli.Middleware{shared.Retry},
-						Run: func(ctx cli.Context) error {
+						Run: func(ctx cli.Context) (err error) {
 							return shared.Migrate(ctx)
 						},
 					},

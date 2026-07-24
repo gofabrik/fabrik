@@ -63,7 +63,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		// embedded Assets, served under /assets
 		webAssets, err := fs.Sub(web.Assets, "assets")

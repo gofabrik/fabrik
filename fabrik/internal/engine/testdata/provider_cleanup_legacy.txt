@@ -1,0 +1,28 @@
+The legacy func() cleanup shape receives a migration diagnostic.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- web/web.go --
+package web
+
+type DB struct{}
+
+//fabrik:provider
+func NewDB() (*DB, func(), error) { return &DB{}, func() {}, nil }
+
+type Cache struct{}
+
+//fabrik:provider
+func NewCache() (*Cache, func()) { return &Cache{}, func() {} }
+-- want/diags --
+error: web/web.go:5:1: provider NewDB returns a func() cleanup; cleanups report release failures
+  help: change the cleanup result to func() error
+error: web/web.go:10:1: provider NewCache returns a func() cleanup; cleanups report release failures
+  help: change the cleanup result to func() error

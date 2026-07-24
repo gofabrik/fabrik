@@ -25,7 +25,7 @@ type Mem struct{}
 func (Mem) Get(string) string { return "" }
 
 //fabrik:provider case=memory
-func NewMem() (Mem, func(), error) { return Mem{}, nil, nil }
+func NewMem() (Mem, func() error, error) { return Mem{}, nil, nil }
 -- want/diags --
 error: store/store.go:15:1: case provider NewMem cannot return a cleanup
   help: drop the cleanup result or the case= attribute

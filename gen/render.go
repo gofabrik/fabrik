@@ -63,7 +63,7 @@ func renderCall(v, fn string, args []string, errStyle ErrStyle) []string {
 	return []string{v + " := " + call}
 }
 
-// renderCleanupCall emits a nil-guarded deferred cleanup.
+// renderCleanupCall defers cleanup and joins its error into the named return.
 func renderCleanupCall(n *Call) []string {
 	call := n.Fn + "(" + strings.Join(n.Args, ", ") + ")"
 	var lines []string
@@ -72,7 +72,12 @@ func renderCleanupCall(n *Call) []string {
 	} else {
 		lines = []string{n.Var + ", " + n.Cleanup + " := " + call}
 	}
-	return append(lines, "if "+n.Cleanup+" != nil {", "defer "+n.Cleanup+"()", "}")
+	return append(lines,
+		"if "+n.Cleanup+" != nil {",
+		"defer func() {",
+		"err = "+n.ErrsPkg+".Join(err, "+n.Cleanup+"())",
+		"}()",
+		"}")
 }
 
 func errReturn() []string {

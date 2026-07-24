@@ -98,7 +98,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
 			{FS: shared.Assets, Dir: "assets"},

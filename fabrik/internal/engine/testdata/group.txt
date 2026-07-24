@@ -59,7 +59,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		r := router.New()
 		webAPI := &web.API{}

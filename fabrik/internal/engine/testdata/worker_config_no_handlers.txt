@@ -35,7 +35,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		return nil
 	}(); err != nil {
 		fmt.Fprintln(os.Stderr, "app:", err)

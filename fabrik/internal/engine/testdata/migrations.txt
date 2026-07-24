@@ -105,7 +105,7 @@ func run() int {
 		Subcommands: []*cli.Command{
 			{
 				Name: "migrate-db",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					db, dialect, sources, err := buildMigrateDB(ctx)
 					if err != nil {
 						return err

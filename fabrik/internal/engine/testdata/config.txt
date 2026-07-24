@@ -17,13 +17,15 @@ func main() { os.Exit(run()) }
 -- shared/config.go --
 package shared
 
+import "context"
+
 //fabrik:config http
 type Config struct {
 	Addr string `yaml:"addr" env:"APP_HTTP_ADDR" default:":8080"`
 }
 
 //fabrik:hook setup
-func InitLogger(c *Config) error {
+func InitLogger(_ context.Context, c *Config) error {
 	_ = c.Addr
 	return nil
 }
@@ -68,6 +70,7 @@ func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -80,7 +83,8 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	ctx := context.Background()
+	if err := func() (err error) {
 		// Config
 		fabrikEnv := os.Getenv("FABRIK_ENV")
 		switch fabrikEnv {
@@ -113,8 +117,8 @@ func run() int {
 			return err
 		}
 
-		// Setup: after config, before providers
-		if err := shared.InitLogger(sharedConfig); err != nil {
+		// Wire hooks: config exists, providers do not
+		if err := shared.InitLogger(ctx, sharedConfig); err != nil {
 			return err
 		}
 
@@ -137,5 +141,5 @@ func run() int {
 	return 0
 }
 -- want/diags --
-warning: shared/config.go:14:1: config struct Unused is never used
+warning: shared/config.go:16:1: config struct Unused is never used
   help: inject it into a provider, hook, or handler struct, or remove the directive

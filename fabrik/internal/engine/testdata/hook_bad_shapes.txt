@@ -1,0 +1,107 @@
+Hooks must be exported, non-variadic, uniquely registered functions with one
+context parameter first, followed by config pointers, and one error result.
+-- go.mod --
+module app
+
+go 1.26
+
+require (
+	github.com/gofabrik/fabrik/cli v0.0.0
+	github.com/gofabrik/fabrik/config v0.0.0
+)
+
+replace (
+	github.com/gofabrik/fabrik/cli => CLIDIR
+	github.com/gofabrik/fabrik/config => CONFIGDIR
+)
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- setup/setup.go --
+package setup
+
+import "context"
+
+//fabrik:config log
+type LogConfig struct {
+	Level string `yaml:"level" default:"info"`
+}
+
+//fabrik:hook setup
+func unexported(_ context.Context) error { return nil }
+
+//fabrik:hook setup
+func NoContext(c *LogConfig) error {
+	_ = c
+	return nil
+}
+
+//fabrik:hook setup
+func NoError(_ context.Context) {}
+
+//fabrik:hook setup
+func TwoResults(_ context.Context) (int, error) { return 0, nil }
+
+type myErr struct{}
+
+func (myErr) Error() string { return "" }
+
+//fabrik:hook setup
+func DefinedError(_ context.Context) myErr { return myErr{} }
+
+//fabrik:hook setup
+func Variadic(_ context.Context, cs ...*LogConfig) error { return nil }
+
+//fabrik:hook setup
+func TwoContexts(_ context.Context, c2 context.Context) error {
+	_ = c2
+	return nil
+}
+
+// FakeContext has context.Context's shape but is not that type.
+type FakeContext interface {
+	Done() <-chan struct{}
+	Err() error
+}
+
+//fabrik:hook setup
+func LookAlike(_ FakeContext) error { return nil }
+
+//fabrik:hook setup
+//fabrik:hook setup
+func Twice(_ context.Context) error { return nil }
+
+//fabrik:hook setup
+func Valid(ctx context.Context, c *LogConfig) error {
+	_, _ = ctx, c
+	return nil
+}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /
+func Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: setup/setup.go:10:1: hook unexported is unexported
+  help: generated code lives in package main; export the function
+error: setup/setup.go:13:1: hook NoContext must take context.Context as its first parameter
+  help: example: func ConfigureLogging(ctx context.Context, cfg *LogConfig) error
+error: setup/setup.go:19:1: hook NoError must return exactly error
+  help: example: func ConfigureLogging(ctx context.Context, cfg *LogConfig) error
+error: setup/setup.go:22:1: hook TwoResults must return exactly error
+  help: example: func ConfigureLogging(ctx context.Context, cfg *LogConfig) error
+error: setup/setup.go:29:1: hook DefinedError must return exactly error
+  help: example: func ConfigureLogging(ctx context.Context, cfg *LogConfig) error
+error: setup/setup.go:32:1: hook Variadic is variadic
+  help: a wire hook's shape is func(ctx context.Context, ...*Config) error with fixed parameters
+error: setup/setup.go:36:37: hook TwoContexts takes a second context.Context
+  help: a hook's context is exactly its first parameter
+error: setup/setup.go:47:1: hook LookAlike must take context.Context as its first parameter
+  help: example: func ConfigureLogging(ctx context.Context, cfg *LogConfig) error
+error: setup/setup.go:51:1: duplicate //fabrik:hook on Twice
+  help: first declared at $WORK/setup/setup.go:50:1

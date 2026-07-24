@@ -74,7 +74,7 @@ func run() int {
 			{
 				Name: "greet",
 				Help: "Greet someone",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					greeter, err := buildGreet(ctx)
 					if err != nil {
 						return err
@@ -85,7 +85,7 @@ func run() int {
 			{
 				Name: "version",
 				Help: "Print the version",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					return shared.Version(ctx)
 				},
 			},

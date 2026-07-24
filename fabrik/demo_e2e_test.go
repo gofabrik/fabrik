@@ -236,7 +236,7 @@ END;`
 
 	secureHeadersFlow(t, base)
 	rateLimitFlow(t, base)
-	gracefulShutdown(t, server)
+	gracefulShutdown(t, server, &serverOut)
 
 	logged := serverOut.String()
 	if !strings.Contains(logged, "mail: would send") || !strings.Contains(logged, "greetings@demo.example") || !strings.Contains(logged, "notifier@demo.example") {
@@ -313,7 +313,7 @@ func productionIgnoresLocalFlow(t *testing.T, src, bin, tmp string) {
 	defer server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
 
 	waitServe(t, "http://localhost:"+port+"/")
-	gracefulShutdown(t, server)
+	gracefulShutdown(t, server, &out)
 	logged := out.String()
 	if !strings.Contains(logged, `"msg":`) || strings.Contains(logged, "level=") {
 		t.Fatalf("config.local.yaml leaked into production logging:\n%s", logged)
@@ -442,7 +442,7 @@ func developmentFlow(t *testing.T, src, bin, tmp string) {
 		t.Fatal(err)
 	}
 
-	gracefulShutdown(t, server)
+	gracefulShutdown(t, server, &out)
 	if logged := out.String(); !strings.Contains(logged, "level=") {
 		t.Fatalf("development logs are not text:\n%s", logged)
 	}
@@ -903,8 +903,8 @@ func errorPagesFlow(t *testing.T, base string) {
 	}
 }
 
-// gracefulShutdown requires SIGTERM to produce a clean exit within the generated grace period.
-func gracefulShutdown(t *testing.T, server *exec.Cmd) {
+// gracefulShutdown requires SIGTERM to exit cleanly without a CLI error.
+func gracefulShutdown(t *testing.T, server *exec.Cmd, out *bytes.Buffer) {
 	t.Helper()
 	if err := server.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("SIGTERM: %v", err)
@@ -913,6 +913,9 @@ func gracefulShutdown(t *testing.T, server *exec.Cmd) {
 	go func() { done <- server.Wait() }()
 	select {
 	case err := <-done:
+		if logged := out.String(); strings.Contains(logged, "demo: ") {
+			t.Fatalf("graceful shutdown rendered a CLI error:\n%s", logged)
+		}
 		if err != nil {
 			t.Fatalf("demo did not exit cleanly on SIGTERM: %v", err)
 		}

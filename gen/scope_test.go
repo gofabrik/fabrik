@@ -64,6 +64,7 @@ type Cache struct{}
 			Args:    []string{g.Context()},
 			Err:     ErrReturn,
 			Cleanup: c,
+			ErrsPkg: g.Import("errors"),
 		})
 		return v, nil
 	})
@@ -102,7 +103,7 @@ func TestScopeBuildsItsSubtree(t *testing.T) {
 	w.g.AddScope("buildPing", token.Position{}, w.cache)
 	src := renderScopes(t, w.g)
 
-	want := `func buildPing(ctx context.Context) (*app.Cache, func(), error) {
+	want := `func buildPing(ctx context.Context) (*app.Cache, func() error, error) {
 	// Providers
 	conn, connClose, err := app.NewStore(ctx)
 	if err != nil {
@@ -111,15 +112,17 @@ func TestScopeBuildsItsSubtree(t *testing.T) {
 	cache, err := app.NewCache(conn)
 	if err != nil {
 		if connClose != nil {
-			connClose()
+			err = errors.Join(err, connClose())
 		}
 		return nil, nil, err
 	}
 
-	cleanup := func() {
+	cleanup := func() error {
+		var errs []error
 		if connClose != nil {
-			connClose()
+			errs = append(errs, connClose())
 		}
+		return errors.Join(errs...)
 	}
 	return cache, cleanup, nil
 }`
@@ -140,8 +143,8 @@ func TestScopesConstructIndependently(t *testing.T) {
 	if strings.Contains(src, "conn2") {
 		t.Fatalf("scope-local names leaked across scopes:\n%s", src)
 	}
-	if !strings.Contains(src, "func buildA(ctx context.Context) (*app.Store, func(), error)") ||
-		!strings.Contains(src, "func buildB(ctx context.Context) (*app.Store, func(), error)") {
+	if !strings.Contains(src, "func buildA(ctx context.Context) (*app.Store, func() error, error)") ||
+		!strings.Contains(src, "func buildB(ctx context.Context) (*app.Store, func() error, error)") {
 		t.Fatalf("missing scope functions:\n%s", src)
 	}
 }
@@ -257,17 +260,18 @@ func TestTransformReturns(t *testing.T) {
 		`return fmt.Errorf("no impl for %q", kind)`,
 		"return nil",
 	}
-	got := transformReturns(in, "nil, ", []string{"aClose"})
+	got := transformReturns(in, "nil, ", []string{"aClose"}, "errors")
 	want := []string{
 		"v, err := build()",
 		"if aClose != nil {",
-		"aClose()",
+		"err = errors.Join(err, aClose())",
 		"}",
 		"return nil, err",
+		`err = fmt.Errorf("no impl for %q", kind)`,
 		"if aClose != nil {",
-		"aClose()",
+		"err = errors.Join(err, aClose())",
 		"}",
-		`return nil, fmt.Errorf("no impl for %q", kind)`,
+		"return nil, err",
 		"return nil",
 	}
 	if len(got) != len(want) {
@@ -352,23 +356,25 @@ func TestScopeMultiCleanupReverseOrder(t *testing.T) {
 	unwind := `	c, err := two.NewC(b)
 	if err != nil {
 		if bClose != nil {
-			bClose()
+			err = errors.Join(err, bClose())
 		}
 		if aClose != nil {
-			aClose()
+			err = errors.Join(err, aClose())
 		}
 		return nil, nil, err
 	}`
 	if !strings.Contains(src, unwind) {
 		t.Fatalf("unwind should release b then a:\n%s", src)
 	}
-	composed := `	cleanup := func() {
+	composed := `	cleanup := func() error {
+		var errs []error
 		if bClose != nil {
-			bClose()
+			errs = append(errs, bClose())
 		}
 		if aClose != nil {
-			aClose()
+			errs = append(errs, aClose())
 		}
+		return errors.Join(errs...)
 	}`
 	if !strings.Contains(src, composed) {
 		t.Fatalf("composed cleanup should release in reverse:\n%s", src)

@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: Enforces typed setup hooks, reports provider cleanup failures across ordinary exit paths, and keeps exit 130 silent only for pure cancellation.
+issues: [0]

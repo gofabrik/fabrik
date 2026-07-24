@@ -75,7 +75,7 @@ func run() int {
 		Subcommands: []*cli.Command{
 			{
 				Name: "serve",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					server, err := buildServe(ctx)
 					if err != nil {
 						return err

@@ -113,7 +113,7 @@ func run() int {
 						Name:    "migrate",
 						Help:    "Apply pending migrations",
 						Aliases: []string{"m"},
-						Run: func(ctx cli.Context) error {
+						Run: func(ctx cli.Context) (err error) {
 							return shared.Migrate(ctx, databaseTimeout.Get(ctx), rootVerbose.Get(ctx))
 						},
 					},
@@ -124,7 +124,7 @@ func run() int {
 				Help:   "Rebuild the search index",
 				Usage:  "app reindex [flags]",
 				Hidden: true,
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					return shared.Reindex(ctx)
 				},
 			},

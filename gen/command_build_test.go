@@ -126,6 +126,10 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 		t.Errorf("FAIL_STORE greet: code=%d stdout=%q stderr=%q", code, so, se)
 	}
 
+	if code, so, se := run([]string{"greet"}, "FAIL_CLOSE=1"); code != 1 || !strings.Contains(se, "fixture: close failed") || !strings.Contains(so, "hello store") {
+		t.Errorf("FAIL_CLOSE greet: code=%d stdout=%q stderr=%q (want cleanup error surfaced)", code, so, se)
+	}
+
 	if code, _, se := run([]string{"greet"}, "FORCE_CANCEL=1"); code != 130 || strings.Contains(se, "fixture:") {
 		t.Errorf("FORCE_CANCEL greet: code=%d stderr=%q (want exit 130, no error line)", code, se)
 	}
@@ -148,7 +152,7 @@ import (
 	"github.com/gofabrik/fabrik/cli"
 )
 
-func newStore(ctx context.Context) (*dep.Store, func(), error) {
+func newStore(ctx context.Context) (*dep.Store, func() error, error) {
 	fmt.Fprintln(os.Stderr, "CONSTRUCTED store")
 	if os.Getenv("FORCE_CANCEL") != "" {
 		p, _ := os.FindProcess(os.Getpid())
@@ -159,7 +163,13 @@ func newStore(ctx context.Context) (*dep.Store, func(), error) {
 	if os.Getenv("FAIL_STORE") != "" {
 		return nil, nil, errors.New("store failed")
 	}
-	return &dep.Store{}, func() { fmt.Println("store closed") }, nil
+	return &dep.Store{}, func() error {
+		fmt.Println("store closed")
+		if os.Getenv("FAIL_CLOSE") != "" {
+			return errors.New("close failed")
+		}
+		return nil
+	}, nil
 }
 
 func newExtra() (*dep.Extra, error) {
