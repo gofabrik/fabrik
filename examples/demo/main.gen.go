@@ -103,32 +103,40 @@ func run() int {
 
 func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfig, error) {
 	// Config
-	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](
+	fabrikEnv := os.Getenv("FABRIK_ENV")
+	switch fabrikEnv {
+	case "development", "production":
+	default:
+		if fabrikEnv == "" {
+			return nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+		}
+		return nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+		config.File("config." + fabrikEnv + ".yaml"),
+	}
+	if fabrikEnv == "development" {
+		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+	}
+	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("http"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	sharedLogConfig, err := config.Load[shared.LogConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -142,82 +150,89 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 
 func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), error) {
 	// Config
-	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](
+	fabrikEnv := os.Getenv("FABRIK_ENV")
+	switch fabrikEnv {
+	case "development", "production":
+	default:
+		if fabrikEnv == "" {
+			return nil, nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+		}
+		return nil, nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+		config.File("config." + fabrikEnv + ".yaml"),
+	}
+	if fabrikEnv == "development" {
+		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+	}
+	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("http"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	sharedJobsConfig2, err := config.Load[shared.JobsConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedJobsConfig2, err := config.Load[shared.JobsConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("jobs"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	sharedLogConfig, err := config.Load[shared.LogConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+		config.Section("assets"),
+	)...)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+		config.Section("session"),
+	)...)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("crossorigin"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	sharedMailerConfig, err := config.Load[shared.MailerConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("mailer"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	sharedStorageConfig, err := config.Load[shared.StorageConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("storage"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	webGreeterConfig, err := config.Load[web.GreeterConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	webGreeterConfig, err := config.Load[web.GreeterConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("greeter"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -228,17 +243,30 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	}
 
 	// Providers
-	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
-		{FS: shared.Assets, Dir: "assets"},
-		{FS: web.Assets, Dir: "assets"},
-	}, nil)
+	assetKind, err := assetmapperOptions.Mode()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	var assetServer assetmapper.Server
+	switch assetKind {
+	case assetmapper.KindSource:
+		assetServer, err = assetmapper.NewSource([]assetmapper.Root{
+			{FS: os.DirFS("shared/assets")},
+			{FS: os.DirFS("web/assets")},
+		}, nil)
+	case assetmapper.KindCompiled:
+		assetServer, err = assetmapper.Build([]assetmapper.Root{
+			{FS: shared.Assets, Dir: "assets"},
+			{FS: web.Assets, Dir: "assets"},
+		}, nil)
+	}
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	appTemplates, err := templates.LoadSources([]templates.Source{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetCompiled.FuncMap(), templates.FuncMap{
+	}, assetServer.FuncMap(), templates.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})
@@ -276,7 +304,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 		}
 		return nil, nil, nil, err
 	}
-	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
+	sharedSessionManager, err := shared.NewSession(sharedSqlDB, sharedSessionConfig)
 	if err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -400,7 +428,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
-	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetCompiled)
+	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
 	r.Use(secureHeadersMiddlewareMW)
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
 	r.Use(crossOriginMiddlewareMW)
@@ -425,7 +453,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 	}
 
 	// Register
-	r.Handle("/assets/", assetCompiled.Handler())
+	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 
@@ -540,72 +568,82 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func(), er
 
 func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	// Config
-	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](
+	fabrikEnv := os.Getenv("FABRIK_ENV")
+	switch fabrikEnv {
+	case "development", "production":
+	default:
+		if fabrikEnv == "" {
+			return nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+		}
+		return nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+		config.File("config." + fabrikEnv + ".yaml"),
+	}
+	if fabrikEnv == "development" {
+		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+	}
+	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("http"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	sharedLogConfig, err := config.Load[shared.LogConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+		config.Section("assets"),
+	)...)
+	if err != nil {
+		return nil, nil, err
+	}
+	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+		config.Section("session"),
+	)...)
+	if err != nil {
+		return nil, nil, err
+	}
+	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("crossorigin"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	sharedMailerConfig, err := config.Load[shared.MailerConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("mailer"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	sharedStorageConfig, err := config.Load[shared.StorageConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("storage"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	webGreeterConfig, err := config.Load[web.GreeterConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	webGreeterConfig, err := config.Load[web.GreeterConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("greeter"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -616,17 +654,30 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	}
 
 	// Providers
-	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
-		{FS: shared.Assets, Dir: "assets"},
-		{FS: web.Assets, Dir: "assets"},
-	}, nil)
+	assetKind, err := assetmapperOptions.Mode()
+	if err != nil {
+		return nil, nil, err
+	}
+	var assetServer assetmapper.Server
+	switch assetKind {
+	case assetmapper.KindSource:
+		assetServer, err = assetmapper.NewSource([]assetmapper.Root{
+			{FS: os.DirFS("shared/assets")},
+			{FS: os.DirFS("web/assets")},
+		}, nil)
+	case assetmapper.KindCompiled:
+		assetServer, err = assetmapper.Build([]assetmapper.Root{
+			{FS: shared.Assets, Dir: "assets"},
+			{FS: web.Assets, Dir: "assets"},
+		}, nil)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	appTemplates, err := templates.LoadSources([]templates.Source{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetCompiled.FuncMap(), templates.FuncMap{
+	}, assetServer.FuncMap(), templates.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})
@@ -664,7 +715,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 		}
 		return nil, nil, err
 	}
-	sharedSessionManager, err := shared.NewSession(sharedSqlDB)
+	sharedSessionManager, err := shared.NewSession(sharedSqlDB, sharedSessionConfig)
 	if err != nil {
 		if sharedSqlDBClose != nil {
 			sharedSqlDBClose()
@@ -787,7 +838,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	// Middleware
 	r.Use(shared.Logged)
 	r.Use(shared.Recovered)
-	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetCompiled)
+	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
 	r.Use(secureHeadersMiddlewareMW)
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
 	r.Use(crossOriginMiddlewareMW)
@@ -812,7 +863,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 	}
 
 	// Register
-	r.Handle("/assets/", assetCompiled.Handler())
+	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
 
@@ -927,22 +978,33 @@ func buildServe(ctx context.Context) (*httpserver.Server, func(), error) {
 
 func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func(), error) {
 	// Config
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](
+	fabrikEnv := os.Getenv("FABRIK_ENV")
+	switch fabrikEnv {
+	case "development", "production":
+	default:
+		if fabrikEnv == "" {
+			return nil, nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+		}
+		return nil, nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+		config.File("config." + fabrikEnv + ".yaml"),
+	}
+	if fabrikEnv == "development" {
+		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+	}
+	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("database"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	sharedLogConfig, err := config.Load[shared.LogConfig](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
-		config.KnownSections("crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "storage"),
+	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
+		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
 		config.Section("log"),
-	)
+	)...)
 	if err != nil {
 		return nil, nil, nil, err
 	}

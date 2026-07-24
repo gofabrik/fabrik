@@ -1,0 +1,8 @@
+# fabrik run defaults FABRIK_ENV to development.
+assets:
+  kind: source
+log:
+  format: text
+  level: debug
+session:
+  cookie_secure: false

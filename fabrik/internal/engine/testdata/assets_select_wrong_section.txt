@@ -1,0 +1,50 @@
+assetmapper.Options must use the assets section so the switch reads assets.kind.
+-- go.mod --
+module app
+
+go 1.26
+
+require (
+	github.com/gofabrik/fabrik/assetmapper v0.0.0
+	github.com/gofabrik/fabrik/config v0.0.0
+)
+
+replace (
+	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+	github.com/gofabrik/fabrik/config => CONFIGDIR
+)
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- web/assets.go --
+package web
+
+import (
+	"embed"
+
+	"github.com/gofabrik/fabrik/assetmapper"
+)
+
+//fabrik:assets
+//go:embed all:assets
+var Assets embed.FS
+
+//fabrik:config frontend
+type AssetsConfig = assetmapper.Options
+-- web/assets/app.css --
+body {}
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http GET /{$}
+func Home(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/assets.go:13:1: assetmapper.Options must be declared under //fabrik:config assets, not section "frontend"
+  help: the switch is keyed by the documented assets.kind value
+warning: web/assets.go:13:1: config struct Options is never used
+  help: inject it into a provider, hook, or handler struct, or remove the directive

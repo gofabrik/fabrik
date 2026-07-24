@@ -82,22 +82,33 @@ import (
 func run() int {
 	if err := func() error {
 		// Config
-		sharedConfig, err := config.Load[shared.Config](
+		fabrikEnv := os.Getenv("FABRIK_ENV")
+		switch fabrikEnv {
+		case "development", "production":
+		default:
+			if fabrikEnv == "" {
+				return fmt.Errorf("FABRIK_ENV is required: development or production")
+			}
+			return fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+		}
+		fabrikConfigOpts := []config.Option{
 			config.FileOptional("config.yaml"),
-			config.FileOptional("config.local.yaml"),
+			config.File("config." + fabrikEnv + ".yaml"),
+		}
+		if fabrikEnv == "development" {
+			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+		}
+		sharedConfig, err := config.Load[shared.Config](append(fabrikConfigOpts,
 			config.KnownSections("http", "store", "unused"),
 			config.Section("http"),
-		)
+		)...)
 		if err != nil {
 			return err
 		}
-
-		storeConfig, err := config.Load[store.Config](
-			config.FileOptional("config.yaml"),
-			config.FileOptional("config.local.yaml"),
+		storeConfig, err := config.Load[store.Config](append(fabrikConfigOpts,
 			config.KnownSections("http", "store", "unused"),
 			config.Section("store"),
-		)
+		)...)
 		if err != nil {
 			return err
 		}

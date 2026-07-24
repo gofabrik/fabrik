@@ -19,7 +19,7 @@ func AssetTrees(dir string) ([]assetsdir.Tree, diag.Diagnostics, error) {
 		diags.Sort()
 		return nil, diags, nil
 	}
-	assets := assetsdir.NewAssets(nil, nil)
+	assets := assetsdir.NewAssets(nil, nil, nil)
 	for _, item := range res.Items {
 		if item.Ann.Name != assets.Name() {
 			continue

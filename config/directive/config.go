@@ -17,15 +17,22 @@ const configPath = "github.com/gofabrik/fabrik/config"
 
 // Config loads annotated config structs and binds them into DI.
 type Config struct {
-	files     []string         // YAML layers, in override order
 	byType    map[string]*Node // TypeString of *T -> node
 	bySection map[string]*Node
 	nodes     []*Node
+
+	// preludes caches generated variables per flow; nil identifies the default flow.
+	preludes map[any]preludeVars
+}
+
+type preludeVars struct {
+	env  string
+	opts string
 }
 
 // New returns the config directive for one generation run.
-func New(files ...string) *Config {
-	return &Config{files: files, byType: map[string]*Node{}, bySection: map[string]*Node{}}
+func New() *Config {
+	return &Config{byType: map[string]*Node{}, bySection: map[string]*Node{}, preludes: map[any]preludeVars{}}
 }
 
 func (*Config) Name() string { return "config" }
@@ -36,17 +43,19 @@ func (*Config) Meta() gen.Meta {
 		Doc: "**`//fabrik:config [section]`**\n\n" +
 			"Marks a struct as configuration: generated code loads it in the " +
 			"Config phase (before setup hooks and providers) with `config.Load` and " +
-			"binds the pointer into DI. Both conventional files (config.yaml, " +
-			"config.local.yaml) are optional: a missing file means defaults " +
-			"and env overrides apply. `yaml:` tags name keys, `default:` " +
+			"binds the pointer into DI. Values layer per environment: " +
+			"config.yaml (optional), then a required config.<FABRIK_ENV>.yaml, " +
+			"then config.local.yaml (development only), then environment " +
+			"variables. FABRIK_ENV must be `development` or `production`; " +
+			"startup fails otherwise. `yaml:` tags name keys, `default:` " +
 			"tags set fallbacks, `env:\"NAME\"` opts a field into environment " +
 			"override. The optional section scopes a domain package to its " +
-			"subtree of config.yaml (`store` -> keys under `store:`); the name " +
-			"is a single key, no dots. Structs " +
-			"sharing the file must each declare a section; a single " +
-			"sectionless struct owns the whole file and cannot be combined " +
-			"with sectioned ones. When every struct is sectioned, " +
-			"generated Load calls validate the file's top-level keys against " +
+			"subtree of the configuration (`store` -> keys under `store:` in " +
+			"every layer); the name is a single key, no dots. Structs " +
+			"sharing the configuration must each declare a section; a single " +
+			"sectionless struct owns the whole configuration and cannot be " +
+			"combined with sectioned ones. When every struct is sectioned, " +
+			"generated Load calls validate each layer's top-level keys against " +
 			"the declared sections, so a typo'd section fails startup.\n\n" +
 			"```go\n//fabrik:config store\ntype Config struct {\n\tKind string `yaml:\"kind\" default:\"memory\"`\n}\n```",
 		Example: "//fabrik:config store",
@@ -70,6 +79,12 @@ type Node struct {
 
 // Named returns the config struct's named type.
 func (n *Node) Named() *types.Named { return n.named }
+
+// Section returns the node's declared config section.
+func (n *Node) Section() string { return n.section }
+
+// Pos returns the annotation's source position.
+func (n *Node) Pos() token.Position { return n.pos }
 
 func (c *Config) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	args, ds := gen.ParseArgs(a, c.Meta())
@@ -156,16 +171,14 @@ func (c *Config) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
-// LoadNode builds a config.Load node in the caller's phase.
+// LoadNode emits a config load in phase and initializes layered options on the flow's first load.
 func (c *Config) LoadNode(nd *Node, g *gen.Gen, phase gen.Phase) (string, *gen.ConfigLoad) {
 	if !g.InValidationScope() {
 		nd.built = true
 	}
 	cfgPkg := g.Import(configPath)
-	opts := make([]string, 0, len(c.files)+1)
-	for _, f := range c.files {
-		opts = append(opts, fmt.Sprintf("%s.FileOptional(%q)", cfgPkg, f))
-	}
+	prelude := c.prelude(g, cfgPkg)
+	var opts []string
 	if known := c.knownSections(); known != nil {
 		quoted := make([]string, len(known))
 		for i, k := range known {
@@ -182,8 +195,48 @@ func (c *Config) LoadNode(nd *Node, g *gen.Gen, phase gen.Phase) (string, *gen.C
 		Var:     v,
 		Pkg:     cfgPkg,
 		Type:    g.TypeExpr(nd.named),
+		Prefix:  prelude.opts,
 		Options: opts,
 	}
+}
+
+// prelude emits one shared set of layered config options in the Config phase for each flow.
+func (c *Config) prelude(g *gen.Gen, cfgPkg string) preludeVars {
+	if pv, ok := c.preludes[g.ScopeID()]; ok {
+		return pv
+	}
+	osPkg := g.Import("os")
+	fmtPkg := g.Import("fmt")
+	pv := preludeVars{env: g.Var("fabrikEnv"), opts: g.Var("fabrikConfigOpts")}
+	g.Node(&gen.Raw{
+		Base: gen.Base{Phase: gen.PhaseConfig, Origin: gen.Origin{Directive: c.Name()}},
+		Lines: []string{
+			pv.env + " := " + osPkg + `.Getenv("FABRIK_ENV")`,
+			"switch " + pv.env + " {",
+			`case "development", "production":`,
+			"default:",
+			"if " + pv.env + ` == "" {`,
+			"return " + fmtPkg + `.Errorf("FABRIK_ENV is required: development or production")`,
+			"}",
+			"return " + fmtPkg + `.Errorf("invalid FABRIK_ENV %q: want development or production", ` + pv.env + `)`,
+			"}",
+			pv.opts + " := []" + cfgPkg + ".Option{",
+			cfgPkg + `.FileOptional("config.yaml"),`,
+			cfgPkg + `.File("config." + ` + pv.env + ` + ".yaml"),`,
+			"}",
+			"if " + pv.env + ` == "development" {`,
+			pv.opts + " = append(" + pv.opts + ", " + cfgPkg + `.FileOptional("config.local.yaml"))`,
+			"}",
+		},
+		Defines: []string{pv.env, pv.opts},
+	})
+	c.preludes[g.ScopeID()] = pv
+	return pv
+}
+
+// NodeByType returns the config node registered for ptrType.
+func (c *Config) NodeByType(ptrType string) *Node {
+	return c.byType[ptrType]
 }
 
 // NodeFor returns the config node for a *Config parameter type, or nil.

@@ -105,3 +105,27 @@ func TestValidateRunsLibraryCheck(t *testing.T) {
 		t.Fatalf("library errors should anchor to the first declaration: %v", ds[0])
 	}
 }
+
+func TestSourceRootPath(t *testing.T) {
+	cases := []struct {
+		name, root, srcDir, dir, want string
+		err                           bool
+	}{
+		{name: "package subtree", root: "/mod", srcDir: "/mod/web", dir: "assets", want: "web/assets"},
+		{name: "module root package", root: "/mod", srcDir: "/mod", dir: "assets", want: "assets"},
+		{name: "outside the module", root: "/mod", srcDir: "/elsewhere/web", dir: "assets", err: true},
+		{name: "unknown module root", root: "", srcDir: "/mod/web", dir: "assets", err: true},
+	}
+	for _, c := range cases {
+		got, err := sourceRootPath(c.root, c.srcDir, c.dir)
+		if c.err {
+			if err == nil {
+				t.Errorf("%s: expected error, got %q", c.name, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("%s: got %q, %v; want %q", c.name, got, err, c.want)
+		}
+	}
+}

@@ -20,11 +20,15 @@ func renderNode(n Node) []string {
 		}
 		return renderCall(n.Var, n.Fn, n.Args, n.Err)
 	case *ConfigLoad:
-		lines := []string{fmt.Sprintf("%s, err := %s.Load[%s](", n.Var, n.Pkg, n.Type)}
+		opening, closing := "(", ")"
+		if n.Prefix != "" {
+			opening, closing = "(append("+n.Prefix+",", ")...)"
+		}
+		lines := []string{fmt.Sprintf("%s, err := %s.Load[%s]%s", n.Var, n.Pkg, n.Type, opening)}
 		for _, opt := range n.Options {
 			lines = append(lines, opt+",")
 		}
-		lines = append(lines, ")")
+		lines = append(lines, closing)
 		return append(lines, errReturn()...)
 	case *StructLit:
 		if len(n.Fields) == 0 {

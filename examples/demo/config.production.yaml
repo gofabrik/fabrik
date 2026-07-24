@@ -1,0 +1,7 @@
+assets:
+  kind: compiled
+log:
+  format: json
+  level: info
+session:
+  cookie_secure: true

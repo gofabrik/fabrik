@@ -42,6 +42,11 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	}
 
 	directives := New()
+	for _, d := range directives {
+		if m, ok := d.(interface{ SetModuleRoot(string) }); ok {
+			m.SetModuleRoot(res.Root)
+		}
+	}
 	if len(overlay) > 0 {
 		// Non-Go validation must use the same overlays as package loading.
 		for _, d := range directives {

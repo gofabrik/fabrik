@@ -21,6 +21,8 @@ const assetmapperPath = "github.com/gofabrik/fabrik/assetmapper"
 
 const compiledPath = "*" + assetmapperPath + ".Compiled"
 
+const serverPath = assetmapperPath + ".Server"
+
 // urlPrefix is fabrik's asset URL root; standalone users pick their
 // own via assetmapper.WithURLPrefix.
 const urlPrefix = "/assets/"
@@ -40,27 +42,42 @@ type FuncContributor interface {
 	ContributeFuncs(names []string, build func(g *gen.Gen) (string, diag.Diagnostics))
 }
 
+// OptionsSource locates and loads the application's asset configuration.
+type OptionsSource interface {
+	// Node returns the declaration's section and position.
+	Node() (section string, pos token.Position, ok bool)
+	// Load returns the shared config instance for the current flow.
+	Load(g *gen.Gen) (string, diag.Diagnostics, bool)
+}
+
 // Assets implements //fabrik:assets.
 type Assets struct {
-	host  *routerdir.Host
-	funcs FuncContributor
+	host   *routerdir.Host
+	funcs  FuncContributor
+	config OptionsSource
 
 	decls      []*assetNode
 	registered bool
+	switchMode bool
 	treeFS     func(dir string) fs.FS
+	moduleRoot string
 }
 
 // NewAssets returns an Assets directive for one run.
-func NewAssets(host *routerdir.Host, funcs FuncContributor) *Assets {
+func NewAssets(host *routerdir.Host, funcs FuncContributor, config OptionsSource) *Assets {
 	return &Assets{
 		host:   host,
 		funcs:  funcs,
+		config: config,
 		treeFS: os.DirFS,
 	}
 }
 
 // SetTreeFS lets validation read non-Go files through the engine overlay.
 func (as *Assets) SetTreeFS(f func(dir string) fs.FS) { as.treeFS = f }
+
+// SetModuleRoot sets the base directory for source-mode asset paths.
+func (as *Assets) SetModuleRoot(dir string) { as.moduleRoot = dir }
 
 func (*Assets) Name() string { return "assets" }
 
@@ -78,7 +95,13 @@ func (*Assets) Meta() gen.Meta {
 			"union into one namespace, and a path provided twice is an error. " +
 			"An `importmap.json` at the top of one tree maps bare module " +
 			"specifiers; edits to assets or the importmap never require a " +
-			"rewire. Every tree is compile-checked at generation time.\n\n" +
+			"rewire. Every tree is compile-checked at generation time. " +
+			"Declaring `type AssetsConfig = assetmapper.Options` " +
+			"under `//fabrik:config assets` switches construction on the " +
+			"`assets.kind` value - `source` serves straight from the " +
+			"source trees (run from the module root), `compiled` embeds " +
+			"as before - and binds `assetmapper.Server` instead of " +
+			"`*assetmapper.Compiled`.\n\n" +
 			"```go\n//fabrik:assets\n//go:embed all:assets\nvar Assets embed.FS\n```",
 		Example: "//fabrik:assets",
 		Attrs: []gen.AttrSpec{
@@ -155,38 +178,42 @@ func (as *Assets) Check(n any, ty gen.Typed) diag.Diagnostics {
 // PrepareNode binds the HTTP server for asset routes.
 func (as *Assets) PrepareNode(_ any, g *gen.Gen) { as.host.BindHTTPServer(g) }
 
-// Emit binds the compiled assets, registers the serving route, and
-// contributes the template helpers, once for all declared trees.
+// Emit binds Server in switch mode and both Server and *Compiled otherwise.
 func (as *Assets) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*assetNode)
 	if nd.varName == "" || as.registered {
 		return nil
 	}
 	as.registered = true
-
-	g.BindLazyPath(compiledPath, func() (string, diag.Diagnostics) {
-		decls := as.sortedDecls()
-		amPkg := g.Import(assetmapperPath)
-		var b strings.Builder
-		b.WriteString("[]" + amPkg + ".Root{\n")
-		for _, d := range decls {
-			fmt.Fprintf(&b, "{FS: %s.%s, Dir: %q},\n", g.ImportPkg(d.pkg), d.varName, d.dir)
+	if as.config != nil {
+		section, pos, ok := as.config.Node()
+		if ok && section != "assets" {
+			var ds diag.Diagnostics
+			ds.Error(pos, fmt.Sprintf("assetmapper.Options must be declared under //fabrik:config assets, not section %q", section),
+				"the switch is keyed by the documented assets.kind value")
+			return ds
 		}
-		b.WriteString("}")
-		v := g.Var("assetCompiled")
-		g.Node(&gen.Call{
-			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
-			Var:  v,
-			Fn:   amPkg + ".Build",
-			Args: []string{b.String(), "nil"},
-			Err:  gen.ErrReturn,
+		as.switchMode = ok
+	}
+
+	servePath := compiledPath
+	if as.switchMode {
+		servePath = serverPath
+		g.BindLazyPath(serverPath, as.emitSwitch(g))
+	} else {
+		g.BindLazyPath(compiledPath, as.emitBuild(g))
+		g.BindLazyPath(serverPath, func() (string, diag.Diagnostics) {
+			expr, ds, ok := g.InstancePath(compiledPath)
+			if !ok {
+				return "", ds
+			}
+			return expr, ds
 		})
-		return v, nil
-	})
+	}
 
 	if as.funcs != nil {
 		as.funcs.ContributeFuncs(contributedFuncs, func(g *gen.Gen) (string, diag.Diagnostics) {
-			expr, ds, ok := g.InstancePath(compiledPath)
+			expr, ds, ok := g.InstancePath(servePath)
 			if !ok {
 				return "", ds
 			}
@@ -195,12 +222,100 @@ func (as *Assets) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	}
 
 	return as.host.EmitHandle(g, urlPrefix, as.sortedDecls()[0].pos, func() (string, diag.Diagnostics) {
-		expr, ds, ok := g.InstancePath(compiledPath)
+		expr, ds, ok := g.InstancePath(servePath)
 		if !ok {
 			return "nil", ds
 		}
 		return expr + ".Handler()", ds
 	})
+}
+
+func (as *Assets) emitBuild(g *gen.Gen) func() (string, diag.Diagnostics) {
+	return func() (string, diag.Diagnostics) {
+		decls := as.sortedDecls()
+		amPkg := g.Import(assetmapperPath)
+		v := g.Var("assetCompiled")
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
+			Var:  v,
+			Fn:   amPkg + ".Build",
+			Args: []string{as.embedRoots(g, decls), "nil"},
+			Err:  gen.ErrReturn,
+		})
+		return v, nil
+	}
+}
+
+func (as *Assets) emitSwitch(g *gen.Gen) func() (string, diag.Diagnostics) {
+	return func() (string, diag.Diagnostics) {
+		var ds diag.Diagnostics
+		decls := as.sortedDecls()
+		srcRoots, rds := as.sourceRoots(g, decls)
+		ds = append(ds, rds...)
+		if rds.HasFatal() {
+			return "nil", ds
+		}
+		cfgVar, cds, ok := as.config.Load(g)
+		ds = append(ds, cds...)
+		if !ok {
+			return "nil", ds
+		}
+		amPkg := g.Import(assetmapperPath)
+		kind := g.Var("assetKind")
+		v := g.Var("assetServer")
+		g.Node(&gen.Raw{
+			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
+			Lines: []string{
+				kind + ", err := " + cfgVar + ".Mode()",
+				"if err != nil {",
+				"return err",
+				"}",
+				"var " + v + " " + amPkg + ".Server",
+				"switch " + kind + " {",
+				"case " + amPkg + ".KindSource:",
+				v + ", err = " + amPkg + ".NewSource(" + srcRoots + ", nil)",
+				"case " + amPkg + ".KindCompiled:",
+				v + ", err = " + amPkg + ".Build(" + as.embedRoots(g, decls) + ", nil)",
+				"}",
+				"if err != nil {",
+				"return err",
+				"}",
+			},
+			Defines: []string{v},
+		})
+		return v, ds
+	}
+}
+
+func (as *Assets) embedRoots(g *gen.Gen, decls []*assetNode) string {
+	amPkg := g.Import(assetmapperPath)
+	var b strings.Builder
+	b.WriteString("[]" + amPkg + ".Root{\n")
+	for _, d := range decls {
+		fmt.Fprintf(&b, "{FS: %s.%s, Dir: %q},\n", g.ImportPkg(d.pkg), d.varName, d.dir)
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+// sourceRoots returns module-root-relative disk roots for source mode.
+func (as *Assets) sourceRoots(g *gen.Gen, decls []*assetNode) (string, diag.Diagnostics) {
+	var ds diag.Diagnostics
+	amPkg := g.Import(assetmapperPath)
+	osPkg := g.Import("os")
+	var b strings.Builder
+	b.WriteString("[]" + amPkg + ".Root{\n")
+	for _, d := range decls {
+		rel, err := sourceRootPath(as.moduleRoot, d.srcDir, d.dir)
+		if err != nil {
+			ds.Error(d.pos, err.Error(),
+				"source-mode asset roots are read relative to the module root at runtime")
+			continue
+		}
+		fmt.Fprintf(&b, "{FS: %s.DirFS(%q)},\n", osPkg, rel)
+	}
+	b.WriteString("}")
+	return b.String(), ds
 }
 
 // Tree locates one declared asset tree on disk.
@@ -218,6 +333,21 @@ func (as *Assets) Trees() []Tree {
 		out[i] = Tree{SrcDir: d.srcDir, Dir: d.dir}
 	}
 	return out
+}
+
+func sourceRootPath(moduleRoot, srcDir, dir string) (string, error) {
+	if moduleRoot == "" {
+		return "", fmt.Errorf("module root unknown; cannot emit a source asset root for %s", srcDir)
+	}
+	rel, err := filepath.Rel(moduleRoot, filepath.Join(srcDir, dir))
+	if err != nil {
+		return "", err
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("asset tree %s lies outside the module root %s", filepath.Join(srcDir, dir), moduleRoot)
+	}
+	return rel, nil
 }
 
 func (as *Assets) sortedDecls() []*assetNode {
@@ -291,10 +421,18 @@ func (as *Assets) Validate(*gen.Gen) diag.Diagnostics {
 	return ds
 }
 
-// MissingHint explains that compiled assets are injected by pointer.
+// MissingHint identifies the asset type injectable in the active mode.
 func (as *Assets) MissingHint(ty types.Type) (string, bool) {
-	if types.TypeString(types.Unalias(ty), nil) != assetmapperPath+".Compiled" {
-		return "", false
+	switch types.TypeString(types.Unalias(ty), nil) {
+	case assetmapperPath + ".Compiled":
+		if as.switchMode {
+			return "with a source/compiled asset switch only assetmapper.Server is injectable; take assetmapper.Server", true
+		}
+		return "compiled assets are injected as pointers; take *assetmapper.Compiled", true
+	case "*" + assetmapperPath + ".Compiled":
+		if as.switchMode {
+			return "with a source/compiled asset switch only assetmapper.Server is injectable; take assetmapper.Server", true
+		}
 	}
-	return "compiled assets are injected as pointers; take *assetmapper.Compiled", true
+	return "", false
 }

@@ -3,8 +3,6 @@
 # DEMO_CROSSORIGIN_TRUSTED_ORIGINS, DEMO_MAILER_*, and DEMO_STORAGE_PATH.
 http:
   addr: ":8080"
-log:
-  level: info
 greeter:
   kind: goodbye
 

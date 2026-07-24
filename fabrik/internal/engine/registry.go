@@ -1,6 +1,11 @@
 package engine
 
 import (
+	"go/token"
+	"go/types"
+
+	"github.com/gofabrik/fabrik/diag"
+
 	"fmt"
 	"sort"
 	"strings"
@@ -24,8 +29,8 @@ func New() []gen.Directive {
 	mw := routerdir.NewMiddleware()
 	host := routerdir.NewHost(group, routes, mw)
 	tpl := tpldir.NewTemplates()
-	// Conventional config layers are optional; custom sources belong in providers.
-	cfg := configdir.New("config.yaml", "config.local.yaml")
+	cfg := configdir.New()
+	assetsConfig := assetOptionsSource{cfg: cfg}
 	provider := core.NewProvider(cfg)
 	jobsJob, jobsCron := jobsdir.New()
 	cliCmd, cliFlag, cliArg, cliExample, cliGroup, cliRoot, cliMW := clidir.New()
@@ -44,7 +49,7 @@ func New() []gen.Directive {
 		webdir.NewWeb(host),
 		tpl,
 		tpldir.NewFuncs(tpl),
-		assetsdir.NewAssets(host, tpl),
+		assetsdir.NewAssets(host, tpl, assetsConfig),
 		migdir.NewMigrations(),
 		jobsJob,
 		jobsCron,
@@ -106,4 +111,24 @@ func valuesNote(kind gen.ValueKind, values []string) string {
 		return " - one of " + strings.Join(values, ", ")
 	}
 	return " - e.g. " + strings.Join(values, ", ")
+}
+
+type assetOptionsSource struct {
+	cfg *configdir.Config
+}
+
+const assetOptionsPtr = "*github.com/gofabrik/fabrik/assetmapper.Options"
+
+func (r assetOptionsSource) Node() (string, token.Position, bool) {
+	nd := r.cfg.NodeByType(assetOptionsPtr)
+	if nd == nil {
+		return "", token.Position{}, false
+	}
+	return nd.Section(), nd.Pos(), true
+}
+
+func (r assetOptionsSource) Load(g *gen.Gen) (string, diag.Diagnostics, bool) {
+	nd := r.cfg.NodeByType(assetOptionsPtr)
+	// Reuse the flow's lazy binding when application code also injects the config.
+	return g.Instance(types.NewPointer(nd.Named()), "")
 }

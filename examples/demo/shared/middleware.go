@@ -15,10 +15,10 @@ func Logged(next http.Handler) http.Handler { return middleware.Logger(next) }
 func Recovered(next http.Handler) http.Handler { return middleware.Recover(next) }
 
 //fabrik:http:middleware
-func SecureHeadersMiddleware(assets *assetmapper.Compiled) func(http.Handler) http.Handler {
+func SecureHeadersMiddleware(assets assetmapper.Server) func(http.Handler) http.Handler {
 	return middleware.SecureHeaders(
 		middleware.WithCSP(middleware.CSP{
-			ScriptSrc: []string{middleware.CSPSelf, assets.CSPImportmapHash()},
+			ScriptSrc: append([]string{middleware.CSPSelf}, assets.ImportmapCSPSources()...),
 		}),
 	)
 }
