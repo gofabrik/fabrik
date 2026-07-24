@@ -64,7 +64,7 @@ const keySrc = "package store\n\n" +
 
 func TestResolveKey(t *testing.T) {
 	pkg, fset := typecheck(t, keySrc)
-	c := New("config.yaml")
+	c := New()
 	if msgs := register(t, c, pkg, fset, "store", "Config"); len(msgs) > 0 {
 		t.Fatalf("Check: %v", msgs)
 	}
@@ -109,7 +109,7 @@ func TestSectionExclusivity(t *testing.T) {
 		"type Whole struct {\n\tAddr string `yaml:\"addr\"`\n}\n\n" +
 		"type Part struct {\n\tKind string `yaml:\"kind\"`\n}\n"
 	pkg, fset := typecheck(t, src)
-	c := New("config.yaml")
+	c := New()
 	if msgs := register(t, c, pkg, fset, "", "Whole"); len(msgs) > 0 {
 		t.Fatalf("sectionless Check: %v", msgs)
 	}
@@ -120,7 +120,7 @@ func TestSectionExclusivity(t *testing.T) {
 }
 
 func TestDottedSectionRejected(t *testing.T) {
-	c := New("config.yaml")
+	c := New()
 	_, ds := c.Parse(gen.Annotation{Name: "config", Args: "store.primary"})
 	if !ds.HasFatal() || !strings.Contains(ds[0].Message, "must not contain dots") {
 		t.Fatalf("Parse(store.primary) = %v, want dotted-section error", ds)
@@ -129,7 +129,7 @@ func TestDottedSectionRejected(t *testing.T) {
 
 func TestMissingHint(t *testing.T) {
 	pkg, fset := typecheck(t, keySrc)
-	c := New("config.yaml")
+	c := New()
 	if msgs := register(t, c, pkg, fset, "store", "Config"); len(msgs) > 0 {
 		t.Fatalf("Check: %v", msgs)
 	}
@@ -144,7 +144,7 @@ func TestMissingHint(t *testing.T) {
 
 func TestLoadNodePhaseContract(t *testing.T) {
 	pkg, fset := typecheck(t, keySrc)
-	c := New("config.yaml")
+	c := New()
 	if msgs := register(t, c, pkg, fset, "store", "Config"); len(msgs) > 0 {
 		t.Fatalf("Check: %v", msgs)
 	}

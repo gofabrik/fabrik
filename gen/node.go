@@ -64,6 +64,7 @@ type ConfigLoad struct {
 	Var     string
 	Pkg     string   // config package alias
 	Type    string   // rendered struct type
+	Prefix  string   // existing options prepended to Options
 	Options []string // rendered option expressions
 }
 

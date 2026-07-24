@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -64,11 +65,18 @@ END;`
 
 	port := freePort(t)
 	env := append(os.Environ(),
+		"FABRIK_ENV=production",
+		// Disable Secure so the HTTP-only client can exercise sessions.
+		"DEMO_SESSION_COOKIE_SECURE=false",
 		"DEMO_HTTP_ADDR=:"+port,
 		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
 		"DEMO_STORAGE_PATH="+filepath.Join(tmp, "storage"),
 		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
 	)
+	// Help and parse paths skip construction and must not resolve FABRIK_ENV.
+	envNoFabrik := append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "FABRIK_ENV=")
+	}), "DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"))
 	// An invalid config verifies that help and command listing skip construction.
 	cfgPath := filepath.Join(src, "config.yaml")
 	goodCfg, err := os.ReadFile(cfgPath) // #nosec G304 -- test-controlled path
@@ -80,7 +88,7 @@ END;`
 	}
 	help := exec.Command(bin, "--help") // #nosec G204 -- launches a controlled binary built by this test
 	help.Dir = src
-	help.Env = env
+	help.Env = envNoFabrik
 	out, err := help.CombinedOutput()
 	if err != nil {
 		t.Fatalf("demo --help: %v\n%s", err, out)
@@ -92,7 +100,7 @@ END;`
 	}
 	bare := exec.Command(bin) // #nosec G204 -- launches a controlled binary built by this test
 	bare.Dir = src
-	bare.Env = env
+	bare.Env = envNoFabrik
 	out, err = bare.CombinedOutput()
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
 		t.Fatalf("bare demo: err=%v (want exit 2)\n%s", err, out)
@@ -105,7 +113,7 @@ END;`
 	// Nested help exposes declared inputs without constructing the application.
 	nestedHelp := exec.Command(bin, "database", "migrate", "--help") // #nosec G204 -- launches a controlled binary built by this test
 	nestedHelp.Dir = src
-	nestedHelp.Env = env
+	nestedHelp.Env = envNoFabrik
 	out, err = nestedHelp.CombinedOutput()
 	if err != nil {
 		t.Fatalf("database migrate --help: %v\n%s", err, out)
@@ -118,12 +126,19 @@ END;`
 	// Parse errors must occur before application construction.
 	badArgs := exec.Command(bin, "database", "migrate", "sideways") // #nosec G204 -- launches a controlled binary built by this test
 	badArgs.Dir = src
-	badArgs.Env = env
+	badArgs.Env = envNoFabrik
 	if out, err := badArgs.CombinedOutput(); err == nil || !strings.Contains(string(out), "unexpected argument") {
 		t.Fatalf("unexpected positional accepted: err=%v\n%s", err, out)
 	}
 	if err := os.WriteFile(cfgPath, goodCfg, 0o600); err != nil {
 		t.Fatal(err)
+	}
+
+	noIdentity := exec.Command(bin, "database", "migrate", "-n") // #nosec G204 -- launches a controlled binary built by this test
+	noIdentity.Dir = src
+	noIdentity.Env = envNoFabrik
+	if out, err := noIdentity.CombinedOutput(); err == nil || !strings.Contains(string(out), "FABRIK_ENV is required") {
+		t.Fatalf("construction without FABRIK_ENV: err=%v\n%s", err, out)
 	}
 
 	// Dry-run binds the flag without creating the database.
@@ -233,6 +248,277 @@ END;`
 	}
 	if got := strings.Count(logged, "greeting cache delete failed"); got != 1 {
 		t.Fatalf("invalidation failures logged %d times, want exactly 1 (the poisoned delete):\n%s", got, logged)
+	}
+	if !strings.Contains(logged, `"msg":`) {
+		t.Fatalf("production logs are not JSON:\n%s", logged)
+	}
+
+	developmentFlow(t, src, bin, tmp)
+	relaxationRequiredFlow(t, src, bin, tmp)
+	envIdentityFlow(t, src, bin, tmp)
+	productionIgnoresLocalFlow(t, src, bin, tmp)
+	fabrikRunFlow(t, src, tmp)
+}
+
+func withFabrikEnv(env []string, value string) []string {
+	return append(slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		return strings.HasPrefix(kv, "FABRIK_ENV=")
+	}), "FABRIK_ENV="+value)
+}
+
+func envIdentityFlow(t *testing.T, src, bin, tmp string) {
+	t.Helper()
+	invalid := exec.Command(bin, "database", "migrate", "-n") // #nosec G204 -- launches a controlled binary built by this test
+	invalid.Dir = src
+	invalid.Env = withFabrikEnv(developmentEnv(t, tmp, freePort(t)), "staging")
+	if out, err := invalid.CombinedOutput(); err == nil || !strings.Contains(string(out), `invalid FABRIK_ENV "staging"`) {
+		t.Fatalf("invalid environment accepted: err=%v\n%s", err, out)
+	}
+
+	profile := filepath.Join(src, "config.production.yaml")
+	if err := os.Rename(profile, profile+".off"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Rename(profile+".off", profile); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	missing := exec.Command(bin, "database", "migrate", "-n") // #nosec G204 -- launches a controlled binary built by this test
+	missing.Dir = src
+	missing.Env = withFabrikEnv(developmentEnv(t, tmp, freePort(t)), "production")
+	if out, err := missing.CombinedOutput(); err == nil || !strings.Contains(string(out), "config.production.yaml") {
+		t.Fatalf("missing profile did not fail naming the file: err=%v\n%s", err, out)
+	}
+}
+
+func productionIgnoresLocalFlow(t *testing.T, src, bin, tmp string) {
+	t.Helper()
+	local := filepath.Join(src, "config.local.yaml")
+	if err := os.WriteFile(local, []byte("log:\n  format: text\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(local) //nolint:errcheck // test cleanup
+
+	port := freePort(t)
+	server := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
+	server.Dir = src
+	server.Env = append(withFabrikEnv(developmentEnv(t, tmp, port), "production"), "DEMO_SESSION_COOKIE_SECURE=false")
+	var out bytes.Buffer
+	server.Stdout = &out
+	server.Stderr = &out
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:errcheck // best-effort test process cleanup
+	defer server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
+
+	waitServe(t, "http://localhost:"+port+"/")
+	gracefulShutdown(t, server)
+	logged := out.String()
+	if !strings.Contains(logged, `"msg":`) || strings.Contains(logged, "level=") {
+		t.Fatalf("config.local.yaml leaked into production logging:\n%s", logged)
+	}
+}
+
+func waitServe(t *testing.T, url string) string {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		resp, err := http.Get(url) // #nosec G107 -- test requests a loopback URL constructed above
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			//nolint:errcheck // response body close after reading is cleanup only
+			resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+			return string(body)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server did not answer at %s: %v", url, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func getBody(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url) // #nosec G107 -- test requests a loopback URL constructed above
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	return string(body)
+}
+
+func getHeader(t *testing.T, url, name string) string {
+	t.Helper()
+	resp, err := http.Get(url) // #nosec G107 -- test requests a loopback URL constructed above
+	if err != nil {
+		t.Fatal(err)
+	}
+	//nolint:errcheck // response body close after reading is cleanup only
+	defer resp.Body.Close()        // #nosec G104 -- response body close after reading is cleanup only
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck // drain before close
+	return resp.Header.Get(name)
+}
+
+func postGreetSetCookie(t *testing.T, base string) string {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.PostForm(base+"/greet", url.Values{"name": {"cookie-probe"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	//nolint:errcheck // response body close after reading is cleanup only
+	defer resp.Body.Close()        // #nosec G104 -- response body close after reading is cleanup only
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck // drain before close
+	return resp.Header.Get("Set-Cookie")
+}
+
+func developmentEnv(t *testing.T, tmp, port string) []string {
+	t.Helper()
+	return append(os.Environ(),
+		"FABRIK_ENV=development",
+		"DEMO_HTTP_ADDR=:"+port,
+		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
+		"DEMO_STORAGE_PATH="+filepath.Join(tmp, "storage"),
+		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
+	)
+}
+
+func developmentFlow(t *testing.T, src, bin, tmp string) {
+	t.Helper()
+	port := freePort(t)
+	server := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
+	server.Dir = src
+	server.Env = developmentEnv(t, tmp, port)
+	var out bytes.Buffer
+	server.Stdout = &out
+	server.Stderr = &out
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:errcheck // best-effort test process cleanup
+	defer server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
+
+	base := "http://localhost:" + port
+	page := waitServe(t, base+"/")
+	csp := getHeader(t, base+"/", "Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("development CSP is missing the explicit relaxation: %q", csp)
+	}
+	if strings.Contains(csp, "'sha256-") {
+		t.Fatalf("development CSP carries a hash despite source assets: %q", csp)
+	}
+
+	if sc := postGreetSetCookie(t, base); sc == "" || strings.Contains(sc, "Secure") {
+		t.Fatalf("development session cookie should be set and not Secure: %q", sc)
+	}
+
+	appJS := regexp.MustCompile(`/assets/app-[0-9a-f]{8}\.js`).FindString(page)
+	if appJS == "" {
+		t.Fatalf("page carries no hashed app.js URL:\n%s", page)
+	}
+	jsPath := filepath.Join(src, "web", "assets", "app.js")
+	orig, err := os.ReadFile(jsPath) // #nosec G304 -- test-controlled path
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := append(append([]byte{}, orig...), []byte("\nconsole.log(\"dev-edit\");\n")...)
+	if err := os.WriteFile(jsPath, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pageAfter := getBody(t, base+"/")
+	appJSAfter := regexp.MustCompile(`/assets/app-[0-9a-f]{8}\.js`).FindString(pageAfter)
+	if appJSAfter == "" || appJSAfter == appJS {
+		t.Fatalf("asset URL did not follow the disk edit: %q -> %q", appJS, appJSAfter)
+	}
+	if body := getBody(t, base+appJSAfter); !strings.Contains(body, "dev-edit") {
+		t.Fatalf("served asset does not carry the disk edit:\n%s", body)
+	}
+	if err := os.WriteFile(jsPath, orig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	gracefulShutdown(t, server)
+	if logged := out.String(); !strings.Contains(logged, "level=") {
+		t.Fatalf("development logs are not text:\n%s", logged)
+	}
+}
+
+func relaxationRequiredFlow(t *testing.T, src, bin, tmp string) {
+	t.Helper()
+	local := filepath.Join(src, "config.local.yaml")
+	if err := os.WriteFile(local, []byte("security:\n  allow_unsafe_inline: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(local) //nolint:errcheck // test cleanup
+
+	cmd := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
+	cmd.Dir = src
+	cmd.Env = developmentEnv(t, tmp, freePort(t))
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "allow_unsafe_inline") {
+		t.Fatalf("source assets without the relaxation must fail startup: err=%v\n%s", err, out)
+	}
+}
+
+func fabrikRunFlow(t *testing.T, src, tmp string) {
+	t.Helper()
+	if v, ok := os.LookupEnv("FABRIK_ENV"); ok {
+		defer os.Setenv("FABRIK_ENV", v) // #nosec G104 -- test env restore
+		os.Unsetenv("FABRIK_ENV")        // #nosec G104 -- test env setup
+	}
+	port := freePort(t)
+	cmd, err := runCommand(filepath.Join(src, "web"), []string{"run"})
+	if err != nil {
+		t.Fatalf("fabrik run from subtree: %v", err)
+	}
+	if cmd.Dir != src {
+		t.Fatalf("child cwd = %q, want the module root %q", cmd.Dir, src)
+	}
+	cmd.Env = append(cmd.Env,
+		"DEMO_HTTP_ADDR=:"+port,
+		"DEMO_DATABASE_PATH="+filepath.Join(tmp, "demo.db"),
+		"DEMO_STORAGE_PATH="+filepath.Join(tmp, "storage"),
+		"DEMO_CROSSORIGIN_TRUSTED_ORIGINS=https://trusted.example",
+		"DEMO_SESSION_COOKIE_SECURE=true",
+		"GOWORK=off",
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// go run re-execs the built binary; kill the whole process group.
+	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) //nolint:errcheck // best-effort test process cleanup
+
+	base := "http://localhost:" + port
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		resp, err := http.Get(base + "/") // #nosec G107 -- test requests a loopback URL constructed above
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			//nolint:errcheck // response body close after reading is cleanup only
+			resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+			csp := resp.Header.Get("Content-Security-Policy")
+			if !strings.Contains(csp, "'unsafe-inline'") {
+				t.Fatalf("fabrik run did not select the development environment: CSP %q", csp)
+			}
+			if !strings.Contains(string(body), "/assets/") {
+				t.Fatalf("fabrik run page carries no assets:\n%s", body)
+			}
+			if sc := postGreetSetCookie(t, base); sc == "" || !strings.Contains(sc, "Secure") {
+				t.Fatalf("env override did not secure the session cookie: %q", sc)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fabrik run server did not answer: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 

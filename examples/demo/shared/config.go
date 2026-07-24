@@ -3,6 +3,7 @@ package shared
 import (
 	"errors"
 
+	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/mail"
 )
@@ -25,7 +26,21 @@ type DatabaseConfig struct {
 
 //fabrik:config log
 type LogConfig struct {
-	Level string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
+	Format string `yaml:"format" env:"DEMO_LOG_FORMAT" default:"json"`
+	Level  string `yaml:"level" env:"DEMO_LOG_LEVEL" default:"info"`
+}
+
+//fabrik:config assets
+type AssetsConfig = assetmapper.RuntimeConfig
+
+//fabrik:config session
+type SessionConfig struct {
+	CookieSecure bool `yaml:"cookie_secure" env:"DEMO_SESSION_COOKIE_SECURE" default:"true"`
+}
+
+//fabrik:config security
+type SecurityConfig struct {
+	AllowUnsafeInline bool `yaml:"allow_unsafe_inline"`
 }
 
 //fabrik:config crossorigin

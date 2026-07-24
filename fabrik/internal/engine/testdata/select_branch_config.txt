@@ -80,12 +80,26 @@ import (
 func run() int {
 	if err := func() error {
 		// Config
-		storeConfig, err := config.Load[store.Config](
+		fabrikEnv := os.Getenv("FABRIK_ENV")
+		switch fabrikEnv {
+		case "development", "production":
+		default:
+			if fabrikEnv == "" {
+				return fmt.Errorf("FABRIK_ENV is required: development or production")
+			}
+			return fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+		}
+		fabrikConfigOpts := []config.Option{
 			config.FileOptional("config.yaml"),
-			config.FileOptional("config.local.yaml"),
+			config.File("config." + fabrikEnv + ".yaml"),
+		}
+		if fabrikEnv == "development" {
+			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+		}
+		storeConfig, err := config.Load[store.Config](append(fabrikConfigOpts,
 			config.KnownSections("postgres", "store"),
 			config.Section("store"),
-		)
+		)...)
 		if err != nil {
 			return err
 		}
@@ -97,12 +111,10 @@ func run() int {
 		case "memory":
 			storeStore = store.NewMemory(storeConfig)
 		case "postgres":
-			storePostgresConfig, err := config.Load[store.PostgresConfig](
-				config.FileOptional("config.yaml"),
-				config.FileOptional("config.local.yaml"),
+			storePostgresConfig, err := config.Load[store.PostgresConfig](append(fabrikConfigOpts,
 				config.KnownSections("postgres", "store"),
 				config.Section("postgres"),
-			)
+			)...)
 			if err != nil {
 				return err
 			}

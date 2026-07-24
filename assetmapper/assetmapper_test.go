@@ -221,6 +221,32 @@ func TestAsset_StableAcrossCalls(t *testing.T) {
 	}
 }
 
+func TestAsset_DevReadIsLive(t *testing.T) {
+	fs := fstest.MapFS{
+		"app.js": {Data: []byte("one")},
+	}
+	m := mustMapper(t, assetmapper.Config{Roots: []assetmapper.Root{{FS: fs}}})
+
+	before, err := m.Asset("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs["app.js"] = &fstest.MapFile{Data: []byte("two")}
+	after, err := m.Asset("app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatalf("URL did not change after the source edit: %s", before)
+	}
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", after, nil))
+	if rec.Body.String() != "two" {
+		t.Errorf("served content = %q, want the edited source", rec.Body.String())
+	}
+}
+
 func TestAsset_FirstRootWins(t *testing.T) {
 	user := fstest.MapFS{
 		"app.js": {Data: []byte("USER")},

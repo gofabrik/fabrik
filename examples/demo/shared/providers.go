@@ -49,14 +49,14 @@ func NewJobsConfig() jobs.Config {
 }
 
 //fabrik:provider
-func NewSession(db *sql.DB) (*session.Manager[Session], error) {
+func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error) {
 	store, err := session.NewSQLiteStore(db, session.SQLiteOptions{})
 	if err != nil {
 		return nil, err
 	}
 	return session.New[Session](session.Config{
 		Store:          store,
-		Token:          session.Cookie{Name: "demo_session", HttpOnly: true, SameSite: http.SameSiteLaxMode},
+		Token:          session.Cookie{Name: "demo_session", HttpOnly: true, Secure: c.CookieSecure, SameSite: http.SameSiteLaxMode},
 		AbsoluteExpiry: 24 * time.Hour,
 		IdleExpiry:     time.Hour,
 	})

@@ -299,12 +299,26 @@ func run() int {
 
 func buildWarmCache(ctx context.Context) (*store.Pool, error) {
 	// Config
-	sharedLog, err := config.Load[shared.Log](
+	fabrikEnv := os.Getenv("FABRIK_ENV")
+	switch fabrikEnv {
+	case "development", "production":
+	default:
+		if fabrikEnv == "" {
+			return nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+		}
+		return nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
+		config.File("config." + fabrikEnv + ".yaml"),
+	}
+	if fabrikEnv == "development" {
+		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+	}
+	sharedLog, err := config.Load[shared.Log](append(fabrikConfigOpts,
 		config.KnownSections("http", "log", "postgres", "store"),
 		config.Section("log"),
-	)
+	)...)
 	if err != nil {
 		return nil, err
 	}
@@ -324,32 +338,40 @@ func buildWarmCache(ctx context.Context) (*store.Pool, error) {
 
 func buildServe(ctx context.Context) (*httpserver.Server, error) {
 	// Config
-	sharedConfig, err := config.Load[shared.Config](
+	fabrikEnv := os.Getenv("FABRIK_ENV")
+	switch fabrikEnv {
+	case "development", "production":
+	default:
+		if fabrikEnv == "" {
+			return nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+		}
+		return nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
+		config.File("config." + fabrikEnv + ".yaml"),
+	}
+	if fabrikEnv == "development" {
+		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+	}
+	sharedConfig, err := config.Load[shared.Config](append(fabrikConfigOpts,
 		config.KnownSections("http", "log", "postgres", "store"),
 		config.Section("http"),
-	)
+	)...)
 	if err != nil {
 		return nil, err
 	}
-
-	sharedLog, err := config.Load[shared.Log](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
+	sharedLog, err := config.Load[shared.Log](append(fabrikConfigOpts,
 		config.KnownSections("http", "log", "postgres", "store"),
 		config.Section("log"),
-	)
+	)...)
 	if err != nil {
 		return nil, err
 	}
-
-	storeConfig, err := config.Load[store.Config](
-		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
+	storeConfig, err := config.Load[store.Config](append(fabrikConfigOpts,
 		config.KnownSections("http", "log", "postgres", "store"),
 		config.Section("store"),
-	)
+	)...)
 	if err != nil {
 		return nil, err
 	}
@@ -368,12 +390,10 @@ func buildServe(ctx context.Context) (*httpserver.Server, error) {
 	case "memory":
 		storeStore = store.NewMemory(storeConfig)
 	case "postgres":
-		storePostgresConfig, err := config.Load[store.PostgresConfig](
-			config.FileOptional("config.yaml"),
-			config.FileOptional("config.local.yaml"),
+		storePostgresConfig, err := config.Load[store.PostgresConfig](append(fabrikConfigOpts,
 			config.KnownSections("http", "log", "postgres", "store"),
 			config.Section("postgres"),
-		)
+		)...)
 		if err != nil {
 			return nil, err
 		}
@@ -432,12 +452,26 @@ func buildServe(ctx context.Context) (*httpserver.Server, error) {
 
 func buildMigrateDB(ctx context.Context) (*sql.DB, migrations.Dialect, migrations.Sources, error) {
 	// Config
-	sharedLog, err := config.Load[shared.Log](
+	fabrikEnv := os.Getenv("FABRIK_ENV")
+	switch fabrikEnv {
+	case "development", "production":
+	default:
+		if fabrikEnv == "" {
+			return nil, 0, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+		}
+		return nil, 0, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
-		config.FileOptional("config.local.yaml"),
+		config.File("config." + fabrikEnv + ".yaml"),
+	}
+	if fabrikEnv == "development" {
+		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+	}
+	sharedLog, err := config.Load[shared.Log](append(fabrikConfigOpts,
 		config.KnownSections("http", "log", "postgres", "store"),
 		config.Section("log"),
-	)
+	)...)
 	if err != nil {
 		return nil, 0, nil, err
 	}

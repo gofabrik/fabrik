@@ -34,11 +34,8 @@ func (m *Mapper) Asset(logicalPath string) (string, error) {
 	return m.urlPrefix + hashedName(cleaned, c.hash), nil
 }
 
-// loadDev resolves and caches a dev asset.
-func (m *Mapper) loadDev(logicalPath string) (*cachedAsset, error) {
-	if v, ok := m.devCache.Load(logicalPath); ok {
-		return v.(*cachedAsset), nil
-	}
+// loadDev reads the source on every call so edits appear without a restart.
+func (m *Mapper) loadDev(logicalPath string) (*devAsset, error) {
 	root, sub, err := m.resolveFile(logicalPath)
 	if err != nil {
 		return nil, err
@@ -47,14 +44,11 @@ func (m *Mapper) loadDev(logicalPath string) (*cachedAsset, error) {
 	if err != nil {
 		return nil, fmt.Errorf("assetmapper: read %s: %w", logicalPath, err)
 	}
-	c := &cachedAsset{
+	return &devAsset{
 		content:     content,
 		hash:        hashContent(content),
 		contentType: contentTypeFor(logicalPath),
-	}
-	// Prefer a concurrent winner to keep one cached value per path.
-	actual, _ := m.devCache.LoadOrStore(logicalPath, c)
-	return actual.(*cachedAsset), nil
+	}, nil
 }
 
 // contentTypeFor disables browser sniffing for unknown extensions.
@@ -63,18 +57,4 @@ func contentTypeFor(logicalPath string) string {
 		return t
 	}
 	return "application/octet-stream"
-}
-
-// Invalidate drops the cached dev asset for one logical path.
-func (m *Mapper) Invalidate(logicalPath string) {
-	cleaned := cleanLogical(logicalPath)
-	if cleaned == "" {
-		return
-	}
-	m.devCache.Delete(cleaned)
-}
-
-// ClearCache drops every cached dev asset.
-func (m *Mapper) ClearCache() {
-	m.devCache.Clear()
 }

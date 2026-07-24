@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: Applications can now load per-environment configuration profiles and switch between live source assets in development and compiled assets in production.
+issues: [0]

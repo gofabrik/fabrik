@@ -14,7 +14,7 @@ import (
 	"strconv"
 )
 
-// BuildOption configures [Build] and [Check].
+// BuildOption configures [Build], [Check], and [NewSource].
 type BuildOption func(*buildConfig)
 
 type buildConfig struct {
@@ -79,6 +79,11 @@ func (c *Compiled) FuncMap() template.FuncMap {
 // Build freezes it, so the value holds for the life of the Compiled.
 func (c *Compiled) CSPImportmapHash() string {
 	return c.cspImportmapHash
+}
+
+// ImportmapCSPSource returns the stable CSP source for compiled assets.
+func (c *Compiled) ImportmapCSPSource() (string, bool) {
+	return c.cspImportmapHash, true
 }
 
 // URLPrefix returns the resolved asset URL prefix.

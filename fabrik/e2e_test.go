@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -109,7 +111,7 @@ func TestEndToEnd(t *testing.T) {
 	port := freePort(t)
 	server := exec.Command(bin, "run") // #nosec G204 -- launches a controlled binary built by this test
 	server.Dir = dir
-	server.Env = append(os.Environ(), "HELLO_HTTP_ADDR=:"+port)
+	server.Env = append(os.Environ(), "HELLO_HTTP_ADDR=:"+port, "FABRIK_ENV=development")
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -131,10 +133,61 @@ func TestEndToEnd(t *testing.T) {
 				t.Fatalf("GET %s = %q, want rendered greeting page", url, got)
 			}
 			checkAsset(t, port, got)
-			return
+			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("server did not answer: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	//nolint:errcheck // best-effort test process cleanup
+	server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
+
+	checkFabrikRun(t, dir)
+}
+
+func checkFabrikRun(t *testing.T, dir string) {
+	t.Helper()
+	if v, ok := os.LookupEnv("FABRIK_ENV"); ok {
+		defer os.Setenv("FABRIK_ENV", v) // #nosec G104 -- test env restore
+		os.Unsetenv("FABRIK_ENV")        // #nosec G104 -- test env setup
+	}
+
+	cmd, err := runCommand(filepath.Join(dir, "web"), []string{"run"})
+	if err != nil {
+		t.Fatalf("fabrik run from subtree: %v", err)
+	}
+	if cmd.Dir != dir {
+		t.Fatalf("child cwd = %q, want the module root %q", cmd.Dir, dir)
+	}
+	if !slices.Contains(cmd.Env, "FABRIK_ENV=development") {
+		t.Fatalf("unset FABRIK_ENV: child env %v is missing FABRIK_ENV=development", cmd.Env)
+	}
+
+	port := freePort(t)
+	cmd.Env = append(cmd.Env, "HELLO_HTTP_ADDR=:"+port, "GOWORK=off")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// go run re-execs the built binary; kill the whole process group.
+	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) //nolint:errcheck // best-effort test process cleanup
+
+	url := fmt.Sprintf("http://localhost:%s/?name=run", port)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		resp, err := http.Get(url) // #nosec G107 -- test requests a loopback URL constructed above
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			//nolint:errcheck // response body close after reading is cleanup only
+			resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+			if !strings.Contains(string(body), "<h1>Hello, run!</h1>") {
+				t.Fatalf("GET %s = %q, want rendered greeting page", url, body)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fabrik run server did not answer: %v", err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

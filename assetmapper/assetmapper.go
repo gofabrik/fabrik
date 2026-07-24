@@ -24,7 +24,6 @@ import (
 	"io/fs"
 	"path"
 	"strings"
-	"sync"
 )
 
 // ErrAssetNotFound reports an unknown logical asset path.
@@ -103,11 +102,9 @@ type Mapper struct {
 	urlPrefix string
 	manifest  *Manifest // nil = dev mode
 
-	// devCache memoises source reads and hashes until restart or ClearCache.
-	devCache sync.Map // map[string]*cachedAsset
 }
 
-type cachedAsset struct {
+type devAsset struct {
 	content     []byte
 	hash        string
 	contentType string
