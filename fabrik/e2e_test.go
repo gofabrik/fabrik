@@ -133,6 +133,7 @@ func TestEndToEnd(t *testing.T) {
 				t.Fatalf("GET %s = %q, want rendered greeting page", url, got)
 			}
 			checkAsset(t, port, got)
+			checkErrorPage(t, port)
 			break
 		}
 		if time.Now().After(deadline) {
@@ -144,6 +145,20 @@ func TestEndToEnd(t *testing.T) {
 	server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
 
 	checkFabrikRun(t, dir)
+}
+
+func checkErrorPage(t *testing.T, port string) {
+	t.Helper()
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%s/definitely-missing", port)) // #nosec G107 -- test requests a loopback URL constructed above
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if resp.StatusCode != http.StatusNotFound || strings.Count(string(body), "/definitely-missing") < 2 {
+		t.Fatalf("scaffold 404 = %d, want 404 with the path in nav and content:\n%s", resp.StatusCode, body)
+	}
 }
 
 func checkFabrikRun(t *testing.T, dir string) {

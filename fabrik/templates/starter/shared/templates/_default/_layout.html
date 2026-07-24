@@ -1,10 +1,11 @@
 <!doctype html>
 <html>
 <head>
-  <title>{{ block "title" . }}demo{{ end }}</title>
+  <title>{{ block "title" .Page }}demo{{ end }}</title>
   <link rel="stylesheet" href="{{ asset "style.css" }}">
 </head>
 <body>
-  {{ block "content" . }}{{ end }}
+  {{ template "_nav.html" . }}
+  {{ block "content" .Page }}{{ end }}
 </body>
 </html>

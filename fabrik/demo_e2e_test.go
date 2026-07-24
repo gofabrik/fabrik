@@ -1050,8 +1050,29 @@ func formsFlow(t *testing.T, port string) {
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 		t.Fatalf("valid name should 303 to /, got %d Location=%q", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if body := crossOriginGet(t, client, base+"/", ""); !strings.Contains(body, "Goodbye, alice!") {
-		t.Fatalf("after the valid post, / should greet alice:\n%s", body)
+	// Fragment and error-page renders must leave the pending flash for the next full page.
+	if body := crossOriginGet(t, client, base+"/fragments/recent", ""); strings.Contains(body, "<nav>") || strings.Contains(body, "Greeting name updated.") {
+		t.Fatalf("fragment must render without the layout nav or flashes:\n%s", body)
+	}
+	nf, err := http.NewRequest(http.MethodGet, base+"/definitely-missing", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nfResp, err := client.Do(nf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nfBody, _ := io.ReadAll(nfResp.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	nfResp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if nfResp.StatusCode != http.StatusNotFound || !strings.Contains(string(nfBody), "hello, alice") || strings.Contains(string(nfBody), "Greeting name updated.") {
+		t.Fatalf("404 should show the signed-in nav and no flash, got %d:\n%s", nfResp.StatusCode, nfBody)
+	}
+	if body := crossOriginGet(t, client, base+"/", ""); !strings.Contains(body, "Goodbye, alice!") || !strings.Contains(body, "Greeting name updated.") || !strings.Contains(body, "hello, alice") {
+		t.Fatalf("after the valid post, / should greet alice with the flash and signed-in nav:\n%s", body)
+	}
+	if body := crossOriginGet(t, client, base+"/", ""); strings.Contains(body, "Greeting name updated.") {
+		t.Fatalf("the flash must display exactly once:\n%s", body)
 	}
 }
 

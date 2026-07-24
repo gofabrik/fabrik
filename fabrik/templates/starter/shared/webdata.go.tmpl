@@ -1,0 +1,30 @@
+package shared
+
+import (
+	"net/http"
+
+	"github.com/gofabrik/fabrik/web"
+)
+
+// WebData supplies shared layout data without changing the page template's dot.
+type WebData struct {
+	Page    any
+	Request RequestView
+}
+
+type RequestView struct {
+	Path  string
+	Route string
+}
+
+// NewWebData returns request-scoped data for the shared layout.
+//
+//fabrik:provider
+func NewWebData() web.DataProvider {
+	return func(r *http.Request, page any) (any, error) {
+		return &WebData{
+			Page:    page,
+			Request: RequestView{Path: r.URL.Path, Route: r.Pattern},
+		}, nil
+	}
+}

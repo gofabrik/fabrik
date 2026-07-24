@@ -45,7 +45,11 @@ func (*Web) Meta() gen.Meta {
 			"names, and conflict table as `//fabrik:http`; typed and plain " +
 			"handlers mix freely, even on one struct. When " +
 			"`//fabrik:templates` is declared, `web.View` responses render " +
-			"through the app's template set.\n\n" +
+			"through the app's template set. A `//fabrik:provider` " +
+			"returning `web.DataProvider` opts the adapter into render-data " +
+			"composition: the generated construction gains `WithData` and " +
+			"the provider composes what every View and Template response " +
+			"renders with.\n\n" +
 			"```go\n//fabrik:web POST /login\nfunc (h *Handlers) Login(req *web.Request) (web.Response, error) { ... }\n```",
 		Example: "//fabrik:web GET /login",
 		Tier:    gen.TierBind,
@@ -155,6 +159,13 @@ func (w *Web) Emit(n any, g *gen.Gen) diag.Diagnostics {
 				ds = append(ds, ids...)
 				if ok && len(ids) == 0 {
 					args = append(args, webPkg+".WithRenderer("+expr+")")
+				}
+			}
+			if dp, ok := g.LookupType(webPath, "DataProvider"); ok && g.HasProviderBinding(dp, "") {
+				expr, ids, ok := g.Instance(dp, "")
+				ds = append(ds, ids...)
+				if ok && len(ids) == 0 {
+					args = append(args, webPkg+".WithData("+expr+")")
 				}
 			}
 			v := g.Var("adapter")

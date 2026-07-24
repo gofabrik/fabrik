@@ -31,7 +31,6 @@ type HomePage struct {
 	Started  time.Time
 	Visits   int64
 	Recent   []Greeting
-	Flashes  []flash.Message
 }
 
 // Greeting is a recorded greeting.
@@ -51,19 +50,36 @@ type Handlers struct {
 	Greeter Greeter
 	Queries *query.DB
 	Session *session.Manager[shared.Session]
-	Flash   *flash.Flash
 	Jobs    *jobs.Manager
 	Cache   *cache.Cache[[]Greeting]
+}
+
+type RecentPage struct {
+	Recent []Greeting
+}
+
+func (RecentPage) Template() string { return "fragments/recent" }
+
+//fabrik:web GET /fragments/recent
+func (h *Handlers) RecentFragment(req *web.Request) (web.Response, error) {
+	recent, err := h.recentGreetings(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	return web.View(RecentPage{Recent: recent}), nil
+}
+
+func (h *Handlers) recentGreetings(ctx context.Context) ([]Greeting, error) {
+	return h.Cache.GetOrLoad(ctx, "recent", 10*time.Second,
+		func(ctx context.Context) ([]Greeting, error) {
+			return query.All[Greeting](ctx, h.Queries,
+				"SELECT * FROM greetings ORDER BY id DESC LIMIT 5")
+		})
 }
 
 //fabrik:web GET /{$} middleware=nocache
 func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	ctx := req.Context()
-
-	flashes, err := h.Flash.Take(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	s, err := h.Session.Get(ctx)
 	if err != nil {
@@ -86,16 +102,12 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	recent, err := h.Cache.GetOrLoad(ctx, "recent", 10*time.Second,
-		func(ctx context.Context) ([]Greeting, error) {
-			return query.All[Greeting](ctx, h.Queries,
-				"SELECT * FROM greetings ORDER BY id DESC LIMIT 5")
-		})
+	recent, err := h.recentGreetings(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent, Flashes: flashes}), nil
+	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent}), nil
 }
 
 //fabrik:http:group /api

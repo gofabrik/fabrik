@@ -78,6 +78,49 @@ func (LoginPage) Template() string { return "auth/login" }
 The `Renderer` is a one-method interface (`Render(w, name, data)
 error`); any template system satisfying it plugs in.
 
+## Render data composition
+
+`WithData` adds request-scoped values such as the current user, path,
+and flashes to `View` and `Template` renders without passing them
+through every handler:
+
+```go
+type WebData struct {
+	Page    any
+	Viewer  *ViewerView
+	flashes func() ([]flash.Message, error)
+}
+
+// Flashes consumes pending messages on first evaluation,
+// even if rendering later fails.
+func (d WebData) Flashes() ([]flash.Message, error) {
+	if d.flashes == nil {
+		return nil, nil
+	}
+	return d.flashes()
+}
+
+adapter := web.NewAdapter(
+	web.WithRenderer(set),
+	web.WithData(func(r *http.Request, page any) (any, error) {
+		d := &WebData{Page: page, Viewer: viewerFrom(r.Context())}
+		ctx := r.Context()
+		d.flashes = sync.OnceValues(func() ([]flash.Message, error) {
+			return flashes.Take(ctx)
+		})
+		return d, nil
+	}),
+)
+```
+
+The layout can preserve page-specific dots by passing `.Page` to its
+blocks (`{{ block "content" .Page }}`). The provider runs once per
+`View` or `Template` render and must return fresh data; other responses
+skip it. Lazy `(T, error)` methods run only when evaluated, so unused
+flashes remain pending. Provider and method errors restore the prior
+header map and reach the error handler before any render bytes are
+written.
+
 ## One adapter per response surface
 
 An adapter carries one renderer and one error handler, so give each

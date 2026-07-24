@@ -280,11 +280,6 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, nil, err
@@ -332,6 +327,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		}
 		return nil, nil, nil, err
 	}
+	sharedWebDataProvider := shared.NewWebData(sharedSessionManager, sharedFlash)
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webGreeterConfig.Kind {
@@ -359,14 +355,18 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		}
 		return nil, nil, nil, err
 	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+		Sessions:  sharedSessionManager,
+	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
-		Flash:   sharedFlash,
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates), web2.WithData(sharedWebDataProvider))
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
@@ -549,6 +549,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		return nil, nil, nil, err
 	}
 
+	r.Method("GET", "/fragments/recent", adapter.Wrap(webHandlers.RecentFragment))
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
@@ -695,11 +696,6 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, err
@@ -747,6 +743,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		}
 		return nil, nil, err
 	}
+	sharedWebDataProvider := shared.NewWebData(sharedSessionManager, sharedFlash)
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webGreeterConfig.Kind {
@@ -774,14 +771,18 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		}
 		return nil, nil, err
 	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+		Sessions:  sharedSessionManager,
+	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
-		Flash:   sharedFlash,
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates), web2.WithData(sharedWebDataProvider))
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
@@ -963,6 +964,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		return nil, nil, err
 	}
 
+	r.Method("GET", "/fragments/recent", adapter.Wrap(webHandlers.RecentFragment))
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))

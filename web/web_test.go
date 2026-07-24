@@ -141,6 +141,111 @@ func TestViewRendersThroughRenderer(t *testing.T) {
 	}
 }
 
+type dataRenderer struct{ data any }
+
+func (d *dataRenderer) Render(w io.Writer, name string, data any) error {
+	d.data = data
+	_, err := w.Write([]byte("rendered"))
+	return err
+}
+
+type envelope struct {
+	Page any
+	Path string
+}
+
+func TestWithDataComposesRenderData(t *testing.T) {
+	r := &dataRenderer{}
+	calls := 0
+	a := web.NewAdapter(web.WithRenderer(r), web.WithData(func(req *http.Request, page any) (any, error) {
+		calls++
+		return envelope{Page: page, Path: req.URL.Path}, nil
+	}))
+	rec := httptest.NewRecorder()
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.View(loginPage{}), nil
+	})(rec, httptest.NewRequest("GET", "/login", nil))
+	env, ok := r.data.(envelope)
+	if !ok || env.Path != "/login" || env.Page != (loginPage{}) {
+		t.Fatalf("renderer data = %#v, want the composed envelope", r.data)
+	}
+	if calls != 1 {
+		t.Fatalf("provider ran %d times, want exactly once per render", calls)
+	}
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.View(loginPage{}), nil
+	})(httptest.NewRecorder(), httptest.NewRequest("GET", "/other", nil))
+	if calls != 2 {
+		t.Fatalf("provider ran %d times over two renders, want once each", calls)
+	}
+	if env := r.data.(envelope); env.Path != "/other" {
+		t.Fatalf("second render composed %#v, want request-specific data", r.data)
+	}
+}
+
+func TestWithDataSkipsNonRenderResponses(t *testing.T) {
+	calls := 0
+	a := web.NewAdapter(web.WithRenderer(&dataRenderer{}), web.WithData(func(*http.Request, any) (any, error) {
+		calls++
+		return nil, nil
+	}))
+	h := a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.JSON{Value: map[string]int{"n": 1}}, nil
+	})
+	h(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	h = a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.Redirect("/there"), nil
+	})
+	h(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	if calls != 0 {
+		t.Fatalf("provider ran %d times for non-render responses, want 0", calls)
+	}
+}
+
+func TestWithoutDataPageReachesRendererUnchanged(t *testing.T) {
+	r := &dataRenderer{}
+	a := web.NewAdapter(web.WithRenderer(r))
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.View(loginPage{}), nil
+	})(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	if r.data != (loginPage{}) {
+		t.Fatalf("renderer data = %#v, want the page itself", r.data)
+	}
+}
+
+func TestWithDataProviderFailureRestoresHeadersAndErrors(t *testing.T) {
+	r := &dataRenderer{}
+	sentinel := errors.New("compose exploded")
+	var handled error
+	a := web.NewAdapter(
+		web.WithRenderer(r),
+		web.WithData(func(*http.Request, any) (any, error) {
+			return nil, sentinel
+		}),
+		web.WithErrorHandler(func(w http.ResponseWriter, _ *http.Request, err error) {
+			handled = err
+		}),
+	)
+	rec := httptest.NewRecorder()
+	rec.Header().Set("X-Middleware", "kept")
+	a.Wrap(func(req *web.Request) (web.Response, error) {
+		req.SetHeader("X-Handler", "dropped")
+		return web.View(loginPage{}), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if !errors.Is(handled, sentinel) {
+		t.Fatalf("error handler got %v, want the provider's error", handled)
+	}
+	if rec.Header().Get("X-Handler") != "" || rec.Header().Get("X-Middleware") != "kept" {
+		t.Fatalf("headers = %v, want handler-recorded dropped and middleware-owned kept", rec.Header())
+	}
+	if r.data != nil {
+		t.Fatalf("renderer ran with %#v after a provider failure", r.data)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("body %q, want zero bytes committed before the error handler", rec.Body.String())
+	}
+}
+
 type failingRenderer struct{}
 
 func (failingRenderer) Render(io.Writer, string, any) error {

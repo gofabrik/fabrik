@@ -12,6 +12,10 @@ type Renderer interface {
 	Render(w io.Writer, name string, data any) error
 }
 
+// DataProvider derives request-scoped render data from a handler's page value.
+// The adapter calls it once per render; returned data must not be shared.
+type DataProvider func(r *http.Request, page any) (any, error)
+
 // ErrorHandler handles adapter and response failures.
 type ErrorHandler func(http.ResponseWriter, *http.Request, error)
 
@@ -20,8 +24,9 @@ var ErrNilResponse = errors.New("web: handler returned nil response and nil erro
 
 // Adapter adapts typed handlers to net/http.
 type Adapter struct {
-	renderer Renderer
-	onError  ErrorHandler
+	renderer     Renderer
+	dataProvider DataProvider
+	onError      ErrorHandler
 }
 
 // Option configures an Adapter.
@@ -29,6 +34,10 @@ type Option func(*Adapter)
 
 // WithRenderer supplies the renderer View responses use.
 func WithRenderer(r Renderer) Option { return func(a *Adapter) { a.renderer = r } }
+
+// WithData sets the provider for View and Template responses.
+// Provider errors reach the error handler before any response data is written.
+func WithData(p DataProvider) Option { return func(a *Adapter) { a.dataProvider = p } }
 
 // WithErrorHandler replaces the default handler, which logs errors and returns [ErrorStatus] or HTTP 500.
 func WithErrorHandler(h ErrorHandler) Option { return func(a *Adapter) { a.onError = h } }
@@ -133,8 +142,16 @@ func (a *Adapter) respond(w http.ResponseWriter, r *http.Request, resp Response)
 		if a.renderer == nil {
 			return errors.New("web: View/Template response without a renderer (configure WithRenderer)")
 		}
+		data := v.data
+		if a.dataProvider != nil {
+			var err error
+			data, err = a.dataProvider(r, v.data)
+			if err != nil {
+				return err
+			}
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		return a.renderer.Render(w, v.name, v.data)
+		return a.renderer.Render(w, v.name, data)
 	}
 	return resp.Respond(w, r)
 }

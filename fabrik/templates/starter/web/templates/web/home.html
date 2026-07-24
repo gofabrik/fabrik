@@ -1,7 +1,6 @@
 {{ define "title" }}{{ shout .Greeting }}{{ end }}
 
 {{ define "content" }}
-  {{ template "_nav.html" . }}
   <h1>{{ .Greeting }}</h1>
   <p>Served at {{ humanizeAge .Started }} of uptime.</p>
 {{ end }}

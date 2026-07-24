@@ -1,0 +1,4 @@
+change_type: enhancement
+component: web
+note: Web adapters can now compose request-scoped render data through automatically wired providers, keeping shared layout data out of individual handlers.
+issues: [0]
