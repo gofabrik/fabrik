@@ -1,9 +1,7 @@
 package web
 
 import (
-	"crypto/rand"
 	"demo/shared"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -252,39 +250,11 @@ func (f *Files) Upload(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 	defer rc.Close()
-	if err := f.Store.Put(req.Context(), uploadKey(form.Data.File), rc); err != nil {
+	key := storage.UniqueKey("uploads", form.Data.File.ClientFilename())
+	if err := f.Store.Put(req.Context(), key, rc); err != nil {
 		return nil, err
 	}
 	return web.Redirect("/files"), nil
-}
-
-// uploadKey retains client filenames only when they are safe URL path segments.
-func uploadKey(file forms.File) string {
-	var buf [16]byte
-	rand.Read(buf[:]) //nolint:errcheck // never fails by contract
-	prefix := hex.EncodeToString(buf[:])
-	name := file.ClientFilename()
-	key := "uploads/" + prefix + "-" + name
-	if !urlPathSafe(name) || storage.CheckKey(key) != nil {
-		key = "uploads/" + prefix + ".bin"
-	}
-	return key
-}
-
-// urlPathSafe restricts filenames to RFC 3986 unreserved characters.
-func urlPathSafe(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '-', r == '.', r == '_', r == '~':
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 //fabrik:http GET /files/{key...}

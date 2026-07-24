@@ -581,8 +581,8 @@ func filesFlow(t *testing.T, base string) {
 	}
 	listing2, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !regexp.MustCompile(`uploads/[0-9a-f]{32}\.bin`).Match(listing2) {
-		t.Fatalf("no .bin fallback key in listing:\n%s", listing2)
+	if !regexp.MustCompile(`uploads/[0-9a-f]{32}[^-0-9a-f]`).Match(listing2) {
+		t.Fatalf("no bare fallback key in listing:\n%s", listing2)
 	}
 	storedBefore := strings.Count(string(listing2), "uploads/")
 
