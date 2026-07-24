@@ -28,8 +28,9 @@ func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 
 - The compiler enforces one outcome per path. A handler cannot
   half-respond.
-- `return nil, err` is handled by the configured error handler: logging and the 500 live
-  in one configured place.
+- `return nil, err` invokes the configured error handler. By default,
+  every error is logged; errors carrying an `HTTPStatus() int` value
+  from 400 through 599 use that status, and others produce a plain 500.
 - Handlers test as plain functions. Comparable responses compare
   directly (`resp == web.Redirect("/account")`), the rest assert by
   type and fields. No recorder, no byte matching.
@@ -45,7 +46,7 @@ request. Typed and plain handlers mix freely, route by route. Adopting
 ```go
 adapter := web.NewAdapter(
 	web.WithRenderer(set),             // anything with Render(w, name, data) error
-	web.WithErrorHandler(onError),     // default: slog + plain 500
+	web.WithErrorHandler(onError),     // default: log, then ErrorStatus or 500
 )
 
 mux := http.NewServeMux()

@@ -524,7 +524,19 @@ func filesFlow(t *testing.T, base string) {
 		t.Fatalf("upload: %d", resp.StatusCode)
 	}
 
-	resp, err = http.Get(base + "/files/uploads/hello.txt")
+	resp, err = http.Get(base + "/files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	keyRE := regexp.MustCompile(`uploads/[0-9a-f]{32}-hello\.txt`)
+	key := keyRE.FindString(string(listing))
+	if key == "" {
+		t.Fatalf("listing carries no prefixed key:\n%s", listing)
+	}
+
+	resp, err = http.Get(base + "/files/" + key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +546,7 @@ func filesFlow(t *testing.T, base string) {
 		t.Fatalf("serve = %q", body)
 	}
 
-	req, _ := http.NewRequest("GET", base+"/files/uploads/hello.txt", nil)
+	req, _ := http.NewRequest("GET", base+"/files/"+key, nil)
 	req.Header.Set("Range", "bytes=0-4")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -549,14 +561,77 @@ func filesFlow(t *testing.T, base string) {
 		t.Fatalf("uploaded content must not serve same-origin inline: %v", resp.Header)
 	}
 
+	var odd bytes.Buffer
+	odw := multipart.NewWriter(&odd)
+	ofw2, _ := odw.CreateFormFile("file", "/")
+	ofw2.Write([]byte("fallback"))
+	odw.Close()
+	resp, err = http.Post(base+"/files", odw.FormDataContentType(), &odd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("fallback upload: %d", resp.StatusCode)
+	}
 	resp, err = http.Get(base + "/files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing2, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !regexp.MustCompile(`uploads/[0-9a-f]{32}\.bin`).Match(listing2) {
+		t.Fatalf("no .bin fallback key in listing:\n%s", listing2)
+	}
+	storedBefore := strings.Count(string(listing2), "uploads/")
+
+	var missing bytes.Buffer
+	mmw := multipart.NewWriter(&missing)
+	mmw.WriteField("unused", "1")
+	mmw.Close()
+	resp, err = http.Post(base+"/files", mmw.FormDataContentType(), &missing)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "uploads/hello.txt") {
-		t.Fatalf("listing missing upload:\n%s", body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "choose a file") {
+		t.Fatalf("missing file: %d\n%s", resp.StatusCode, body)
+	}
+	resp, err = http.Get(base + "/files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing3, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if got := strings.Count(string(listing3), "uploads/"); got != storedBefore {
+		t.Fatalf("invalid submission changed stored keys: %d -> %d", storedBefore, got)
+	}
+
+	huge := bytes.Repeat([]byte("x"), 9<<20)
+	var over bytes.Buffer
+	omw := multipart.NewWriter(&over)
+	ofw, _ := omw.CreateFormFile("file", "big.bin")
+	ofw.Write(huge)
+	omw.Close()
+	resp, err = http.Post(base+"/files", omw.FormDataContentType(), &over)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge || string(body) != "Request Entity Too Large\n" {
+		t.Fatalf("oversize: %d %q", resp.StatusCode, body)
+	}
+	resp, err = http.Post(base+"/files", "multipart/form-data; boundary=zzz", strings.NewReader("not multipart"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || string(body) != "Bad Request\n" {
+		t.Fatalf("malformed multipart: %d %q", resp.StatusCode, body)
 	}
 
 	// Encoded dot segments bypass mux canonicalization and must be rejected by Serve.
@@ -682,7 +757,14 @@ func secureHeadersFlow(t *testing.T, base string) {
 	})
 	assertBaseline("redirect", redirect, http.StatusSeeOther)
 	// The uploaded file exercises storage serving rather than listing.
-	assertBaseline("storage serve", fetch(http.MethodGet, base+"/files/uploads/hello.txt", nil), http.StatusOK)
+	listing := fetch(http.MethodGet, base+"/files", nil)
+	listingBody, _ := io.ReadAll(listing.Body)
+	listing.Body.Close() //nolint:errcheck // response body close after reading is cleanup only
+	storedKey := regexp.MustCompile(`uploads/[0-9a-f]{32}-hello\.txt`).FindString(string(listingBody))
+	if storedKey == "" {
+		t.Fatalf("listing carries no stored upload for the header check:\n%s", listingBody)
+	}
+	assertBaseline("storage serve", fetch(http.MethodGet, base+"/files/"+storedKey, nil), http.StatusOK)
 	assertBaseline("cross-origin 403", fetch(http.MethodPost, base+"/greet", func(r *http.Request) {
 		r.Header.Set("Origin", "https://evil.example")
 		r.Header.Set("Sec-Fetch-Site", "cross-site")

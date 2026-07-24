@@ -81,6 +81,12 @@ A body over the configured limit makes `Bind` return `ErrBodyTooLarge` on every 
 
 JSON decodes the whole body via `encoding/json` using `json:` tags, then runs validation. Type mismatches return a single `error`, not a per-field error. JSON binding does not keep raw values for repopulation.
 
+## File uploads
+
+A `forms.File` (or `[]forms.File`) field binds multipart uploads: `Open` returns the content as an `io.ReadSeekCloser` (`ErrNoFile` when absent), `Size` is parser-counted, and the client filename and content type are untrusted metadata. Files must be consumed before the handler returns. Non-null JSON values for file fields fail binding.
+
+`Bind` must run before `net/http` parses a body form so it can enforce configured limits; detected prior parsing returns `ErrFormConsumed`.
+
 ## Status
 
-Reference code. File uploads are read via `r.FormFile` after `Bind`. Nested structs and `time.Time` are not bound yet.
+Reference code. Nested structs and `time.Time` are not bound yet.

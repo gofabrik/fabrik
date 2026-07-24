@@ -1,0 +1,4 @@
+change_type: enhancement
+component: forms
+note: Forms can now bind uploaded files as typed fields, and the web adapter answers binding errors with their HTTP status.
+issues: [0]

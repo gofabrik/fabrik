@@ -30,7 +30,7 @@ type Option func(*Adapter)
 // WithRenderer supplies the renderer View responses use.
 func WithRenderer(r Renderer) Option { return func(a *Adapter) { a.renderer = r } }
 
-// WithErrorHandler replaces the default slog and plain-500 handler.
+// WithErrorHandler replaces the default handler, which logs errors and returns [ErrorStatus] or HTTP 500.
 func WithErrorHandler(h ErrorHandler) Option { return func(a *Adapter) { a.onError = h } }
 
 // NewAdapter returns an Adapter with the given options.
@@ -42,7 +42,30 @@ func NewAdapter(opts ...Option) *Adapter {
 	return a
 }
 
+// ErrorStatus returns an error's HTTPStatus value from 400 through 599,
+// including through wrapping, and calls HTTPStatus at most once.
+func ErrorStatus(err error) (int, bool) {
+	var se interface{ HTTPStatus() int }
+	if !errors.As(err, &se) {
+		return 0, false
+	}
+	status := se.HTTPStatus()
+	if status < 400 || status > 599 {
+		return 0, false
+	}
+	return status, true
+}
+
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
+	if status, ok := ErrorStatus(err); ok {
+		if status < 500 {
+			slog.InfoContext(r.Context(), "web: request rejected", "method", r.Method, "path", r.URL.Path, "status", status, "error", err)
+		} else {
+			slog.ErrorContext(r.Context(), "web: handler failed", "method", r.Method, "path", r.URL.Path, "status", status, "error", err)
+		}
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
 	slog.ErrorContext(r.Context(), "web: handler failed", "method", r.Method, "path", r.URL.Path, "error", err)
 	http.Error(w, "internal server error", http.StatusInternalServerError)
 }

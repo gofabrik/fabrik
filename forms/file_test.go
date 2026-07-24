@@ -1,0 +1,372 @@
+package forms_test
+
+import (
+	"bytes"
+	"errors"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/gofabrik/fabrik/forms"
+)
+
+type uploadInput struct {
+	File  forms.File `form:"file"`
+	Label string     `form:"label"`
+}
+
+type multiInput struct {
+	Attachments []forms.File `form:"attachments"`
+}
+
+func multipartFiles(t *testing.T, build func(w *multipart.Writer)) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	build(w)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", &body)
+	r.Header.Set("Content-Type", w.FormDataContentType())
+	return r
+}
+
+func addFile(t *testing.T, w *multipart.Writer, field, name, content string) {
+	t.Helper()
+	f, err := w.CreateFormFile(field, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFile_BindsBesideScalarFields(t *testing.T) {
+	r := multipartFiles(t, func(w *multipart.Writer) {
+		addFile(t, w, "file", "report.pdf", "content")
+		_ = w.WriteField("label", "quarterly")
+	})
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := form.Data.File
+	if !up.Present() || up.ClientFilename() != "report.pdf" || up.Size() != 7 || form.Data.Label != "quarterly" {
+		t.Fatalf("bound file = %v %q %d, label %q", up.Present(), up.ClientFilename(), up.Size(), form.Data.Label)
+	}
+	rc, err := up.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	if _, err := rc.Seek(3, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	rest, _ := io.ReadAll(rc)
+	if string(rest) != "tent" {
+		t.Fatalf("seek+read = %q", rest)
+	}
+}
+
+func TestFile_ClientFilenameStripsPaths(t *testing.T) {
+	cases := map[string]string{
+		`C:\fakepath\avatar.png`:  "avatar.png",
+		"../weird/../report.pdf":  "report.pdf",
+		"plain.txt":               "plain.txt",
+		`mixed\dir/deep\name.bin`: "name.bin",
+	}
+	for sent, want := range cases {
+		r := multipartFiles(t, func(w *multipart.Writer) { addFile(t, w, "file", sent, "x") })
+		form, err := forms.Bind[uploadInput](r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := form.Data.File.ClientFilename(); got != want {
+			t.Errorf("ClientFilename(%q) = %q, want %q", sent, got, want)
+		}
+	}
+}
+
+func TestFile_ClientContentTypeIsExposed(t *testing.T) {
+	r := multipartFiles(t, func(w *multipart.Writer) { addFile(t, w, "file", "a.txt", "x") })
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := form.Data.File.ClientContentType(); got != "application/octet-stream" {
+		t.Errorf("ClientContentType = %q", got)
+	}
+}
+
+func TestFile_AbsentIsZeroAndOpenReturnsErrNoFile(t *testing.T) {
+	r := multipartFiles(t, func(w *multipart.Writer) { _ = w.WriteField("label", "x") })
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if form.Data.File.Present() {
+		t.Fatal("absent file reported Present")
+	}
+	if _, err := form.Data.File.Open(); !errors.Is(err, forms.ErrNoFile) {
+		t.Fatalf("Open on absent = %v, want ErrNoFile", err)
+	}
+	if form.Data.File.ClientFilename() != "" || form.Data.File.Size() != 0 || form.Data.File.ClientContentType() != "" {
+		t.Fatal("zero File leaked metadata")
+	}
+}
+
+func TestFile_ZeroByteFileIsPresent(t *testing.T) {
+	r := multipartFiles(t, func(w *multipart.Writer) { addFile(t, w, "file", "empty.bin", "") })
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !form.Data.File.Present() || form.Data.File.Size() != 0 {
+		t.Fatalf("zero-byte file: present=%v size=%d", form.Data.File.Present(), form.Data.File.Size())
+	}
+}
+
+func TestFile_SingleTakesFirstSliceTakesAll(t *testing.T) {
+	r := multipartFiles(t, func(w *multipart.Writer) {
+		addFile(t, w, "file", "first.txt", "1")
+		addFile(t, w, "file", "second.txt", "2")
+	})
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := form.Data.File.ClientFilename(); got != "first.txt" {
+		t.Fatalf("single field took %q, want the first part", got)
+	}
+
+	r = multipartFiles(t, func(w *multipart.Writer) {
+		addFile(t, w, "attachments", "a.txt", "A")
+		addFile(t, w, "attachments", "b.txt", "B")
+	})
+	multi, err := forms.Bind[multiInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(multi.Data.Attachments) != 2 || multi.Data.Attachments[1].ClientFilename() != "b.txt" {
+		t.Fatalf("slice field = %d files", len(multi.Data.Attachments))
+	}
+}
+
+func TestFile_SpillsToDiskOverMaxMemory(t *testing.T) {
+	payload := strings.Repeat("s", 64<<10)
+	r := multipartFiles(t, func(w *multipart.Writer) { addFile(t, w, "file", "big.bin", payload) })
+	form, err := forms.Bind[uploadInput](r, forms.WithMaxMemory(1024))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := form.Data.File.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rc.(*os.File); !ok {
+		t.Fatalf("spooled open = %T, want *os.File", rc)
+	}
+	if _, err := rc.Seek(int64(len(payload))-4, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	tail, _ := io.ReadAll(rc)
+	if string(tail) != "ssss" {
+		t.Fatalf("spooled seek+read = %q", tail)
+	}
+	if _, err := rc.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(rc)
+	if string(got) != payload {
+		t.Fatal("spooled content mismatch")
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MultipartForm.RemoveAll(); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+}
+
+func TestFile_OversizeKeepsErrBodyTooLargeWith413(t *testing.T) {
+	r := multipartFiles(t, func(w *multipart.Writer) { addFile(t, w, "file", "big.bin", strings.Repeat("x", 4096)) })
+	_, err := forms.Bind[uploadInput](r, forms.WithMaxBytes(1024))
+	if !errors.Is(err, forms.ErrBodyTooLarge) {
+		t.Fatalf("err = %v, want ErrBodyTooLarge", err)
+	}
+	var se interface{ HTTPStatus() int }
+	if !errors.As(err, &se) || se.HTTPStatus() != http.StatusRequestEntityTooLarge {
+		t.Fatalf("ErrBodyTooLarge does not carry status 413: %v", err)
+	}
+}
+
+func TestFile_MalformedMultipartCarries400(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not multipart"))
+	r.Header.Set("Content-Type", "multipart/form-data; boundary=zzz")
+	_, err := forms.Bind[uploadInput](r)
+	var se interface{ HTTPStatus() int }
+	if err == nil || !errors.As(err, &se) || se.HTTPStatus() != http.StatusBadRequest {
+		t.Fatalf("malformed multipart = %v, want a 400-status error", err)
+	}
+}
+
+func TestFile_JSONValuesRejectNullAndAbsentStayZero(t *testing.T) {
+	for _, body := range []string{`{"file":"x"}`, `{"file":{}}`, `{"file":[]}`} {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		_, err := forms.Bind[uploadInput](r)
+		var se interface{ HTTPStatus() int }
+		if err == nil || !errors.As(err, &se) || se.HTTPStatus() != http.StatusBadRequest {
+			t.Fatalf("json %s = %v, want a 400-status error", body, err)
+		}
+	}
+	for _, body := range []string{`{"attachments":[]}`, `{"attachments":[null]}`, `{"attachments":["x"]}`} {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		_, err := forms.Bind[multiInput](r)
+		var se interface{ HTTPStatus() int }
+		if err == nil || !errors.As(err, &se) || se.HTTPStatus() != http.StatusBadRequest {
+			t.Fatalf("json %s = %v, want a 400-status error", body, err)
+		}
+	}
+	for _, body := range []string{`{"attachments":null}`, `{}`} {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		form, err := forms.Bind[multiInput](r)
+		if err != nil {
+			t.Fatalf("json %s: %v", body, err)
+		}
+		if form.Data.Attachments != nil {
+			t.Fatalf("json %s bound a file slice", body)
+		}
+	}
+	for _, body := range []string{`{"file":null}`, `{}`, `{"label":"x"}`} {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		form, err := forms.Bind[uploadInput](r)
+		if err != nil {
+			t.Fatalf("json %s: %v", body, err)
+		}
+		if form.Data.File.Present() {
+			t.Fatalf("json %s bound a file", body)
+		}
+	}
+}
+
+func TestFile_URLEncodedLeavesFileZero(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("label=x&file=sneaky"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if form.Data.File.Present() || form.Data.Label != "x" {
+		t.Fatalf("urlencoded bind: present=%v label=%q", form.Data.File.Present(), form.Data.Label)
+	}
+}
+
+type definedFile forms.File
+
+type definedFiles []forms.File
+
+type aliasFile = forms.File
+
+func TestFile_OnlyFileAndSliceShapesBind(t *testing.T) {
+	type odd struct {
+		Defined      definedFile   `form:"file"`
+		DefinedSlice definedFiles  `form:"file"`
+		Ptr          *forms.File   `form:"file"`
+		Arr          [1]forms.File `form:"file"`
+	}
+	r := multipartFiles(t, func(w *multipart.Writer) { addFile(t, w, "file", "a.txt", "x") })
+	form, err := forms.Bind[odd](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forms.File(form.Data.Defined).Present() || len(form.Data.DefinedSlice) != 0 ||
+		form.Data.Ptr != nil || form.Data.Arr[0].Present() {
+		t.Fatal("unsupported shapes bound a file")
+	}
+
+	type aliased struct {
+		File aliasFile `form:"file"`
+	}
+	r = multipartFiles(t, func(w *multipart.Writer) { addFile(t, w, "file", "a.txt", "x") })
+	af, err := forms.Bind[aliased](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !af.Data.File.Present() {
+		t.Fatal("true alias did not bind")
+	}
+}
+
+func TestBind_FailsClosedOnConsumedForm(t *testing.T) {
+	closed := []struct {
+		name string
+		r    func() *http.Request
+	}{
+		{"multipart", func() *http.Request {
+			r := multipartFiles(t, func(w *multipart.Writer) { _ = w.WriteField("a", "1") })
+			_ = r.FormValue("a")
+			return r
+		}},
+		{"urlencoded post", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("a=1"))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			_ = r.FormValue("a")
+			return r
+		}},
+		{"malformed content type", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("a=1"))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded; bad")
+			_ = r.FormValue("a")
+			return r
+		}},
+	}
+	for _, c := range closed {
+		if _, err := forms.Bind[uploadInput](c.r()); !errors.Is(err, forms.ErrFormConsumed) {
+			t.Errorf("%s: err = %v, want ErrFormConsumed", c.name, err)
+		}
+	}
+
+	open := []struct {
+		name string
+		r    func() *http.Request
+	}{
+		{"GET", func() *http.Request {
+			r := httptest.NewRequest(http.MethodGet, "/?a=1", nil)
+			_ = r.FormValue("a")
+			return r
+		}},
+		{"JSON", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"label":"x"}`))
+			r.Header.Set("Content-Type", "application/json")
+			_ = r.FormValue("a")
+			return r
+		}},
+		{"text/plain", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello"))
+			r.Header.Set("Content-Type", "text/plain")
+			_ = r.FormValue("a")
+			return r
+		}},
+		{"urlencoded DELETE", func() *http.Request {
+			r := httptest.NewRequest(http.MethodDelete, "/?a=1", strings.NewReader("b=2"))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			_ = r.FormValue("a")
+			return r
+		}},
+	}
+	for _, c := range open {
+		if _, err := forms.Bind[uploadInput](c.r()); err != nil {
+			t.Errorf("%s: err = %v, want nil", c.name, err)
+		}
+	}
+}

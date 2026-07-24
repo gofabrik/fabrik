@@ -1,7 +1,9 @@
 package web
 
 import (
+	"crypto/rand"
 	"demo/shared"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -144,10 +146,7 @@ func (h *Greetings) Show(req *web.Request) (web.Response, error) {
 func (h *Greetings) Update(req *web.Request) (web.Response, error) {
 	form, err := forms.Bind[GreetInput](req.HTTP())
 	if err != nil {
-		if errors.Is(err, forms.ErrBodyTooLarge) {
-			return web.Status(http.StatusRequestEntityTooLarge), nil
-		}
-		return web.Status(http.StatusBadRequest), nil
+		return nil, err
 	}
 	if !form.Valid() {
 		return web.View(GreetForm{Form: form}), nil
@@ -189,8 +188,24 @@ func (d *Docs) List(w http.ResponseWriter, r *http.Request) {
 
 const maxUpload = 8 << 20
 
+type UploadForm struct {
+	File forms.File `form:"file"`
+}
+
+func (u UploadForm) Validate() validation.Errors {
+	return validation.Check(
+		validation.Field("file", u.File, validation.By(func(f forms.File) error {
+			if !f.Present() {
+				return errors.New("choose a file")
+			}
+			return nil
+		})),
+	)
+}
+
 type FilesPage struct {
 	Entries []storage.Info
+	Form    *forms.Form[UploadForm]
 }
 
 func (FilesPage) Template() string { return "web/files" }
@@ -199,41 +214,77 @@ type Files struct {
 	Store storage.Storage
 }
 
-//fabrik:web GET /files
-func (f *Files) Show(req *web.Request) (web.Response, error) {
+func (f *Files) page(req *web.Request, form *forms.Form[UploadForm]) (FilesPage, error) {
 	var entries []storage.Info
 	for info, err := range f.Store.List(req.Context(), "") {
 		if err != nil {
-			return nil, err
+			return FilesPage{}, err
 		}
 		entries = append(entries, info)
 	}
-	return web.View(FilesPage{Entries: entries}), nil
+	return FilesPage{Entries: entries, Form: form}, nil
+}
+
+//fabrik:web GET /files
+func (f *Files) Show(req *web.Request) (web.Response, error) {
+	page, err := f.page(req, &forms.Form[UploadForm]{})
+	if err != nil {
+		return nil, err
+	}
+	return web.View(page), nil
 }
 
 //fabrik:web POST /files
 func (f *Files) Upload(req *web.Request) (web.Response, error) {
-	r := req.HTTP()
-	// Bind enforces both the total request limit and multipart memory limit.
-	if _, err := forms.Bind[struct{}](r, forms.WithMaxBytes(maxUpload)); err != nil {
-		if errors.Is(err, forms.ErrBodyTooLarge) {
-			return web.Status(http.StatusRequestEntityTooLarge), nil
-		}
-		return web.Status(http.StatusBadRequest), nil
-	}
-	file, header, err := r.FormFile("file")
+	form, err := forms.Bind[UploadForm](req.HTTP(), forms.WithMaxBytes(maxUpload))
 	if err != nil {
-		return web.Status(http.StatusBadRequest), nil
+		return nil, err
 	}
-	defer file.Close()
-	key := "uploads/" + header.Filename
-	if err := storage.CheckKey(key); err != nil {
-		return web.Redirect("/files"), nil
+	if !form.Valid() {
+		page, err := f.page(req, form)
+		if err != nil {
+			return nil, err
+		}
+		return web.View(page), nil
 	}
-	if err := f.Store.Put(req.Context(), key, file); err != nil {
+	rc, err := form.Data.File.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	if err := f.Store.Put(req.Context(), uploadKey(form.Data.File), rc); err != nil {
 		return nil, err
 	}
 	return web.Redirect("/files"), nil
+}
+
+// uploadKey retains client filenames only when they are safe URL path segments.
+func uploadKey(file forms.File) string {
+	var buf [16]byte
+	rand.Read(buf[:]) //nolint:errcheck // never fails by contract
+	prefix := hex.EncodeToString(buf[:])
+	name := file.ClientFilename()
+	key := "uploads/" + prefix + "-" + name
+	if !urlPathSafe(name) || storage.CheckKey(key) != nil {
+		key = "uploads/" + prefix + ".bin"
+	}
+	return key
+}
+
+// urlPathSafe restricts filenames to RFC 3986 unreserved characters.
+func urlPathSafe(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '.', r == '_', r == '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 //fabrik:http GET /files/{key...}
