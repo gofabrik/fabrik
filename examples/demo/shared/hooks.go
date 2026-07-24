@@ -1,13 +1,14 @@
 package shared
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 )
 
 //fabrik:hook setup
-func InitLogger(l *LogConfig) error {
+func InitLogger(_ context.Context, l *LogConfig) error {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(l.Level)); err != nil {
 		return err

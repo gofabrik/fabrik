@@ -46,7 +46,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		webUsed := web.NewUsed()
 		webHandlers := &web.Handlers{

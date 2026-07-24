@@ -89,7 +89,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		webTemplates, err := templates.Load(web.Templates, "templates")
 		if err != nil {

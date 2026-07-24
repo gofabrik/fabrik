@@ -80,7 +80,7 @@ func run() int {
 			{
 				Name: "status",
 				Help: "Show application status",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					return shared.Status(ctx)
 				},
 			},
@@ -91,19 +91,19 @@ func run() int {
 					{
 						Name: "migrate",
 						Help: "Apply pending migrations",
-						Run: func(ctx cli.Context) error {
+						Run: func(ctx cli.Context) (err error) {
 							return shared.Migrate(ctx)
 						},
 					},
 					{
 						Name: "status",
 						Help: "Show database status",
-						Run: func(ctx cli.Context) error {
+						Run: func(ctx cli.Context) (err error) {
 							return shared.DBStatus(ctx)
 						},
 					},
 				},
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					return shared.DB(ctx)
 				},
 			},
@@ -113,7 +113,7 @@ func run() int {
 					{
 						Name: "list",
 						Help: "List queued jobs",
-						Run: func(ctx cli.Context) error {
+						Run: func(ctx cli.Context) (err error) {
 							return shared.JobsList(ctx)
 						},
 					},

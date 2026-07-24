@@ -24,6 +24,7 @@ func main() { os.Exit(run()) }
 package web
 
 import (
+	"context"
 	"embed"
 	"fmt"
 
@@ -38,7 +39,7 @@ var Assets embed.FS
 type AssetsConfig = assetmapper.Options
 
 //fabrik:hook setup
-func AnnounceAssets(c *assetmapper.Options) error {
+func AnnounceAssets(_ context.Context, c *assetmapper.Options) error {
 	fmt.Println("assets:", c.Kind)
 	return nil
 }
@@ -58,6 +59,7 @@ func Home(w http.ResponseWriter, r *http.Request) {}
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -69,7 +71,8 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	ctx := context.Background()
+	if err := func() (err error) {
 		// Config
 		fabrikEnv := os.Getenv("FABRIK_ENV")
 		switch fabrikEnv {
@@ -95,8 +98,8 @@ func run() int {
 			return err
 		}
 
-		// Setup: after config, before providers
-		if err := web.AnnounceAssets(assetmapperOptions); err != nil {
+		// Wire hooks: config exists, providers do not
+		if err := web.AnnounceAssets(ctx, assetmapperOptions); err != nil {
 			return err
 		}
 

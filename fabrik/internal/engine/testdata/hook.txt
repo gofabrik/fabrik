@@ -1,4 +1,5 @@
-Setup hooks run after config in source order; wired params and error returns.
+Setup hooks run after configuration; parameters are wired, errors abort the
+build, and relative order is unspecified.
 -- go.mod --
 module app
 
@@ -15,7 +16,7 @@ package setup
 import "context"
 
 //fabrik:hook setup
-func Logging() {}
+func Logging(_ context.Context) error { return nil }
 
 //fabrik:hook setup
 func Tracing(ctx context.Context) error { return nil }
@@ -54,9 +55,11 @@ import (
 
 func run() int {
 	ctx := context.Background()
-	if err := func() error {
-		// Setup: after config, before providers
-		setup.Logging()
+	if err := func() (err error) {
+		// Wire hooks: config exists, providers do not
+		if err := setup.Logging(ctx); err != nil {
+			return err
+		}
 
 		if err := setup.Tracing(ctx); err != nil {
 			return err

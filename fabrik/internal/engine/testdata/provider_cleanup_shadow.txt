@@ -20,7 +20,7 @@ package cleanups
 type DB struct{}
 
 //fabrik:provider
-func NewDB() (*DB, func(), error) { db := &DB{}; return db, func() {}, nil }
+func NewDB() (*DB, func() error, error) { db := &DB{}; return db, func() error { return nil }, nil }
 -- shared/shared.go --
 package shared
 
@@ -42,6 +42,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"syscall"
@@ -70,12 +71,14 @@ func run() int {
 		Subcommands: []*cli.Command{
 			{
 				Name: "ping",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					db, cleanup, err := buildPing(ctx)
 					if err != nil {
 						return err
 					}
-					defer cleanup()
+					defer func() {
+						err = errors.Join(err, cleanup())
+					}()
 					return shared.Ping(ctx, db)
 				},
 			},
@@ -84,17 +87,19 @@ func run() int {
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
-func buildPing(ctx context.Context) (*cleanups.DB, func(), error) {
+func buildPing(ctx context.Context) (*cleanups.DB, func() error, error) {
 	// Providers
 	cleanupsDB, cleanupsDBClose, err := cleanups.NewDB()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	cleanup := func() {
+	cleanup := func() error {
+		var errs []error
 		if cleanupsDBClose != nil {
-			cleanupsDBClose()
+			errs = append(errs, cleanupsDBClose())
 		}
+		return errors.Join(errs...)
 	}
 	return cleanupsDB, cleanup, nil
 }

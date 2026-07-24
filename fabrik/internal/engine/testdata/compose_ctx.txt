@@ -66,7 +66,7 @@ func run() int {
 		Subcommands: []*cli.Command{
 			{
 				Name: "migrate",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					store, err := buildMigrate(ctx)
 					if err != nil {
 						return err

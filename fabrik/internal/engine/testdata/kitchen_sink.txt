@@ -39,6 +39,8 @@ func main() { os.Exit(run()) }
 -- shared/config.go --
 package shared
 
+import "context"
+
 //fabrik:config http
 type Config struct {
 	Addr string `yaml:"addr" default:":8080"`
@@ -50,7 +52,7 @@ type Log struct {
 }
 
 //fabrik:hook setup
-func InitLogger(l *Log) error { return nil }
+func InitLogger(_ context.Context, l *Log) error { return nil }
 -- shared/http.go --
 package shared
 
@@ -264,7 +266,7 @@ func run() int {
 		Subcommands: []*cli.Command{
 			{
 				Name: "warm-cache",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					pool, err := buildWarmCache(ctx)
 					if err != nil {
 						return err
@@ -274,7 +276,7 @@ func run() int {
 			},
 			{
 				Name: "serve",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					server, err := buildServe(ctx)
 					if err != nil {
 						return err
@@ -284,7 +286,7 @@ func run() int {
 			},
 			{
 				Name: "migrate-db",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					db, dialect, sources, err := buildMigrateDB(ctx)
 					if err != nil {
 						return err
@@ -323,8 +325,8 @@ func buildWarmCache(ctx context.Context) (*store.Pool, error) {
 		return nil, err
 	}
 
-	// Setup: after config, before providers
-	if err := shared.InitLogger(sharedLog); err != nil {
+	// Wire hooks: config exists, providers do not
+	if err := shared.InitLogger(ctx, sharedLog); err != nil {
 		return nil, err
 	}
 
@@ -376,8 +378,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, error) {
 		return nil, err
 	}
 
-	// Setup: after config, before providers
-	if err := shared.InitLogger(sharedLog); err != nil {
+	// Wire hooks: config exists, providers do not
+	if err := shared.InitLogger(ctx, sharedLog); err != nil {
 		return nil, err
 	}
 
@@ -476,8 +478,8 @@ func buildMigrateDB(ctx context.Context) (*sql.DB, migrations.Dialect, migration
 		return nil, 0, nil, err
 	}
 
-	// Setup: after config, before providers
-	if err := shared.InitLogger(sharedLog); err != nil {
+	// Wire hooks: config exists, providers do not
+	if err := shared.InitLogger(ctx, sharedLog); err != nil {
 		return nil, 0, nil, err
 	}
 

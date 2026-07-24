@@ -56,6 +56,8 @@ type Call struct {
 
 	// Cleanup names the cleanup result; generated calls guard a nil result.
 	Cleanup string
+	// ErrsPkg names the errors package used to join cleanup failures.
+	ErrsPkg string
 }
 
 // ConfigLoad loads one configuration struct.

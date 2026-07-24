@@ -41,7 +41,7 @@ import (
 )
 
 func run() int {
-	if err := func() error {
+	if err := func() (err error) {
 		// Providers
 		webDB, err := web.NewDB()
 		if err != nil {

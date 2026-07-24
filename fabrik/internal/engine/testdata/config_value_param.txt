@@ -17,13 +17,15 @@ func main() { os.Exit(run()) }
 -- store/store.go --
 package store
 
+import "context"
+
 //fabrik:config store
 type Config struct {
 	Kind string `yaml:"kind" default:"memory"`
 }
 
 //fabrik:hook setup
-func Setup(c Config) error { return nil }
+func Setup(_ context.Context, c Config) error { return nil }
 
 type DB struct{}
 
@@ -46,9 +48,9 @@ type Handlers struct {
 //fabrik:http GET /
 func (h *Handlers) Index(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
-error: store/store.go:9:12: setup hooks run before providers; parameters must be context.Context or //fabrik:config structs
+error: store/store.go:11:31: a setup wire hook's parameters are context.Context then //fabrik:config structs; providers do not exist yet
   help: config structs are injected as pointers; take *store.Config
-error: store/store.go:14:11: no provider for store.Config
+error: store/store.go:16:11: no provider for store.Config
   help: config structs are injected as pointers; take *store.Config
 error: web/web.go:11:2: no provider for store.Config (field Cfg of web.Handlers)
   help: config structs are injected as pointers; take *store.Config

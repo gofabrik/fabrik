@@ -707,6 +707,52 @@ func TestExec_ContextCanceledExitCode(t *testing.T) {
 	}
 }
 
+// An error tree with no leaves is not cancellation.
+type emptyMulti struct{}
+
+func (emptyMulti) Error() string   { return "empty multi" }
+func (emptyMulti) Unwrap() []error { return nil }
+
+// A nil child does not override the wrapper's cancellation status.
+type nilUnwrap struct{}
+
+func (nilUnwrap) Error() string        { return "canceled wrapper" }
+func (nilUnwrap) Unwrap() error        { return nil }
+func (nilUnwrap) Is(target error) bool { return target == context.Canceled }
+
+func TestExec_CancellationOnlyWhenWholeTreeCanceled(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		code   int
+		stderr string
+	}{
+		{"wrapped", fmt.Errorf("serve: %w", context.Canceled), 130, ""},
+		{"joined canceled", errors.Join(context.Canceled, fmt.Errorf("drain: %w", context.Canceled)), 130, ""},
+		{"canceled plus cleanup", errors.Join(context.Canceled, errors.New("close failed")), 1, "close failed"},
+		{"empty multi", emptyMulti{}, 1, "empty multi"},
+		{"nil single unwrap", nilUnwrap{}, 130, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := &Command{
+				Name: "myapp",
+				Run:  func(Context) error { return tc.err },
+			}
+			code, _, stderr := exec(t, root, []string{})
+			if code != tc.code {
+				t.Errorf("want exit %d, got %d (stderr %q)", tc.code, code, stderr)
+			}
+			if tc.stderr == "" && stderr != "" {
+				t.Errorf("cancellation must be silent, got %q", stderr)
+			}
+			if tc.stderr != "" && !strings.Contains(stderr, tc.stderr) {
+				t.Errorf("stderr %q must contain %q", stderr, tc.stderr)
+			}
+		})
+	}
+}
+
 func TestExec_UsageErrorTriggersHelpAppend(t *testing.T) {
 	root := &Command{
 		Name: "myapp",

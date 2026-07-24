@@ -22,12 +22,12 @@ import (
 )
 
 //fabrik:provider
-func NewDB(cfg *DatabaseConfig) (*sql.DB, func(), error) {
+func NewDB(cfg *DatabaseConfig) (*sql.DB, func() error, error) {
 	db, err := sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, nil, err
 	}
-	return db, func() { db.Close() }, nil
+	return db, db.Close, nil
 }
 
 //fabrik:provider
@@ -68,7 +68,7 @@ func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 }
 
 //fabrik:provider
-func NewCacheStore(db *sql.DB) (cache.Store, func(), error) {
+func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 	// Schema creation belongs to migration 0005_cache.sql.
 	store, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{AutoCreate: false})
 	if err != nil {
@@ -93,10 +93,11 @@ func NewCacheStore(db *sql.DB) (cache.Store, func(), error) {
 			}
 		}
 	}()
-	return store, func() {
+	return store, func() error {
 		ticker.Stop()
 		cancel()
 		wg.Wait()
+		return nil
 	}, nil
 }
 
@@ -150,7 +151,7 @@ func (c MailerConfig) smtp() *mail.SMTP {
 }
 
 //fabrik:provider
-func NewRatelimitStore() (*ratelimit.MemoryStore, func()) {
+func NewRatelimitStore() (*ratelimit.MemoryStore, func() error) {
 	store := ratelimit.NewMemoryStore()
 	ticker := time.NewTicker(time.Minute)
 	done := make(chan struct{})
@@ -164,14 +165,15 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func()) {
 			}
 		}
 	}()
-	return store, func() {
+	return store, func() error {
 		ticker.Stop()
 		close(done)
+		return nil
 	}
 }
 
 //fabrik:provider
-func NewStorage(cfg *StorageConfig) (storage.Storage, func(), error) {
+func NewStorage(cfg *StorageConfig) (storage.Storage, func() error, error) {
 	if err := os.MkdirAll(cfg.Path, 0o755); err != nil {
 		return nil, nil, err
 	}
@@ -179,5 +181,5 @@ func NewStorage(cfg *StorageConfig) (storage.Storage, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return local, func() { local.Close() }, nil
+	return local, local.Close, nil
 }

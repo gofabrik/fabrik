@@ -46,7 +46,10 @@ func withEnv(env func(string) (string, bool)) ExecOption {
 	return func(c *execConfig) { c.env = env }
 }
 
-// Exec parses args, runs the matched handler, and returns 0 for success, 130 for cancellation, 2 for errors matching [ErrUsage], [ErrValidation], [ErrUnknownCmd], [ErrMissingArg], or [ErrMissingSubcommand], and 1 otherwise.
+// Exec parses args, runs the matched handler, and returns 0 for success, 130
+// only when every error-tree leaf is context.Canceled, 2 for errors matching
+// [ErrUsage], [ErrValidation], [ErrUnknownCmd], [ErrMissingArg], or
+// [ErrMissingSubcommand], and 1 otherwise.
 func (c *Command) Exec(args []string, opts ...ExecOption) int {
 	cfg := execConfig{
 		stdout:  os.Stdout,
@@ -162,7 +165,7 @@ func DefaultOnError(ctx Context, err error) int {
 	prog := programName(ctx)
 	stderr := ctx.Stderr()
 
-	if errors.Is(err, context.Canceled) {
+	if onlyCanceled(err) {
 		return 130
 	}
 
@@ -189,6 +192,31 @@ func DefaultOnError(ctx Context, err error) int {
 		//nolint:errcheck // The error renderer must return an exit code and has no channel for a stderr write failure.
 		fmt.Fprintf(stderr, "%s: %s\n", prog, displayMessage(err))
 		return 1
+	}
+}
+
+// onlyCanceled reports whether the error tree is nonempty and every leaf
+// matches context.Canceled.
+func onlyCanceled(err error) bool {
+	switch u := err.(type) {
+	case interface{ Unwrap() []error }:
+		errs := u.Unwrap()
+		if len(errs) == 0 {
+			return false
+		}
+		for _, e := range errs {
+			if !onlyCanceled(e) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		if child := u.Unwrap(); child != nil {
+			return onlyCanceled(child)
+		}
+		return errors.Is(err, context.Canceled)
+	default:
+		return errors.Is(err, context.Canceled)
 	}
 }
 

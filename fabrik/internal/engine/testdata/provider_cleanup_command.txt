@@ -22,7 +22,7 @@ import "github.com/gofabrik/fabrik/cli"
 type DB struct{}
 
 //fabrik:provider
-func NewDB() (*DB, func(), error) { db := &DB{}; return db, func() {}, nil }
+func NewDB() (*DB, func() error, error) { db := &DB{}; return db, func() error { return nil }, nil }
 
 type Audit struct{}
 
@@ -41,6 +41,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"syscall"
@@ -68,12 +69,14 @@ func run() int {
 		Subcommands: []*cli.Command{
 			{
 				Name: "ping",
-				Run: func(ctx cli.Context) error {
+				Run: func(ctx cli.Context) (err error) {
 					db, audit, cleanup, err := buildPing(ctx)
 					if err != nil {
 						return err
 					}
-					defer cleanup()
+					defer func() {
+						err = errors.Join(err, cleanup())
+					}()
 					return shared.Ping(ctx, db, audit)
 				},
 			},
@@ -82,7 +85,7 @@ func run() int {
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
-func buildPing(ctx context.Context) (*shared.DB, *shared.Audit, func(), error) {
+func buildPing(ctx context.Context) (*shared.DB, *shared.Audit, func() error, error) {
 	// Providers
 	sharedDB, sharedDBClose, err := shared.NewDB()
 	if err != nil {
@@ -91,15 +94,17 @@ func buildPing(ctx context.Context) (*shared.DB, *shared.Audit, func(), error) {
 	sharedAudit, err := shared.NewAudit(sharedDB)
 	if err != nil {
 		if sharedDBClose != nil {
-			sharedDBClose()
+			err = errors.Join(err, sharedDBClose())
 		}
 		return nil, nil, nil, err
 	}
 
-	cleanup := func() {
+	cleanup := func() error {
+		var errs []error
 		if sharedDBClose != nil {
-			sharedDBClose()
+			errs = append(errs, sharedDBClose())
 		}
+		return errors.Join(errs...)
 	}
 	return sharedDB, sharedAudit, cleanup, nil
 }

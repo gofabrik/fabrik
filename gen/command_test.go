@@ -49,24 +49,24 @@ func TestRenderCommandShellTree(t *testing.T) {
 		`Name: "demo",`,
 		`Name: "serve",`,
 		`Help: "Start the server",`,
-		"Run: func(ctx cli.Context) error {",
+		"Run: func(ctx cli.Context) (err error) {",
 		"store, cleanup, err := buildServe(ctx)",
-		"defer cleanup()",
+		"defer func() {",
+		"err = errors.Join(err, cleanup())",
 		"return app.Serve(ctx, store)",
 		`Name: "version",`,
 		"return app.Version(ctx)",
 		"return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))",
-		"func buildServe(ctx context.Context) (*app.Store, func(), error) {",
+		"func buildServe(ctx context.Context) (*app.Store, func() error, error) {",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("shell tree missing %q:\n%s", want, src)
 		}
 	}
 	for _, absent := range []string{
-		"err := func() error {",
+		"if err := func() (err error) {",
 		"return 130",
 		"fmt.",
-		"errors.",
 		"func buildVersion",
 	} {
 		if strings.Contains(src, absent) {

@@ -114,7 +114,7 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 			}
 		}
 		if s.hasCleanup {
-			s.resultTypes = append(s.resultTypes, "func()")
+			s.resultTypes = append(s.resultTypes, "func() error")
 			s.zeros = append(s.zeros, "nil")
 		}
 		g.scope = nil
@@ -186,6 +186,10 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 	if zeros != "" {
 		zeros += ", "
 	}
+	errsPkg := ""
+	if s.hasCleanup {
+		errsPkg = g.Import("errors")
+	}
 
 	var accumulated []string
 	hasCleanup := false
@@ -214,7 +218,7 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 				if l := pn.n.base().Label; l != "" {
 					b.WriteString("// " + l + "\n")
 				}
-				for _, line := range renderNodeScoped(pn.n, zeros, accumulated) {
+				for _, line := range renderNodeScoped(pn.n, zeros, accumulated, errsPkg) {
 					b.WriteString(line)
 					b.WriteString("\n")
 				}
@@ -228,11 +232,14 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 
 	rets := strings.Join(s.rootExprs, ", ")
 	if hasCleanup {
-		b.WriteString("\ncleanup := func() {\n")
-		for _, l := range unwindLines(accumulated) {
-			b.WriteString(l)
-			b.WriteString("\n")
+		b.WriteString("\ncleanup := func() error {\n")
+		b.WriteString("var errs []error\n")
+		for i := len(accumulated) - 1; i >= 0; i-- {
+			b.WriteString("if " + accumulated[i] + " != nil {\n")
+			b.WriteString("errs = append(errs, " + accumulated[i] + "())\n")
+			b.WriteString("}\n")
 		}
+		b.WriteString("return " + errsPkg + ".Join(errs...)\n")
 		b.WriteString("}\n")
 		if rets != "" {
 			rets += ", "
@@ -246,35 +253,42 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 }
 
 // renderNodeScoped accumulates cleanup calls and adjusts error-return arity.
-func renderNodeScoped(n Node, zeros string, accumulated []string) []string {
+func renderNodeScoped(n Node, zeros string, accumulated []string, errsPkg string) []string {
 	if c, ok := n.(*Call); ok && c.Cleanup != "" {
 		call := c.Fn + "(" + strings.Join(c.Args, ", ") + ")"
 		if c.Err == ErrReturn {
 			lines := []string{c.Var + ", " + c.Cleanup + ", err := " + call}
-			return append(lines, scopedErrTail(zeros, accumulated)...)
+			return append(lines, scopedErrTail(zeros, accumulated, errsPkg)...)
 		}
 		return []string{c.Var + ", " + c.Cleanup + " := " + call}
 	}
-	return transformReturns(renderNode(n), zeros, accumulated)
+	return transformReturns(renderNode(n), zeros, accumulated, errsPkg)
 }
 
-func scopedErrTail(zeros string, accumulated []string) []string {
+func scopedErrTail(zeros string, accumulated []string, errsPkg string) []string {
 	lines := []string{"if err != nil {"}
-	lines = append(lines, unwindLines(accumulated)...)
+	lines = append(lines, unwindLines(accumulated, errsPkg)...)
 	return append(lines, "return "+zeros+"err", "}")
 }
 
-// transformReturns unwinds accumulated cleanups before arity-aware error returns.
-func transformReturns(lines []string, zeros string, accumulated []string) []string {
+// transformReturns joins cleanup failures into error returns while preserving
+// result arity. A missed error return fails compilation instead of skipping
+// cleanup because scopes with cleanup have multiple results.
+func transformReturns(lines []string, zeros string, accumulated []string, errsPkg string) []string {
 	out := make([]string, 0, len(lines))
 	for _, ln := range lines {
 		switch {
 		case ln == "return err":
-			out = append(out, unwindLines(accumulated)...)
+			out = append(out, unwindLines(accumulated, errsPkg)...)
 			out = append(out, "return "+zeros+"err")
 		case strings.HasPrefix(ln, "return ") && strings.Contains(ln, ".Errorf("):
-			out = append(out, unwindLines(accumulated)...)
-			out = append(out, "return "+zeros+strings.TrimPrefix(ln, "return "))
+			if len(accumulated) > 0 {
+				out = append(out, "err = "+strings.TrimPrefix(ln, "return "))
+				out = append(out, unwindLines(accumulated, errsPkg)...)
+				out = append(out, "return "+zeros+"err")
+			} else {
+				out = append(out, "return "+zeros+strings.TrimPrefix(ln, "return "))
+			}
 		default:
 			out = append(out, ln)
 		}
@@ -282,10 +296,13 @@ func transformReturns(lines []string, zeros string, accumulated []string) []stri
 	return out
 }
 
-func unwindLines(accumulated []string) []string {
+func unwindLines(accumulated []string, errsPkg string) []string {
 	var lines []string
 	for i := len(accumulated) - 1; i >= 0; i-- {
-		lines = append(lines, "if "+accumulated[i]+" != nil {", accumulated[i]+"()", "}")
+		lines = append(lines,
+			"if "+accumulated[i]+" != nil {",
+			"err = "+errsPkg+".Join(err, "+accumulated[i]+"())",
+			"}")
 	}
 	return lines
 }

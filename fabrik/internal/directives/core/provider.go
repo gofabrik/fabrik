@@ -36,10 +36,14 @@ func (*Provider) Meta() gen.Meta {
 			"app code by matching types. Parameters resolve to other " +
 			"providers; `context.Context` parameters receive the shared " +
 			"signal-bound application context (cancelled at shutdown). A second " +
-			"`error` return aborts startup. A `func()` result before the error " +
-			"is a cleanup: generated code skips it when nil and releases in " +
-			"reverse construction order at process end and on construction " +
-			"failure. A provider that returns an error owns its partial " +
+			"`error` return aborts startup. A `func() error` before it is a " +
+			"cleanup. Generated code skips nil cleanups, runs them in reverse " +
+			"construction order at process end and on construction failure, and " +
+			"joins cleanup errors into the application's error. A forced second " +
+			"signal skips cleanup. When the command function panics, cleanup " +
+			"still runs but its errors cannot be reported; cleanups must not " +
+			"panic. A provider returning an " +
+			"error owns its partial " +
 			"teardown. Cleanup returns are not allowed on `case=` providers. " +
 			"With `case=<kind>`, the constructor is instead one selectable " +
 			"implementation for a `//fabrik:provider:select` interface, " +
@@ -130,9 +134,13 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	case results.Len() == 3 && isCleanupType(results.At(1).Type()) && isErrorType(results.At(2).Type()):
 		nd.returnsCleanup = true
 		nd.returnsErr = true
+	case results.Len() >= 2 && isLegacyCleanupType(results.At(1).Type()):
+		ds.Error(nd.pos, fmt.Sprintf("provider %s returns a func() cleanup; cleanups report release failures", fn.Name()),
+			"change the cleanup result to func() error")
+		return ds
 	case results.Len() > 1:
-		ds.Error(nd.pos, fmt.Sprintf("provider %s must return a value, optionally followed by a cleanup func() and an error", fn.Name()),
-			"examples: func New() (*T, error); func New() (*T, func(), error)")
+		ds.Error(nd.pos, fmt.Sprintf("provider %s must return a value, optionally followed by a cleanup func() error and an error", fn.Name()),
+			"examples: func New() (*T, error); func New() (*T, func() error, error)")
 		return ds
 	}
 	if nd.caseVal != "" && nd.returnsCleanup {
@@ -193,6 +201,10 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		if nd.returnsErr {
 			errStyle = gen.ErrReturn
 		}
+		errsPkg := ""
+		if closeVar != "" {
+			errsPkg = g.Import("errors")
+		}
 		g.Node(&gen.Call{
 			Base:    gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
 			Var:     v,
@@ -200,6 +212,7 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			Args:    args,
 			Err:     errStyle,
 			Cleanup: closeVar,
+			ErrsPkg: errsPkg,
 		})
 		return v, ds
 	})
@@ -275,6 +288,10 @@ func varBase(pkg *types.Package, t types.Type) string {
 }
 
 func isCleanupType(t types.Type) bool {
+	return types.TypeString(types.Unalias(t), nil) == "func() error"
+}
+
+func isLegacyCleanupType(t types.Type) bool {
 	return types.TypeString(types.Unalias(t), nil) == "func()"
 }
 

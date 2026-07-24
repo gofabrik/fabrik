@@ -241,7 +241,16 @@ func (c *Config) NodeByType(ptrType string) *Node {
 
 // NodeFor returns the config node for a *Config parameter type, or nil.
 func (c *Config) NodeFor(t types.Type) *Node {
-	return c.byType[types.TypeString(types.Unalias(t), nil)]
+	return c.byType[types.TypeString(Canonical(t), nil)]
+}
+
+// Canonical removes aliases from t and, for a pointer, from its element.
+func Canonical(t types.Type) types.Type {
+	t = types.Unalias(t)
+	if p, ok := t.(*types.Pointer); ok {
+		return types.NewPointer(types.Unalias(p.Elem()))
+	}
+	return t
 }
 
 // Validate warns about unused config structs.
@@ -258,7 +267,7 @@ func (c *Config) Validate(*gen.Gen) diag.Diagnostics {
 
 // IsConfig reports whether t is a registered *Config type.
 func (c *Config) IsConfig(t types.Type) bool {
-	_, ok := c.byType[types.TypeString(types.Unalias(t), nil)]
+	_, ok := c.byType[types.TypeString(Canonical(t), nil)]
 	return ok
 }
 

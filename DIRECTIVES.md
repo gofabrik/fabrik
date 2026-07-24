@@ -205,15 +205,13 @@ Options:
 
 **`//fabrik:hook setup`**
 
-Marks a function the generated assembly calls at a named point of the app lifecycle: `config -> setup -> providers -> middleware -> routes`. Hookable phase:
+Declares an exported setup hook called after configuration loads and before providers are built. It takes `context.Context` first, followed by pointers to registered `//fabrik:config` structs, and returns one `error`. A hook configures process or build behavior from loaded configuration; bounded, cancellation-respecting work is admissible, but a hook must not construct dependencies, retain goroutines, or own resources needing cleanup - durable resources belong to providers. Every declared config becomes demand in every selected command scope, loaded once before the first hook runs.
 
-- `setup` - after config, before providers. Process-level setup (logger, runtime tuning); parameters may be a leading `context.Context` and pointers to //fabrik:config structs. With commands, setup runs at the start of every command's build function, under the command context.
-
-Hooks run in source order and must be independent. A returned `error` aborts startup. Pre-intake work such as migrations belongs to an explicit command that injects what it needs; runtime processes are startable values a command runs.
+Hooks run once per selected-command build attempt that reaches setup - including attempts where a later provider or the hook itself fails; nothing runs for help, completion, parse failures, or a failed prerequisite config load. They run sequentially in deterministic generated code, but their relative order is unspecified. The first error aborts the build without rolling back earlier effects, so hooks must be idempotent. Pre-intake work such as migrations belongs to an explicit command; runtime processes are startable values a command runs.
 
 ```go
 //fabrik:hook setup
-func InitLogger(cfg *Log) error {
+func InitLogger(_ context.Context, cfg *Log) error {
 	slog.SetDefault(...)
 	return nil
 }
@@ -382,7 +380,7 @@ Options:
 
 **`//fabrik:provider [case=kind]`**
 
-Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive the shared signal-bound application context (cancelled at shutdown). A second `error` return aborts startup. A `func()` result before the error is a cleanup: generated code skips it when nil and releases in reverse construction order at process end and on construction failure. A provider that returns an error owns its partial teardown. Cleanup returns are not allowed on `case=` providers. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
+Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive the shared signal-bound application context (cancelled at shutdown). A second `error` return aborts startup. A `func() error` before it is a cleanup. Generated code skips nil cleanups, runs them in reverse construction order at process end and on construction failure, and joins cleanup errors into the application's error. A forced second signal skips cleanup. When the command function panics, cleanup still runs but its errors cannot be reported; cleanups must not panic. A provider returning an error owns its partial teardown. Cleanup returns are not allowed on `case=` providers. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
 
 ```go
 //fabrik:provider
