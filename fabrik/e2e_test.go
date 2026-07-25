@@ -127,12 +127,17 @@ func TestEndToEnd(t *testing.T) {
 			//nolint:errcheck // response body close after reading is cleanup only
 			resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
 			got := string(body)
-			// The scaffold renders through the template set: the page
-			// carries the greeting and the shout helper's title.
 			if !strings.Contains(got, "<h1>Hello, e2e!</h1>") || !strings.Contains(got, "<title>HELLO, E2E!</title>") {
 				t.Fatalf("GET %s = %q, want rendered greeting page", url, got)
 			}
+			if !strings.Contains(got, "<p>Hello, visitor!</p>") || !strings.Contains(got, "<code>/</code>") {
+				t.Fatalf("GET %s = %q, want the layout's globals rendered", url, got)
+			}
+			if !strings.Contains(got, `<a class="active" href="/"`) {
+				t.Fatalf("GET %s = %q, want the home link marked active", url, got)
+			}
 			checkAsset(t, port, got)
+			checkNotFound(t, port)
 			break
 		}
 		if time.Now().After(deadline) {
@@ -144,6 +149,31 @@ func TestEndToEnd(t *testing.T) {
 	server.Process.Kill() // #nosec G104 -- best-effort test process cleanup
 
 	checkFabrikRun(t, dir)
+}
+
+func checkNotFound(t *testing.T, port string) {
+	t.Helper()
+	url := fmt.Sprintf("http://localhost:%s/nowhere", port)
+	resp, err := http.Get(url) // #nosec G107 -- test requests a loopback URL constructed above
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET %s status = %d, want 404", url, resp.StatusCode)
+	}
+	got := string(body)
+	if !strings.Contains(got, "<h1>404</h1>") {
+		t.Fatalf("GET %s = %q, want the rendered 404 page", url, got)
+	}
+	if !strings.Contains(got, "<p>Hello, visitor!</p>") || !strings.Contains(got, "<code>/nowhere</code>") {
+		t.Fatalf("GET %s = %q, want the layout's globals on the error page too", url, got)
+	}
+	if strings.Contains(got, `<a class="active" href="/"`) {
+		t.Fatalf("GET %s = %q, home should not be active away from the root", url, got)
+	}
 }
 
 func checkFabrikRun(t *testing.T, dir string) {

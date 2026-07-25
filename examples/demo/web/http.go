@@ -31,7 +31,6 @@ type HomePage struct {
 	Started  time.Time
 	Visits   int64
 	Recent   []Greeting
-	Flashes  []flash.Message
 }
 
 // Greeting is a recorded greeting.
@@ -51,7 +50,6 @@ type Handlers struct {
 	Greeter Greeter
 	Queries *query.DB
 	Session *session.Manager[shared.Session]
-	Flash   *flash.Flash
 	Jobs    *jobs.Manager
 	Cache   *cache.Cache[[]Greeting]
 }
@@ -59,11 +57,6 @@ type Handlers struct {
 //fabrik:web GET /{$} middleware=nocache
 func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	ctx := req.Context()
-
-	flashes, err := h.Flash.Take(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	s, err := h.Session.Get(ctx)
 	if err != nil {
@@ -95,7 +88,7 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent, Flashes: flashes}), nil
+	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent}), nil
 }
 
 //fabrik:http:group /api

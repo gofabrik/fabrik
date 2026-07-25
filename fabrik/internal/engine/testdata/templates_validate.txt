@@ -41,7 +41,7 @@ type Handlers struct {
 
 //fabrik:http GET /
 func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
-	h.Templates.Render(w, "home", nil)
+	h.Templates.Render(r.Context(), w, "home", nil)
 }
 -- want/diags --
 error: web/templates.go:5:1: templates.Load: parse templates/_default/home.html: template: home.html:1: function "nosuchfunc" not defined

@@ -118,10 +118,14 @@ func TestResponseHeaderWinsOverRecorded(t *testing.T) {
 	}
 }
 
-type fakeRenderer struct{ name string }
+type fakeRenderer struct {
+	name string
+	ctx  context.Context
+}
 
-func (f *fakeRenderer) Render(w io.Writer, name string, data any) error {
+func (f *fakeRenderer) Render(ctx context.Context, w io.Writer, name string, data any) error {
 	f.name = name
+	f.ctx = ctx
 	_, err := w.Write([]byte("rendered"))
 	return err
 }
@@ -141,9 +145,28 @@ func TestViewRendersThroughRenderer(t *testing.T) {
 	}
 }
 
+type rendererCtxKey struct{}
+
+// View rendering preserves values in the request context.
+func TestViewRendersWithRequestContext(t *testing.T) {
+	r := &fakeRenderer{}
+	a := web.NewAdapter(web.WithRenderer(r))
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), rendererCtxKey{}, "from-request"))
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.View(loginPage{}), nil
+	})(httptest.NewRecorder(), req)
+	if r.ctx == nil {
+		t.Fatal("renderer got no context")
+	}
+	if got, _ := r.ctx.Value(rendererCtxKey{}).(string); got != "from-request" {
+		t.Fatalf("renderer context value = %q, want the request's", got)
+	}
+}
+
 type failingRenderer struct{}
 
-func (failingRenderer) Render(io.Writer, string, any) error {
+func (failingRenderer) Render(context.Context, io.Writer, string, any) error {
 	return errors.New("render exploded")
 }
 
@@ -601,5 +624,27 @@ func TestCustomErrorHandlerCanReuseErrorStatus(t *testing.T) {
 	h(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != 429 {
 		t.Fatalf("custom handler code = %d, want 429", rec.Code)
+	}
+}
+
+// The render context carries the request after mux routing.
+func TestWrapPutsMatchedRequestInContext(t *testing.T) {
+	r := &fakeRenderer{}
+	a := web.NewAdapter(web.WithRenderer(r))
+	mux := http.NewServeMux()
+	mux.Handle("GET /users/{id}", a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.View(loginPage{}), nil
+	}))
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/users/7", nil))
+
+	got := web.RequestFrom(r.ctx)
+	if got == nil {
+		t.Fatal("no request in the render context")
+	}
+	if got.Pattern != "GET /users/{id}" {
+		t.Errorf("Pattern = %q, want the matched route", got.Pattern)
+	}
+	if got.PathValue("id") != "7" {
+		t.Errorf("PathValue(id) = %q, want 7", got.PathValue("id"))
 	}
 }

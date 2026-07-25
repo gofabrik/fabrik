@@ -19,7 +19,7 @@ func SendGreetingNotification(ctx context.Context, mailer Mailer, cfg *MailerCon
 		To:      []string{cfg.To},
 		Subject: "New greeting",
 	}
-	if err := msg.Render(set, "mail/greeting.txt", "mail/greeting", map[string]any{"Name": n.Name}); err != nil {
+	if err := msg.Render(ctx, set, "mail/greeting.txt", "mail/greeting", map[string]any{"Name": n.Name}); err != nil {
 		return err
 	}
 	return mailer.Send(ctx, &msg)

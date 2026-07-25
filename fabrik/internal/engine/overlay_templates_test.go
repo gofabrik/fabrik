@@ -45,7 +45,7 @@ type Handlers struct {
 
 //fabrik:http GET /
 func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
-	h.Templates.Render(w, "home", nil)
+	h.Templates.Render(r.Context(), w, "home", nil)
 }
 `)
 

@@ -22,7 +22,7 @@ func TestLoad_DefaultSection_BareKeys(t *testing.T) {
 		"tpl/_default/home.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}<p>home</p>{{ end }}`)},
 		"tpl/_default/about.html":   &fstest.MapFile{Data: []byte(`{{ define "content" }}<p>about</p>{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", nil)
+	set, err := templates.Load(fsys, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestLoad_DefaultSection_BareKeys(t *testing.T) {
 		t.Errorf("Names() = %v, want [about home]", names)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "home", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "home", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "home", err)
 	}
 	if !strings.Contains(rec.Body.String(), "<p>home</p>") {
@@ -46,19 +46,19 @@ func TestLoad_SectionShadowsDefaultLayout(t *testing.T) {
 		"tpl/public/_layout.html":   &fstest.MapFile{Data: []byte(`<html>PUBLIC {{ template "content" . }}</html>`)},
 		"tpl/public/status.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}status{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", nil)
+	set, err := templates.Load(fsys, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "home", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "home", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "home", err)
 	}
 	if !strings.Contains(rec.Body.String(), "DEFAULT") {
 		t.Errorf("home should use _default layout; got %q", rec.Body.String())
 	}
 	rec = httptest.NewRecorder()
-	if err := set.Render(rec, "public/status", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "public/status", nil); err != nil {
 		t.Fatalf("Render(public/status): %v", err)
 	}
 	if !strings.Contains(rec.Body.String(), "PUBLIC") {
@@ -72,12 +72,12 @@ func TestLoad_SectionFallsBackToDefaultLayout(t *testing.T) {
 		"tpl/_default/home.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}home{{ end }}`)},
 		"tpl/errors/404.html":       &fstest.MapFile{Data: []byte(`{{ define "content" }}not found{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", nil)
+	set, err := templates.Load(fsys, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "errors/404", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "errors/404", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "errors/404", err)
 	}
 	got := rec.Body.String()
@@ -94,13 +94,13 @@ func TestLoad_PartialsAreSharedFromDefault(t *testing.T) {
 		"tpl/public/_layout.html":   &fstest.MapFile{Data: []byte(`<html>{{ template "_flash" . }}|{{ template "content" . }}</html>`)},
 		"tpl/public/status.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}status{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", nil)
+	set, err := templates.Load(fsys, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"home", "public/status"} {
 		rec := httptest.NewRecorder()
-		if err := set.Render(rec, name, nil); err != nil {
+		if err := set.Render(t.Context(), rec, name, nil); err != nil {
 			t.Fatalf("Render(%s): %v", name, err)
 		}
 		if !strings.Contains(rec.Body.String(), "FLASH") {
@@ -117,19 +117,19 @@ func TestLoad_SectionPartialShadowsDefault(t *testing.T) {
 		"tpl/public/_flash.html":    &fstest.MapFile{Data: []byte(`{{ define "_flash" }}PUBLIC-FLASH{{ end }}`)},
 		"tpl/public/status.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}status{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", nil)
+	set, err := templates.Load(fsys, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "home", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "home", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "home", err)
 	}
 	if !strings.Contains(rec.Body.String(), "DEFAULT-FLASH") {
 		t.Errorf("home should see DEFAULT-FLASH; got %q", rec.Body.String())
 	}
 	rec = httptest.NewRecorder()
-	if err := set.Render(rec, "public/status", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "public/status", nil); err != nil {
 		t.Fatalf("Render(public/status): %v", err)
 	}
 	if !strings.Contains(rec.Body.String(), "PUBLIC-FLASH") {
@@ -142,12 +142,12 @@ func TestLoad_DefaultFuncsAvailable(t *testing.T) {
 		"tpl/_default/_layout.html": &fstest.MapFile{Data: []byte(`{{ template "content" . }}`)},
 		"tpl/_default/page.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}{{ add 2 3 }}{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", nil)
+	set, err := templates.Load(fsys, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "page", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "page", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "page", err)
 	}
 	if got := rec.Body.String(); !strings.Contains(got, "5") {
@@ -160,14 +160,14 @@ func TestLoad_UserFuncsShadowDefaults(t *testing.T) {
 		"tpl/_default/_layout.html": &fstest.MapFile{Data: []byte(`{{ template "content" . }}`)},
 		"tpl/_default/page.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}{{ add 2 3 }}{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", templates.FuncMap{
+	set, err := templates.Load(fsys, "tpl", templates.Funcs(templates.FuncMap{
 		"add": func(a, b int) int { return a * b },
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "page", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "page", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "page", err)
 	}
 	if got := rec.Body.String(); !strings.Contains(got, "6") {
@@ -187,12 +187,12 @@ func TestLoad_VariadicFuncMapsMergeInOrder(t *testing.T) {
 	custom := templates.FuncMap{
 		"greet": func() string { return "custom-greet" },
 	}
-	set, err := templates.Load(fsys, "tpl", assetmapperLike, custom)
+	set, err := templates.Load(fsys, "tpl", templates.Funcs(assetmapperLike), templates.Funcs(custom))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "page", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "page", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "page", err)
 	}
 	got := rec.Body.String()
@@ -214,7 +214,7 @@ func TestLoad_NoFuncMaps_DefaultsStillAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "page", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "page", nil); err != nil {
 		t.Fatalf("Render(%s): %v", "page", err)
 	}
 	if got := rec.Body.String(); !strings.Contains(got, "3") {
@@ -226,14 +226,14 @@ func TestLoad_SectionWithoutLayoutAndNoFallback_Errors(t *testing.T) {
 	fsys := fstest.MapFS{
 		"tpl/only/home.html": &fstest.MapFile{Data: []byte(`{{ define "content" }}home{{ end }}`)},
 	}
-	if _, err := templates.Load(fsys, "tpl", nil); err == nil {
+	if _, err := templates.Load(fsys, "tpl"); err == nil {
 		t.Fatal("expected error for section with pages but no layout (and no _default)")
 	}
 }
 
 func TestLoad_MissingDir_Errors(t *testing.T) {
 	fsys := fstest.MapFS{}
-	if _, err := templates.Load(fsys, "nope", nil); err == nil {
+	if _, err := templates.Load(fsys, "nope"); err == nil {
 		t.Fatal("expected error for missing dir")
 	}
 }
@@ -243,12 +243,12 @@ func TestRender_UnknownPage_Errors(t *testing.T) {
 		"tpl/_default/_layout.html": &fstest.MapFile{Data: []byte(baseLayout)},
 		"tpl/_default/home.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}home{{ end }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", nil)
+	set, err := templates.Load(fsys, "tpl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "missing", nil); err == nil {
+	if err := set.Render(t.Context(), rec, "missing", nil); err == nil {
 		t.Error("Render of unknown page = nil error, want error")
 	}
 	if rec.Body.Len() != 0 {
@@ -262,12 +262,12 @@ func TestRender_ExecError_NoPartialWrite(t *testing.T) {
 		"tpl/_default/page.html":    &fstest.MapFile{Data: []byte(`{{ define "content" }}<p>{{ boom }}</p>{{ end }}`)},
 	}
 	funcs := templates.FuncMap{"boom": func() (string, error) { return "", errors.New("kaboom") }}
-	set, err := templates.Load(fsys, "tpl", funcs)
+	set, err := templates.Load(fsys, "tpl", templates.Funcs(funcs))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "page", nil); err == nil {
+	if err := set.Render(t.Context(), rec, "page", nil); err == nil {
 		t.Error("Render with failing template = nil error, want error")
 	}
 	if rec.Body.Len() != 0 {
@@ -291,7 +291,7 @@ func TestLoadSources_CrossSourceFallback(t *testing.T) {
 		t.Fatalf("LoadSources: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "web/home", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "web/home", nil); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	if got := rec.Body.String(); got != "layout[nav+home]" {
@@ -365,7 +365,7 @@ func TestLoad_InvalidFuncMapIsAnError(t *testing.T) {
 		"tpl/_default/_layout.html": &fstest.MapFile{Data: []byte(`x`)},
 		"tpl/_default/home.html":    &fstest.MapFile{Data: []byte(`x`)},
 	}
-	_, err := templates.Load(fsys, "tpl", templates.FuncMap{"x": 1})
+	_, err := templates.Load(fsys, "tpl", templates.Funcs(templates.FuncMap{"x": 1}))
 	if err == nil || !strings.Contains(err.Error(), "invalid FuncMap") {
 		t.Fatalf("err = %v, want invalid-FuncMap error, not a panic", err)
 	}
@@ -397,14 +397,14 @@ func TestLoad_SectionDefineBeatsDefaultAcrossFilenames(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if err := set.Render(rec, "public/status", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "public/status", nil); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	if got := rec.Body.String(); got != "[SECTION|s]" {
 		t.Fatalf("public/status = %q, want section-local nav to win", got)
 	}
 	rec = httptest.NewRecorder()
-	if err := set.Render(rec, "home", nil); err != nil {
+	if err := set.Render(t.Context(), rec, "home", nil); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	if got := rec.Body.String(); got != "[DEFAULT|h]" {
@@ -422,7 +422,7 @@ func TestRender_PlainWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "home", nil); err != nil {
+	if err := set.Render(t.Context(), &buf, "home", nil); err != nil {
 		t.Fatalf("Render into bytes.Buffer: %v", err)
 	}
 	if !strings.Contains(buf.String(), "<p>hi</p>") {
@@ -447,7 +447,7 @@ func TestRender_SetsNoHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	spy := &headerSpy{header: http.Header{}}
-	if err := set.Render(spy, "home", nil); err != nil {
+	if err := set.Render(t.Context(), spy, "home", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(spy.header) != 0 {
@@ -464,7 +464,7 @@ func TestRender_UnknownTemplateError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = set.Render(io.Discard, "nope", nil)
+	err = set.Render(t.Context(), io.Discard, "nope", nil)
 	if err == nil || !strings.Contains(err.Error(), `unknown template "nope"`) {
 		t.Errorf("err = %v, want unknown template", err)
 	}
@@ -484,14 +484,14 @@ func TestLoad_TextTemplates_WrappedAndBare(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "mail/welcome.txt", map[string]any{"Name": "Ada"}); err != nil {
+	if err := set.Render(t.Context(), &buf, "mail/welcome.txt", map[string]any{"Name": "Ada"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); !strings.Contains(got, "Welcome, Ada!") || !strings.Contains(got, "The team") {
 		t.Errorf("wrapped text = %q, want body wrapped by _layout.txt", got)
 	}
 	buf.Reset()
-	if err := set.Render(&buf, "ops/robots.txt", map[string]any{"Name": "Ada"}); err != nil {
+	if err := set.Render(t.Context(), &buf, "ops/robots.txt", map[string]any{"Name": "Ada"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); got != "Disallow: /admin for Ada" {
@@ -531,14 +531,14 @@ func TestLoad_TextEscapingIsRaw(t *testing.T) {
 	}
 	data := map[string]any{"V": "a & b"}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "mail/pair.txt", data); err != nil {
+	if err := set.Render(t.Context(), &buf, "mail/pair.txt", data); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "a & b" {
 		t.Errorf("text = %q, want raw ampersand", buf.String())
 	}
 	buf.Reset()
-	if err := set.Render(&buf, "mail/pair", data); err != nil {
+	if err := set.Render(t.Context(), &buf, "mail/pair", data); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "a &amp; b") {
@@ -557,7 +557,7 @@ func TestLoad_TextDefaultFallbackPerPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "mail/reset.txt", nil); err != nil {
+	if err := set.Render(t.Context(), &buf, "mail/reset.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); got != "D:body default-sig" {
@@ -577,7 +577,7 @@ func TestLoad_TextPartialShadowing(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "mail/reset.txt", nil); err != nil {
+	if err := set.Render(t.Context(), &buf, "mail/reset.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "local-sig" {
@@ -612,7 +612,7 @@ func TestLoad_TextBuiltinsAllowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "ops/page.txt", map[string]any{"Name": "Ada"}); err != nil {
+	if err := set.Render(t.Context(), &buf, "ops/page.txt", map[string]any{"Name": "Ada"}); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "Ada!" {
@@ -637,7 +637,7 @@ func TestLoad_LayoutAdditionKeepsBodySyntax(t *testing.T) {
 			t.Fatal(err)
 		}
 		var buf bytes.Buffer
-		if err := set.Render(&buf, "mail/reset.txt", data); err != nil {
+		if err := set.Render(t.Context(), &buf, "mail/reset.txt", data); err != nil {
 			t.Fatal(err)
 		}
 		out[i] = buf.String()
@@ -667,7 +667,7 @@ func TestLoad_TextOnlyDirectoryIsASection(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "ops/note.txt", nil); err != nil {
+	if err := set.Render(t.Context(), &buf, "ops/note.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "hello" {
@@ -696,14 +696,14 @@ func TestRender_TextExecErrorWritesNothing(t *testing.T) {
 	fsys := fstest.MapFS{
 		"tpl/ops/boom.txt": &fstest.MapFile{Data: []byte(`{{ boom }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", templates.FuncMap{
+	set, err := templates.Load(fsys, "tpl", templates.Funcs(templates.FuncMap{
 		"boom": func() (string, error) { return "", errors.New("kaboom") },
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "ops/boom.txt", nil); err == nil {
+	if err := set.Render(t.Context(), &buf, "ops/boom.txt", nil); err == nil {
 		t.Fatal("want execution error")
 	}
 	if buf.Len() != 0 {
@@ -715,14 +715,14 @@ func TestLoad_HTMLTypedFuncPrintsRawInText(t *testing.T) {
 	fsys := fstest.MapFS{
 		"tpl/ops/page.txt": &fstest.MapFile{Data: []byte(`{{ widget }}`)},
 	}
-	set, err := templates.Load(fsys, "tpl", templates.FuncMap{
+	set, err := templates.Load(fsys, "tpl", templates.Funcs(templates.FuncMap{
 		"widget": func() htmltemplate.HTML { return "<b>w</b>" },
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := set.Render(&buf, "ops/page.txt", nil); err != nil {
+	if err := set.Render(t.Context(), &buf, "ops/page.txt", nil); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "<b>w</b>" {

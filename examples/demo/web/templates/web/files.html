@@ -1,7 +1,6 @@
 {{ define "title" }}Files{{ end }}
 
 {{ define "content" }}
-  {{ template "_nav.html" . }}
   <h1>Files</h1>
   <form method="post" action="/files" enctype="multipart/form-data">
     <label>Upload <input type="file" name="file" required></label>

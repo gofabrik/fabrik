@@ -1,0 +1,4 @@
+change_type: breaking
+component: templates
+note: Template sets render with a context and load through options, and template functions can read that context, so layouts show the current user, flashes and the request without handlers passing them.
+issues: [0]

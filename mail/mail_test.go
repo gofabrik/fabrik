@@ -1,6 +1,7 @@
 package mail_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -97,7 +98,7 @@ func TestValidate_NilMessage(t *testing.T) {
 
 type mapRenderer map[string]string
 
-func (r mapRenderer) Render(w io.Writer, template string, data any) error {
+func (r mapRenderer) Render(_ context.Context, w io.Writer, template string, data any) error {
 	body, ok := r[template]
 	if !ok {
 		return errors.New("unknown template " + template)
@@ -109,7 +110,7 @@ func (r mapRenderer) Render(w io.Writer, template string, data any) error {
 func TestRender_FillsBodies(t *testing.T) {
 	m := valid()
 	r := mapRenderer{"welcome.txt": "text body", "welcome": "<p>html</p>"}
-	if err := m.Render(r, "welcome.txt", "welcome", nil); err != nil {
+	if err := m.Render(t.Context(), r, "welcome.txt", "welcome", nil); err != nil {
 		t.Fatal(err)
 	}
 	if m.Text != "text body" || m.HTML != "<p>html</p>" {
@@ -117,10 +118,41 @@ func TestRender_FillsBodies(t *testing.T) {
 	}
 }
 
+type renderCtxKey struct{}
+
+// Both bodies receive the caller's context.
+func TestRender_PassesContextToBothBodies(t *testing.T) {
+	m := valid()
+	seen := &ctxRecorder{bodies: map[string]string{"welcome.txt": "text", "welcome": "html"}}
+	ctx := context.WithValue(t.Context(), renderCtxKey{}, "from-caller")
+	if err := m.Render(ctx, seen, "welcome.txt", "welcome", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen.ctxs) != 2 {
+		t.Fatalf("renderer called %d times, want text and html", len(seen.ctxs))
+	}
+	for i, got := range seen.ctxs {
+		if v, _ := got.Value(renderCtxKey{}).(string); v != "from-caller" {
+			t.Errorf("render %d saw context value %q, want the caller's", i, v)
+		}
+	}
+}
+
+type ctxRecorder struct {
+	bodies map[string]string
+	ctxs   []context.Context
+}
+
+func (r *ctxRecorder) Render(ctx context.Context, w io.Writer, template string, data any) error {
+	r.ctxs = append(r.ctxs, ctx)
+	_, err := io.WriteString(w, r.bodies[template])
+	return err
+}
+
 func TestRender_TextOnly(t *testing.T) {
 	m := valid()
 	m.HTML = "stale"
-	if err := m.Render(mapRenderer{"welcome.txt": "text"}, "welcome.txt", "", nil); err != nil {
+	if err := m.Render(t.Context(), mapRenderer{"welcome.txt": "text"}, "welcome.txt", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if m.Text != "text" || m.HTML != "" {
@@ -132,7 +164,7 @@ func TestRender_FailureLeavesMessageUntouched(t *testing.T) {
 	m := valid()
 	m.Text, m.HTML = "keep-text", "keep-html"
 	r := mapRenderer{"welcome.txt": "new text"}
-	if err := m.Render(r, "welcome.txt", "missing", nil); err == nil {
+	if err := m.Render(t.Context(), r, "welcome.txt", "missing", nil); err == nil {
 		t.Fatal("want error for failing html render")
 	}
 	if m.Text != "keep-text" || m.HTML != "keep-html" {
@@ -142,11 +174,11 @@ func TestRender_FailureLeavesMessageUntouched(t *testing.T) {
 
 func TestRender_NilInputs(t *testing.T) {
 	var nilMsg *mail.Message
-	if err := nilMsg.Render(mapRenderer{}, "a", "", nil); err == nil {
+	if err := nilMsg.Render(t.Context(), mapRenderer{}, "a", "", nil); err == nil {
 		t.Error("nil receiver must error")
 	}
 	m := valid()
-	if err := m.Render(nil, "a", "", nil); err == nil {
+	if err := m.Render(t.Context(), nil, "a", "", nil); err == nil {
 		t.Error("nil renderer must error")
 	}
 	if !strings.Contains(m.Text, "Hi!") {

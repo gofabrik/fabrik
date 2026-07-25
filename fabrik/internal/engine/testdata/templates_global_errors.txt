@@ -1,0 +1,161 @@
+Invalid signatures, receivers, types, and duplicate names fail at their
+annotations.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/templates v0.0.0
+
+replace github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/templates.go --
+package shared
+
+import "embed"
+
+//fabrik:templates
+//go:embed all:templates
+var Templates embed.FS
+-- shared/templates/_default/_layout.html --
+<html>{{ block "content" . }}{{ end }}</html>
+-- shared/templates/_default/home.html --
+{{ define "content" }}home{{ end }}
+-- notcontext/context.go --
+package context
+
+// Context is not the standard one, so a global taking it is not
+// context-first.
+type Context interface{ Done() }
+-- shared/globals.go --
+package shared
+
+import (
+	"context"
+	"time"
+
+	fake "app/notcontext"
+)
+
+type viewer struct{ Name string }
+
+type Helpers struct{}
+
+type helpers struct{}
+
+type notAStruct func()
+
+type argument = string
+
+//fabrik:templates:global
+func NoContext(name string) string { return name }
+
+//fabrik:templates:global
+func BadResult(ctx context.Context) (string, string) { return "", "" }
+
+//fabrik:templates:global
+func LookalikeContext(ctx fake.Context) string { return "" }
+
+//fabrik:templates:global
+func Generic[T any](ctx context.Context, v T) T { return v }
+
+//fabrik:templates:global
+func Variadic(ctx context.Context, parts ...string) string { return "" }
+
+//fabrik:templates:global
+func UnexportedArg(ctx context.Context, v viewer) string { return v.Name }
+
+//fabrik:templates:global
+func UnexportedResult(ctx context.Context) viewer { return viewer{} }
+
+//fabrik:templates:global
+func UnexportedInChannel(ctx context.Context, ch chan viewer) string { return "" }
+
+//fabrik:templates:global
+func UnexportedInFunc(ctx context.Context, fn func(viewer) error) string { return "" }
+
+//fabrik:templates:global
+func UnexportedAlias(ctx context.Context, v argument) string { return string(v) }
+
+//fabrik:templates:global
+func UnnameableStruct(ctx context.Context, v struct{ private int }) string { return "" }
+
+//fabrik:templates:global
+func UnnameableInterface(ctx context.Context, v interface{ private() }) string { return "" }
+
+//fabrik:templates:global
+func (h *Helpers) unexportedMethod(ctx context.Context) string { return "" }
+
+//fabrik:templates:global
+func (h *helpers) OnUnexported(ctx context.Context) string { return "" }
+
+type Box[T any] struct{}
+
+//fabrik:templates:func
+func (b *Box[T]) OnGenericReceiver(s string) string { return s }
+
+//fabrik:templates:global
+func (n notAStruct) OnFunc(ctx context.Context) string { return "" }
+
+//fabrik:templates:global name=humanizeAge
+func Collides(ctx context.Context) string { return "" }
+
+//fabrik:templates:func
+func HumanizeAge(t time.Time) string { return t.String() }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"github.com/gofabrik/fabrik/templates"
+)
+
+type Handlers struct {
+	Templates *templates.Set
+}
+
+//fabrik:http GET /
+func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
+	h.Templates.Render(r.Context(), w, "home", nil)
+}
+-- want/diags --
+error: shared/globals.go:20:1: template global NoContext must take a context.Context first
+  help: globals read the context of the render calling them
+error: shared/globals.go:23:1: template global BadResult has an illegal signature
+  help: html/template functions return one value, or two with the second an error
+error: shared/globals.go:26:1: template global LookalikeContext must take a context.Context first
+  help: globals read the context of the render calling them
+error: shared/globals.go:29:1: template global Generic cannot be generic (generated code cannot infer type arguments)
+  help: declare a concrete function
+error: shared/globals.go:32:1: template global Variadic cannot be variadic
+  help: take the arguments the template passes as fixed parameters
+error: shared/globals.go:35:1: template global UnexportedArg uses unexported type viewer
+  help: generated code lives in package main; export the type
+error: shared/globals.go:38:1: template global UnexportedResult uses unexported type viewer
+  help: generated code lives in package main; export the type
+error: shared/globals.go:41:1: template global UnexportedInChannel uses unexported type viewer
+  help: generated code lives in package main; export the type
+error: shared/globals.go:44:1: template global UnexportedInFunc uses unexported type viewer
+  help: generated code lives in package main; export the type
+error: shared/globals.go:47:1: template global UnexportedAlias uses unexported type argument
+  help: generated code lives in package main; export the type
+error: shared/globals.go:50:1: template global UnnameableStruct uses unexported field private
+  help: generated code lives in package main; export the type
+error: shared/globals.go:53:1: template global UnnameableInterface uses unexported method private
+  help: generated code lives in package main; export the type
+error: shared/globals.go:56:1: template global unexportedMethod is unexported
+  help: generated code lives in package main; export it
+error: shared/globals.go:59:1: template global receiver helpers is unexported
+  help: generated code lives in package main; export the type
+error: shared/globals.go:64:1: template function OnGenericReceiver cannot be generic (generated code cannot infer type arguments)
+  help: declare a concrete function
+error: shared/globals.go:67:1: template global receiver notAStruct is not a struct
+  help: declare globals on a struct whose fields fabrik wires, or on a package-level function
+error: shared/globals.go:73:1: duplicate template function name "humanizeAge"
+  help: first declared at $WORK/shared/globals.go:70:1

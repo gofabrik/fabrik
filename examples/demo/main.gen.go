@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/config"
+	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/httpserver"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
@@ -270,21 +272,6 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	appTemplates, err := templates.LoadSources([]templates.Source{
-		{FS: shared.Templates, Dir: "templates"},
-		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), templates.FuncMap{
-		"humanizeAge": shared.HumanizeAge,
-		"shout":       shared.Shout,
-	})
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, nil, err
@@ -359,14 +346,44 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		}
 		return nil, nil, nil, err
 	}
+	sharedViewHelpers := &shared.ViewHelpers{
+		Sessions: sharedSessionManager,
+		Flash:    sharedFlash,
+	}
+	appTemplates, err := templates.LoadSources([]templates.Source{
+		{FS: shared.Templates, Dir: "templates"},
+		{FS: web.Templates, Dir: "templates"},
+	}, templates.Funcs(assetServer.FuncMap()), templates.Funcs(templates.FuncMap{
+		"humanizeAge": shared.HumanizeAge,
+		"shout":       shared.Shout,
+	}), templates.Globals(func(b *templates.Binding) templates.FuncMap {
+		return templates.FuncMap{
+			"request":     func() *http.Request { return web2.RequestFrom(b.Ctx()) },
+			"active":      func(prefix string) string { return shared.ActivePrefix(b.Ctx(), prefix) },
+			"currentUser": func() (*shared.Session, error) { return sharedViewHelpers.CurrentUser(b.Ctx()) },
+			"flashes":     func() ([]flash.Message, error) { return sharedViewHelpers.Flashes(b.Ctx()) },
+		}
+	}))
+	if err != nil {
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, nil, err
+	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
-		Flash:   sharedFlash,
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
@@ -685,21 +702,6 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	appTemplates, err := templates.LoadSources([]templates.Source{
-		{FS: shared.Templates, Dir: "templates"},
-		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), templates.FuncMap{
-		"humanizeAge": shared.HumanizeAge,
-		"shout":       shared.Shout,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, err
@@ -774,14 +776,44 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		}
 		return nil, nil, err
 	}
+	sharedViewHelpers := &shared.ViewHelpers{
+		Sessions: sharedSessionManager,
+		Flash:    sharedFlash,
+	}
+	appTemplates, err := templates.LoadSources([]templates.Source{
+		{FS: shared.Templates, Dir: "templates"},
+		{FS: web.Templates, Dir: "templates"},
+	}, templates.Funcs(assetServer.FuncMap()), templates.Funcs(templates.FuncMap{
+		"humanizeAge": shared.HumanizeAge,
+		"shout":       shared.Shout,
+	}), templates.Globals(func(b *templates.Binding) templates.FuncMap {
+		return templates.FuncMap{
+			"request":     func() *http.Request { return web2.RequestFrom(b.Ctx()) },
+			"active":      func(prefix string) string { return shared.ActivePrefix(b.Ctx(), prefix) },
+			"currentUser": func() (*shared.Session, error) { return sharedViewHelpers.CurrentUser(b.Ctx()) },
+			"flashes":     func() ([]flash.Message, error) { return sharedViewHelpers.Flashes(b.Ctx()) },
+		}
+	}))
+	if err != nil {
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, err
+	}
+	sharedErrorPages := &shared.ErrorPages{
+		Templates: appTemplates,
+	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
-		Flash:   sharedFlash,
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}

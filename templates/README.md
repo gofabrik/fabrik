@@ -49,7 +49,7 @@ if err != nil {
 }
 
 var body bytes.Buffer
-if err := set.Render(&body, "mail/welcome.txt", data); err != nil {
+if err := set.Render(ctx, &body, "mail/welcome.txt", data); err != nil {
 	log.Fatal(err)
 }
 ```
@@ -63,19 +63,44 @@ headers. `Set` is safe for concurrent use; construct it once at startup.
 
 ## Functions
 
-Templates see [DefaultFuncs] (`add`, `sub`) plus any maps passed to Load.
-Later maps win; caller maps may override defaults:
+Templates see [DefaultFuncs] (`add`, `sub`) plus every map passed through
+`Funcs`. Later maps win; caller maps may override defaults:
 
 ```go
-set, err := templates.Load(files, "templates", templates.FuncMap{
+set, err := templates.Load(files, "templates", templates.Funcs(templates.FuncMap{
 	"humanizeAge": humanizeAge,
 	"add":         myOwnAdd,
-})
+}))
 ```
 
 `FuncMap` aliases `html/template.FuncMap`. Both formats use the same functions.
 Trusted HTML value types render unescaped in text templates; use a
 string-returning helper for values intended for both formats.
+
+## Request-scoped functions
+
+`Globals` registers functions that read the render context through a
+`Binding`:
+
+```go
+set, err := templates.Load(files, "templates",
+	templates.Globals(func(b *templates.Binding) templates.FuncMap {
+		return templates.FuncMap{
+			"currentUser": func() (*User, error) { return userFrom(b.Ctx()) },
+		}
+	}))
+
+err = set.Render(r.Context(), w, "home", page)
+```
+
+The builder runs at load time to discover names and for each pooled clone;
+every call must return the same names and signatures.
+
+`Render` takes its scratch buffer from a pool, so buffering the output
+does not allocate one per render in the steady state.
+
+Each reference to a global evaluates it again, so call consuming globals only
+once.
 
 ## Multiple trees
 

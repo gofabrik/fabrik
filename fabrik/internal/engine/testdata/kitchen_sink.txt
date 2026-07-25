@@ -417,9 +417,13 @@ func buildServe(ctx context.Context) (*httpserver.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
+	webTemplates, err := templates.Load(web.Templates, "templates", templates.Funcs(assetCompiled.FuncMap()), templates.Funcs(templates.FuncMap{
 		"shout": web.Shout,
-	})
+	}), templates.Globals(func(b *templates.Binding) templates.FuncMap {
+		return templates.FuncMap{
+			"request": func() *http.Request { return web2.RequestFrom(b.Ctx()) },
+		}
+	}))
 	if err != nil {
 		return nil, err
 	}

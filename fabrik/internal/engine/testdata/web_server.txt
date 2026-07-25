@@ -69,6 +69,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -115,7 +116,11 @@ func run() int {
 
 func buildServe(ctx context.Context) (*httpserver.Server, error) {
 	// Providers
-	webTemplates, err := templates.Load(web.Templates, "templates")
+	webTemplates, err := templates.Load(web.Templates, "templates", templates.Globals(func(b *templates.Binding) templates.FuncMap {
+		return templates.FuncMap{
+			"request": func() *http.Request { return web2.RequestFrom(b.Ctx()) },
+		}
+	}))
 	if err != nil {
 		return nil, err
 	}

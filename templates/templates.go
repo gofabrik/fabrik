@@ -11,6 +11,7 @@ package templates
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	htmltpl "html/template"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	texttpl "text/template"
 	"text/template/parse"
 )
@@ -61,7 +63,7 @@ func planeFor(ext string) *plane {
 	return nil
 }
 
-func parseHTML(funcs FuncMap, files []fileRef) (executor, error) {
+func parseHTML(funcs FuncMap, files []fileRef) (*htmltpl.Template, error) {
 	t := htmltpl.New(LayoutFile).Funcs(funcs)
 	var err error
 	for _, f := range files {
@@ -78,8 +80,9 @@ type Set struct {
 }
 
 type tmpl struct {
-	tpl  executor
-	root string
+	tpl      executor
+	root     string
+	bindings *bindings // nil unless the Set was loaded with Globals
 }
 
 // Source is one template tree contributing sections to a [Set].
@@ -94,21 +97,39 @@ type Source struct {
 // [DefaultSection]. HTML templates require a [LayoutFile]; text templates
 // use a [TextLayoutFile] when available and otherwise execute directly.
 //
-// funcMaps are merged after [DefaultFuncs] in call order. Later maps override
-// earlier maps, and nil maps are ignored. Both formats use the same functions;
-// values with html/template's trusted types render unescaped in text templates.
+// [Funcs] maps are merged after [DefaultFuncs] in call order, and [Globals]
+// after those. Both formats use the same functions; values with
+// html/template's trusted types render unescaped in text templates.
 //
 // Load rejects text bodies that declare named templates.
-func Load(fsys fs.FS, dir string, funcMaps ...FuncMap) (*Set, error) {
-	return LoadSources([]Source{{FS: fsys, Dir: dir}}, funcMaps...)
+func Load(fsys fs.FS, dir string, opts ...Option) (*Set, error) {
+	return LoadSources([]Source{{FS: fsys, Dir: dir}}, opts...)
 }
 
 // LoadSources builds one [Set] from several trees. A section may appear in
 // only one source, and [DefaultSection] fallback works across sources.
-func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
+func LoadSources(sources []Source, opts ...Option) (*Set, error) {
+	var o options
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(&o)
+	}
 	merged := DefaultFuncs()
-	for _, fm := range funcMaps {
+	for _, fm := range o.funcs {
 		for k, v := range fm {
+			merged[k] = v
+		}
+	}
+	// Global names must exist before parsing.
+	var globalFuncs FuncMap
+	if o.globals != nil {
+		var err error
+		if globalFuncs, err = discoverGlobals(o.globals); err != nil {
+			return nil, err
+		}
+		for k, v := range globalFuncs {
 			merged[k] = v
 		}
 	}
@@ -184,14 +205,23 @@ func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
 
 			for _, tp := range sp.templates {
 				var t executor
+				var clone func(FuncMap) (executor, error)
 				var err error
 				root := pl.layout
 				if pl.ext == ".txt" {
-					t, root, err = parseTextTemplate(merged, layout, partials, tp)
+					var tt *texttpl.Template
+					tt, root, err = parseTextTemplate(merged, layout, partials, tp)
+					if tt != nil {
+						t, clone = tt, textCloner(tt)
+					}
 				} else {
 					files := append([]fileRef{layout}, partials...)
 					files = append(files, tp)
-					t, err = parseHTML(merged, files)
+					var ht *htmltpl.Template
+					ht, err = parseHTML(merged, files)
+					if ht != nil {
+						t, clone = ht, htmlCloner(ht)
+					}
 				}
 				if err != nil {
 					return nil, fmt.Errorf("templates.Load: parse %s: %w", tp.path, err)
@@ -200,7 +230,13 @@ func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
 				if _, exists := out.templates[key]; exists {
 					return nil, fmt.Errorf("templates.Load: duplicate template %q (last from %s)", key, tp.path)
 				}
-				out.templates[key] = tmpl{tpl: t, root: root}
+				entry := tmpl{tpl: t, root: root}
+				if o.globals != nil {
+					// Keep the parsed tree unexecuted so the pool can clone it.
+					entry.tpl = nil
+					entry.bindings = newBindings(o.globals, globalFuncs, clone)
+				}
+				out.templates[key] = entry
 			}
 		}
 	}
@@ -212,7 +248,7 @@ func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
 }
 
 // parseTextTemplate rejects named definitions so layouts do not change body syntax.
-func parseTextTemplate(funcs FuncMap, layout fileRef, partials []fileRef, tp fileRef) (executor, string, error) {
+func parseTextTemplate(funcs FuncMap, layout fileRef, partials []fileRef, tp fileRef) (*texttpl.Template, string, error) {
 	raw, err := fs.ReadFile(tp.fsys, tp.path)
 	if err != nil {
 		return nil, "", err
@@ -249,21 +285,48 @@ func parseTextTemplate(funcs FuncMap, layout fileRef, partials []fileRef, tp fil
 	return t, root, nil
 }
 
-// Render executes a named template into w.
+// Render executes a named template into w. Functions registered with
+// [Globals] read ctx.
 //
 // Lookup and execution errors leave w untouched; writer errors may leave
 // partial output. Render does not set HTTP headers.
-func (s *Set) Render(w io.Writer, template string, data any) error {
+func (s *Set) Render(ctx context.Context, w io.Writer, template string, data any) error {
 	t, ok := s.templates[template]
 	if !ok {
 		return fmt.Errorf("templates.Render: unknown template %q", template)
 	}
-	var buf bytes.Buffer
-	if err := t.tpl.ExecuteTemplate(&buf, t.root, data); err != nil {
+	exec := t.tpl
+	if t.bindings != nil {
+		b, err := t.bindings.get(ctx)
+		if err != nil {
+			return fmt.Errorf("templates.Render %q: %w", template, err)
+		}
+		defer t.bindings.put(b)
+		exec = b.tpl
+	}
+
+	buf := buffers.Get().(*bytes.Buffer)
+	defer putBuffer(buf)
+	if err := exec.ExecuteTemplate(buf, t.root, data); err != nil {
 		return fmt.Errorf("templates.Render %q: %w", template, err)
 	}
 	_, err := buf.WriteTo(w)
 	return err
+}
+
+// buffers holds the scratch space renders build their output in.
+var buffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+// maxPooledBuffer keeps one outsized page from pinning its buffer for
+// the life of the process.
+const maxPooledBuffer = 64 << 10
+
+func putBuffer(b *bytes.Buffer) {
+	if b.Cap() > maxPooledBuffer {
+		return
+	}
+	b.Reset()
+	buffers.Put(b)
 }
 
 // checkFuncs turns html/template's invalid-FuncMap panic into a load error.

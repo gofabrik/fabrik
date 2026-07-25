@@ -1,15 +1,30 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 )
 
+// requestKey identifies the matched request in a render context.
+type requestKey struct{}
+
+// WithRequest carries r into renders started outside [Adapter.Wrap].
+func WithRequest(ctx context.Context, r *http.Request) context.Context {
+	return context.WithValue(ctx, requestKey{}, r)
+}
+
+// RequestFrom returns the request being rendered, or nil if there is none.
+func RequestFrom(ctx context.Context) *http.Request {
+	r, _ := ctx.Value(requestKey{}).(*http.Request)
+	return r
+}
+
 // Renderer writes a named template with data.
 type Renderer interface {
-	Render(w io.Writer, name string, data any) error
+	Render(ctx context.Context, w io.Writer, name string, data any) error
 }
 
 // ErrorHandler handles adapter and response failures.
@@ -82,6 +97,8 @@ func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
 // Post-commit errors are logged.
 func (a *Adapter) Wrap(fn func(*Request) (Response, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Mux routing has populated Pattern and path values.
+		r = r.WithContext(WithRequest(r.Context(), r))
 		req := newRequest(r)
 		resp, err := fn(req)
 		if err != nil {
@@ -134,7 +151,7 @@ func (a *Adapter) respond(w http.ResponseWriter, r *http.Request, resp Response)
 			return errors.New("web: View/Template response without a renderer (configure WithRenderer)")
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		return a.renderer.Render(w, v.name, v.data)
+		return a.renderer.Render(r.Context(), w, v.name, v.data)
 	}
 	return resp.Respond(w, r)
 }

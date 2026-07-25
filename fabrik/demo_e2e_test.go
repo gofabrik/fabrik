@@ -901,6 +901,10 @@ func errorPagesFlow(t *testing.T, base string) {
 	if !strings.Contains(string(b), "DELETE") {
 		t.Fatalf("405 body should render the template with the method:\n%s", b)
 	}
+	// Error handlers carry the request into request-scoped globals.
+	if !strings.Contains(string(b), `<a class="active" href="/"`) {
+		t.Fatalf("405 body should mark the requested path active:\n%s", b)
+	}
 }
 
 // gracefulShutdown requires SIGTERM to exit cleanly without a CLI error.
@@ -1117,6 +1121,15 @@ func sessionFlow(t *testing.T, port string) {
 		return string(b)
 	}
 
+	if body := get(client, "/"); strings.Contains(body, `<span class="viewer">`) {
+		t.Fatalf("anonymous visitor should have no viewer in the nav:\n%s", body)
+	} else if !strings.Contains(body, `<a class="active" href="/"`) {
+		t.Fatalf("nav should mark the current page active:\n%s", body)
+	}
+	if body := get(client, "/greet"); strings.Contains(body, `<a class="active" href="/"`) {
+		t.Fatalf("home should not be active away from the root:\n%s", body)
+	}
+
 	// Renaming is POST-only; the PRG redirect shows the new name and a one-shot flash.
 	body := postGreet(t, client, base, "alice")
 	if !strings.Contains(body, "Goodbye, alice!") {
@@ -1137,6 +1150,59 @@ func sessionFlow(t *testing.T, port string) {
 	}
 	if body := get(client, "/"); !strings.Contains(body, "Goodbye, alice!") {
 		t.Fatalf("GET must not have renamed the session:\n%s", body)
+	}
+
+	// Layout globals expose the signed-in visitor on every templated page.
+	for _, path := range []string{"/", "/greet", "/files"} {
+		if body := get(client, path); !strings.Contains(body, `<span class="viewer">alice</span>`) {
+			t.Fatalf("GET %s should show the signed-in visitor in the nav:\n%s", path, body)
+		}
+	}
+	// Error pages retain layout globals outside the adapter render path.
+	resp, err := client.Get(base + "/nowhere")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notFound, _ := io.ReadAll(resp.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /nowhere = %d, want 404", resp.StatusCode)
+	}
+	if !strings.Contains(string(notFound), `<span class="viewer">alice</span>`) {
+		t.Fatalf("the 404 page should carry the nav too:\n%s", notFound)
+	}
+	// Error pages render a flash-free layout, so a stray 404 between the
+	// redirect and the page cannot swallow the message.
+	noRedirect := &http.Client{
+		Jar:           jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	redirect, err := noRedirect.PostForm(base+"/greet", url.Values{"name": {"alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	//nolint:errcheck // response body close after reading is cleanup only
+	redirect.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if redirect.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /greet = %d, want a redirect leaving the flash pending", redirect.StatusCode)
+	}
+	missed, err := client.Get(base + "/nowhere")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missedBody, _ := io.ReadAll(missed.Body)
+	//nolint:errcheck // response body close after reading is cleanup only
+	missed.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	if strings.Contains(string(missedBody), "Greeting name updated.") {
+		t.Fatalf("the 404 page must not render the pending flash:\n%s", missedBody)
+	}
+	if body := get(client, "/"); !strings.Contains(body, "Greeting name updated.") {
+		t.Fatalf("the flash should survive the 404 and show on the next page:\n%s", body)
+	}
+	// Plain responses do not evaluate layout globals.
+	if routes := get(client, "/routes"); strings.Contains(routes, "<nav>") {
+		t.Fatalf("plain responses must stay layout-free:\n%s", routes)
 	}
 	if body := get(http.DefaultClient, "/"); !strings.Contains(body, "Goodbye, world!") {
 		t.Fatalf("fresh visitor should get the default greeting:\n%s", body)

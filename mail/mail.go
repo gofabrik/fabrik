@@ -13,7 +13,7 @@ import (
 
 // Renderer renders a named template to a writer.
 type Renderer interface {
-	Render(w io.Writer, template string, data any) error
+	Render(ctx context.Context, w io.Writer, template string, data any) error
 }
 
 // Attachment is a file attached to a message.
@@ -39,7 +39,7 @@ type Message struct {
 }
 
 // Render fills Text and HTML atomically; an empty htmlTemplate leaves HTML empty.
-func (m *Message) Render(renderer Renderer, textTemplate, htmlTemplate string, data any) error {
+func (m *Message) Render(ctx context.Context, renderer Renderer, textTemplate, htmlTemplate string, data any) error {
 	if m == nil {
 		return fmt.Errorf("mail: render on nil message")
 	}
@@ -47,11 +47,11 @@ func (m *Message) Render(renderer Renderer, textTemplate, htmlTemplate string, d
 		return fmt.Errorf("mail: nil renderer")
 	}
 	var text, html bytes.Buffer
-	if err := renderer.Render(&text, textTemplate, data); err != nil {
+	if err := renderer.Render(ctx, &text, textTemplate, data); err != nil {
 		return fmt.Errorf("mail: text body: %w", err)
 	}
 	if htmlTemplate != "" {
-		if err := renderer.Render(&html, htmlTemplate, data); err != nil {
+		if err := renderer.Render(ctx, &html, htmlTemplate, data); err != nil {
 			return fmt.Errorf("mail: html body: %w", err)
 		}
 	}

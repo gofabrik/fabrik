@@ -1,0 +1,38 @@
+package web
+
+import (
+	"context"
+	"strings"
+
+	fabrikweb "github.com/gofabrik/fabrik/web"
+)
+
+// ViewHelpers provides layout values; fabrik wires its fields.
+type ViewHelpers struct {
+	Greeter Greeter
+}
+
+//fabrik:templates:func
+func (h *ViewHelpers) Tagline() string {
+	return h.Greeter.Greet("visitor")
+}
+
+// ActivePrefix marks a nav link active; the root matches only itself.
+//
+//fabrik:templates:global name=active
+func ActivePrefix(ctx context.Context, prefix string) string {
+	r := fabrikweb.RequestFrom(ctx)
+	if r == nil {
+		return ""
+	}
+	if prefix == "/" {
+		if r.URL.Path == "/" {
+			return "active"
+		}
+		return ""
+	}
+	if !strings.HasPrefix(r.URL.Path, prefix) {
+		return ""
+	}
+	return "active"
+}

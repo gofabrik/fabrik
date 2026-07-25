@@ -426,7 +426,7 @@ Options:
 
 **`//fabrik:templates:func [name=NAME]`**
 
-Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
+Adds a function to the template set's FuncMap, visible to both HTML and text templates. Declare it on a package-level function, or on a method whose receiver struct fabrik wires, when the helper needs a dependency. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`. A helper that reads the request being rendered is a `//fabrik:templates:global` instead.
 
 ```go
 //fabrik:templates:func
@@ -437,11 +437,28 @@ Options:
 
 - `name=`
 
+## fabrik:templates:global
+
+**`//fabrik:templates:global [name=NAME]`**
+
+Adds a function that reads the context of the render calling it, so layouts reach request-scoped values without page structs or handlers carrying them. The first parameter must be a `context.Context`; every parameter after it is an argument the template passes. Dependencies come from a receiver struct wired like a handler struct, so a global needing none stays a package-level function.
+
+The template-visible name defaults to the function name with a lowered first letter (`CurrentUser` -> `currentUser`); `name=` overrides. The result must be legal for the template engines: one value, or two with the second an `error`.
+
+```go
+//fabrik:templates:global
+func (h *ViewHelpers) CurrentUser(ctx context.Context) (*Session, error) { ... }
+```
+
+Options:
+
+- `name=`
+
 ## fabrik:web
 
 **`//fabrik:web METHOD /path [middleware=name,name2]`**
 
-Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:templates` is declared, `web.View` responses render through the app's template set.
+Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Template sets in the app gain a `request` function returning the request being rendered. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:templates` is declared, `web.View` responses render through the app's template set.
 
 ```go
 //fabrik:web POST /login

@@ -6,6 +6,8 @@
   {{ importmap "app" }}
 </head>
 <body>
-  {{ block "content" . }}{{ end }}
+  {{ template "_nav.html" . }}
+  {{ range flashes }}<p class="flash flash-{{ .Kind }}">{{ .Text }}</p>
+  {{ end }}{{ block "content" . }}{{ end }}
 </body>
 </html>

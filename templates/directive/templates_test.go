@@ -118,3 +118,46 @@ func TestValidateCollisionUsesLibraryDiscovery(t *testing.T) {
 		t.Fatalf("Validate = %v, want one web-section collision", ds)
 	}
 }
+
+func TestContributedGlobalYieldsToTheApp(t *testing.T) {
+	tpl := NewTemplates()
+	tpl.byName["request"] = token.Position{Filename: "app.go", Line: 3}
+	var calls int
+	tpl.ContributeGlobal("request", func(*gen.Gen, string) (string, diag.Diagnostics) {
+		calls++
+		return `"request": nil,`, nil
+	})
+	expr, ds := tpl.globalsExpr(gen.New(), "templates")
+	if expr != "" {
+		t.Errorf("globalsExpr = %q, want nothing to build", expr)
+	}
+	if len(ds) > 0 {
+		t.Errorf("diagnostics = %v, want none", ds)
+	}
+	if calls != 0 {
+		t.Errorf("the builder ran %d times for a name the app owns", calls)
+	}
+}
+
+// A contribution that fails must surface its diagnostic even though it
+// produced no code, and must run once.
+func TestFailingContributedGlobalReportsOnce(t *testing.T) {
+	tpl := NewTemplates()
+	var calls int
+	tpl.ContributeGlobal("request", func(*gen.Gen, string) (string, diag.Diagnostics) {
+		calls++
+		var ds diag.Diagnostics
+		ds.Error(token.Position{Filename: "lib.go", Line: 1}, "no provider for the request", "")
+		return "", ds
+	})
+	expr, ds := tpl.globalsExpr(gen.New(), "templates")
+	if expr != "" {
+		t.Errorf("globalsExpr = %q, want no code from a failed contribution", expr)
+	}
+	if !ds.HasFatal() {
+		t.Fatalf("diagnostics = %v, want the contribution's error", ds)
+	}
+	if calls != 1 {
+		t.Errorf("the builder ran %d times, want once", calls)
+	}
+}

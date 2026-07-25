@@ -22,12 +22,14 @@ const setPath = "*" + templatePath + ".Set"
 
 // Templates implements //fabrik:templates.
 type Templates struct {
-	decls       []*tplNode
-	registered  bool
-	helpers     []*helperNode
-	byName      map[string]*helperNode
-	contributed []contribution
-	treeFS      func(dir string) fs.FS
+	decls              []*tplNode
+	registered         bool
+	helpers            []*helperNode
+	globals            []*globalNode
+	contributedGlobals []globalContribution
+	byName             map[string]token.Position
+	contributed        []contribution
+	treeFS             func(dir string) fs.FS
 }
 
 // contribution is a FuncMap expression for the generated Load call.
@@ -38,9 +40,34 @@ type contribution struct {
 
 func NewTemplates() *Templates {
 	return &Templates{
-		byName: map[string]*helperNode{},
+		byName: map[string]token.Position{},
 		treeFS: os.DirFS,
 	}
+}
+
+func (t *Templates) funcNamePos(name string) (token.Position, bool) {
+	pos, ok := t.byName[name]
+	return pos, ok
+}
+
+func (t *Templates) addGlobal(nd *globalNode) {
+	t.byName[nd.name] = nd.pos
+	t.globals = append(t.globals, nd)
+}
+
+func (t *Templates) receiverInfo(recv types.Type) (*types.TypeName, bool) {
+	ptr := types.Unalias(recv)
+	if p, ok := ptr.(*types.Pointer); ok {
+		ptr = types.Unalias(p.Elem())
+	}
+	named, ok := ptr.(*types.Named)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := named.Underlying().(*types.Struct); !ok {
+		return nil, false
+	}
+	return named.Obj(), true
 }
 
 // SetTreeFS lets validation read non-Go files through the engine overlay.
@@ -178,11 +205,18 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			expr, cds := c.build(g)
 			ds = append(ds, cds...)
 			if expr != "" && !cds.HasFatal() {
-				args = append(args, expr)
+				args = append(args, tplPkg+".Funcs("+expr+")")
 			}
 		}
-		if fm := t.funcMapExpr(g, tplPkg); fm != "" {
-			args = append(args, fm)
+		fm, fds := t.funcMapExpr(g, tplPkg)
+		ds = append(ds, fds...)
+		if fm != "" && !fds.HasFatal() {
+			args = append(args, tplPkg+".Funcs("+fm+")")
+		}
+		expr, gds := t.globalsExpr(g, tplPkg)
+		ds = append(ds, gds...)
+		if expr != "" && !gds.HasFatal() {
+			args = append(args, expr)
 		}
 
 		v := g.Var(first.pkg.Name() + first.varName)
@@ -213,19 +247,26 @@ func (t *Templates) sortedDecls() []*tplNode {
 	return decls
 }
 
-func (t *Templates) funcMapExpr(g *gen.Gen, tplPkg string) string {
+func (t *Templates) funcMapExpr(g *gen.Gen, tplPkg string) (string, diag.Diagnostics) {
 	if len(t.helpers) == 0 {
-		return ""
+		return "", nil
 	}
 	sorted := append([]*helperNode(nil), t.helpers...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
+	var ds diag.Diagnostics
 	var b strings.Builder
 	b.WriteString(tplPkg + ".FuncMap{\n")
 	for _, h := range sorted {
-		fmt.Fprintf(&b, "%q: %s.%s,\n", h.name, g.ImportPkg(h.pkg), h.fn)
+		callee := g.ImportPkg(h.pkg) + "." + h.fn
+		if h.recv != nil {
+			inst, ids := gen.EnsureStruct(g, h.fset, receiverPointer(h.recv))
+			ds = append(ds, ids...)
+			callee = inst + "." + h.fn
+		}
+		fmt.Fprintf(&b, "%q: %s,\n", h.name, callee)
 	}
 	b.WriteString("}")
-	return b.String()
+	return b.String(), ds
 }
 
 // Validate loads templates during wiring, before generated startup code runs.
@@ -235,6 +276,10 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 		for _, h := range t.helpers {
 			ds.Error(h.pos, "//fabrik:templates:func without any //fabrik:templates declaration",
 				"declare a template set the helper can be parsed into")
+		}
+		for _, gl := range t.globals {
+			ds.Error(gl.pos, "//fabrik:templates:global without any //fabrik:templates declaration",
+				"declare a template set the global can be parsed into")
 		}
 		return ds
 	}
@@ -261,10 +306,16 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 
 	for _, c := range t.contributed {
 		for _, name := range c.names {
-			if h, ok := t.byName[name]; ok {
-				ds.Warn(h.pos, fmt.Sprintf("template function %q overrides a function contributed by another directive", name),
+			if pos, ok := t.byName[name]; ok {
+				ds.Warn(pos, fmt.Sprintf("template function %q overrides a function contributed by another directive", name),
 					"the app helper wins; rename it to keep the contributed behavior")
 			}
+		}
+	}
+	for _, c := range t.contributedGlobals {
+		if pos, ok := t.byName[c.name]; ok {
+			ds.Warn(pos, fmt.Sprintf("template function %q overrides a function contributed by another directive", c.name),
+				"the app helper wins; rename it to keep the contributed behavior")
 		}
 	}
 
@@ -278,11 +329,17 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 		for _, h := range t.helpers {
 			stubs[h.name] = func(...any) any { return nil }
 		}
+		for _, gl := range t.globals {
+			stubs[gl.name] = func(...any) any { return nil }
+		}
+		for _, c := range t.contributedGlobals {
+			stubs[c.name] = func(...any) any { return nil }
+		}
 		sources := make([]templates.Source, len(decls))
 		for i, d := range decls {
 			sources[i] = templates.Source{FS: t.treeFS(d.srcDir), Dir: d.dir}
 		}
-		if _, err := templates.LoadSources(sources, stubs); err != nil {
+		if _, err := templates.LoadSources(sources, templates.Funcs(stubs)); err != nil {
 			ds.Error(decls[0].pos, err.Error(),
 				"the templates are loaded and parsed at generation time; fix the tree and rerun")
 		}
@@ -318,12 +375,16 @@ func (*Funcs) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Template function: [name=NAME]",
 		Doc: "**`//fabrik:templates:func [name=NAME]`**\n\n" +
-			"Adds a package-level function to the template set's FuncMap, " +
-			"visible to both HTML and text templates. " +
+			"Adds a function to the template set's FuncMap, visible to both " +
+			"HTML and text templates. Declare it on a package-level " +
+			"function, or on a method whose receiver struct fabrik wires, " +
+			"when the helper needs a dependency. " +
 			"The template-visible name defaults to the function name with a " +
 			"lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` " +
 			"overrides. The signature must be legal for the template " +
-			"engines: one result, or two with the second an `error`.\n\n" +
+			"engines: one result, or two with the second an `error`. A helper " +
+			"that reads the request being rendered is a " +
+			"`//fabrik:templates:global` instead.\n\n" +
 			"```go\n//fabrik:templates:func\nfunc HumanizeAge(t time.Time) string { ... }\n```",
 		Example: "//fabrik:templates:func",
 		Attrs: []gen.AttrSpec{
@@ -336,8 +397,10 @@ type helperNode struct {
 	pos  token.Position
 	name string
 
-	fn  string
-	pkg *types.Package
+	fn   string
+	pkg  *types.Package
+	recv types.Type // nil for a package-level function
+	fset *token.FileSet
 }
 
 func (f *Funcs) Parse(a gen.Annotation) (any, diag.Diagnostics) {
@@ -366,17 +429,27 @@ func (f *Funcs) Check(n any, ty gen.Typed) diag.Diagnostics {
 		return ds
 	}
 	sig := fn.Signature()
-	if sig.Recv() != nil {
-		ds.Error(nd.pos, fmt.Sprintf("//fabrik:templates:func must be on a package-level function (func %s is a method)", fn.Name()),
-			"move the helper out of the method set")
-		return ds
+	if recv := sig.Recv(); recv != nil {
+		obj, ok := f.templates.receiverInfo(recv.Type())
+		if !ok {
+			ds.Error(nd.pos, fmt.Sprintf("template function receiver %s is not a struct",
+				types.TypeString(recv.Type(), types.RelativeTo(fn.Pkg()))),
+				"declare helpers on a struct whose fields fabrik wires, or on a package-level function")
+			return ds
+		}
+		if !obj.Exported() {
+			ds.Error(nd.pos, fmt.Sprintf("template function receiver %s is unexported", obj.Name()),
+				"generated code lives in package main; export the type")
+			return ds
+		}
+		nd.recv = recv.Type()
 	}
 	if !fn.Exported() {
 		ds.Error(nd.pos, fmt.Sprintf("template function %s is unexported", fn.Name()),
 			"generated code lives in package main; export the function")
 		return ds
 	}
-	if sig.TypeParams().Len() > 0 {
+	if sig.TypeParams().Len() > 0 || sig.RecvTypeParams().Len() > 0 {
 		ds.Error(nd.pos, fmt.Sprintf("template function %s cannot be generic (generated code cannot infer type arguments)", fn.Name()),
 			"declare a concrete function")
 		return ds
@@ -389,17 +462,28 @@ func (f *Funcs) Check(n any, ty gen.Typed) diag.Diagnostics {
 	if nd.name == "" {
 		nd.name = gen.LowerFirst(fn.Name())
 	}
-	if first, dup := f.templates.byName[nd.name]; dup {
+	if first, dup := f.templates.funcNamePos(nd.name); dup {
 		ds.Error(nd.pos, fmt.Sprintf("duplicate template function name %q", nd.name),
-			fmt.Sprintf("first declared at %s", first.pos))
+			fmt.Sprintf("first declared at %s", first))
 		return ds
 	}
 
 	nd.fn = fn.Name()
 	nd.pkg = fn.Pkg()
-	f.templates.byName[nd.name] = nd
+	nd.fset = ty.Fset
+	f.templates.byName[nd.name] = nd.pos
 	f.templates.helpers = append(f.templates.helpers, nd)
 	return ds
+}
+
+// PrepareNode registers the receiver's bindings before resolution, so
+// another struct can take the helper as a field whatever the order.
+func (*Funcs) PrepareNode(n any, g *gen.Gen) {
+	nd := n.(*helperNode)
+	if nd.recv == nil {
+		return
+	}
+	gen.RegisterStruct(g, nd.fset, receiverPointer(nd.recv))
 }
 
 func (*Funcs) Emit(any, *gen.Gen) diag.Diagnostics { return nil }

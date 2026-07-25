@@ -45,7 +45,7 @@ request. Typed and plain handlers mix freely, route by route. Adopting
 
 ```go
 adapter := web.NewAdapter(
-	web.WithRenderer(set),             // anything with Render(w, name, data) error
+	web.WithRenderer(set),
 	web.WithErrorHandler(onError),     // default: log, then ErrorStatus or 500
 )
 
@@ -75,7 +75,7 @@ type LoginPage struct{ Error string }
 func (LoginPage) Template() string { return "auth/login" }
 ```
 
-The `Renderer` is a one-method interface (`Render(w, name, data)
+The `Renderer` is a one-method interface (`Render(ctx, w, name, data)
 error`); any template system satisfying it plugs in.
 
 ## One adapter per response surface

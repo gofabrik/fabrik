@@ -22,15 +22,39 @@ const (
 	templatesSetPath = "*github.com/gofabrik/fabrik/templates.Set"
 )
 
-// Web is the //fabrik:web directive.
-type Web struct {
-	host       *routerdir.Host
-	registered bool
+// GlobalContributor receives the request template helper; the
+// templates directive implements it. Nil disables the contribution.
+type GlobalContributor interface {
+	ContributeGlobal(name string, build func(g *gen.Gen, bind string) (string, diag.Diagnostics))
 }
 
-// NewWeb returns a Web directive for one run.
-func NewWeb(host *routerdir.Host) *Web {
-	return &Web{host: host}
+// Web is the //fabrik:web directive.
+type Web struct {
+	host        *routerdir.Host
+	globals     GlobalContributor
+	contributed bool
+	registered  bool
+}
+
+// NewWeb returns a Web directive for one run. globals may be nil.
+func NewWeb(host *routerdir.Host, globals GlobalContributor) *Web {
+	return &Web{host: host, globals: globals}
+}
+
+// contributeRequest gives templates the request being rendered, so no
+// app writes that accessor itself. Only apps with typed routes get it:
+// nothing else puts a request in the render context.
+func (w *Web) contributeRequest() {
+	if w.contributed || w.globals == nil {
+		return
+	}
+	w.contributed = true
+	w.globals.ContributeGlobal("request", func(g *gen.Gen, bind string) (string, diag.Diagnostics) {
+		webPkg := g.Import(webPath)
+		httpPkg := g.Import("net/http")
+		return fmt.Sprintf("%q: func() *%s.Request { return %s.RequestFrom(%s.Ctx()) },\n",
+			"request", httpPkg, webPkg, bind), nil
+	})
 }
 
 func (*Web) Name() string { return "web" }
@@ -41,7 +65,9 @@ func (*Web) Meta() gen.Meta {
 		Doc: "**`//fabrik:web METHOD /path [middleware=name,name2]`**\n\n" +
 			"Registers a typed-response handler: `func(*web.Request) " +
 			"(web.Response, error)` - request in, response value out, " +
-			"errors centralized in the generated adapter. Same grammar, groups, middleware " +
+			"errors centralized in the generated adapter. Template sets in " +
+			"the app gain a `request` function returning the request being " +
+			"rendered. Same grammar, groups, middleware " +
 			"names, and conflict table as `//fabrik:http`; typed and plain " +
 			"handlers mix freely, even on one struct. When " +
 			"`//fabrik:templates` is declared, `web.View` responses render " +
@@ -84,6 +110,7 @@ func (w *Web) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 func (w *Web) Check(n any, t gen.Typed) diag.Diagnostics {
 	nd := n.(*webNode)
 	var ds diag.Diagnostics
+	w.contributeRequest()
 
 	fn, ok := t.Target.(*types.Func)
 	if !ok {

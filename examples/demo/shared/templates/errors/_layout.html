@@ -3,12 +3,10 @@
 <head>
   <title>{{ block "title" . }}demo{{ end }}</title>
   <link rel="stylesheet" href="{{ asset "style.css" }}">
+  {{ importmap "app" }}
 </head>
 <body>
+  {{ template "_nav.html" . }}
   {{ block "content" . }}{{ end }}
-  <footer>
-    <p>{{ tagline }}</p>
-    {{ with request }}<p>You are at <code>{{ .URL.Path }}</code>.</p>{{ end }}
-  </footer>
 </body>
 </html>

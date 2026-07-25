@@ -32,10 +32,10 @@ var NotFS string
 //go:embed all:templates
 var Templates embed.FS
 
-type T struct{}
+type T func()
 
 //fabrik:templates:func
-func (t *T) Method(s string) string { return s }
+func (t T) Method(s string) string { return s }
 
 //fabrik:templates:func
 func NoResults(s string) {}
@@ -60,8 +60,8 @@ error: web/templates.go:8:1: //fabrik:templates variable has no //go:embed
   help: add //go:embed all:templates above the variable
 error: web/templates.go:11:1: //fabrik:templates variable has no //go:embed
   help: add //go:embed all:templates above the variable
-error: web/templates.go:20:1: //fabrik:templates:func must be on a package-level function (func Method is a method)
-  help: move the helper out of the method set
+error: web/templates.go:20:1: template function receiver T is not a struct
+  help: declare helpers on a struct whose fields fabrik wires, or on a package-level function
 error: web/templates.go:23:1: template function NoResults has an illegal signature
   help: html/template functions return one value, or two with the second an error
 error: web/templates.go:29:1: duplicate template function name "upper"

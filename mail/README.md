@@ -11,7 +11,7 @@ msg := mail.Message{
 	To:      []string{"ada@example.com"},
 	Subject: "Welcome!",
 }
-if err := msg.Render(set, "mail/welcome.txt", "mail/welcome", data); err != nil {
+if err := msg.Render(ctx, set, "mail/welcome.txt", "mail/welcome", data); err != nil {
 	return err
 }
 ```
