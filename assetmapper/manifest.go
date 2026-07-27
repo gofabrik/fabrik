@@ -15,8 +15,8 @@ import (
 //	{
 //	  "url_prefix": "/assets/",
 //	  "entries": {
-//	    "app.js": "app-7a1b2c3d.js",
-//	    "images/logo.png": "images/logo-deadbeef.png"
+//	    "app.js": "app-7a1b2c3d4e5f60718293.js",
+//	    "images/logo.png": "images/logo-deadbeef0123456789ab.png"
 //	  }
 //	}
 //

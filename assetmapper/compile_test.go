@@ -199,14 +199,14 @@ func TestCompile_IdempotentForUnchangedInput(t *testing.T) {
 func TestCompile_ErrorsWhenCompiledOutputShadowsLiteralSource(t *testing.T) {
 	// A compiled output path cannot also be a literal source path.
 	src := fstest.MapFS{
-		"foo.js":          {Data: []byte("x")},
-		"foo-2d711642.js": {Data: []byte("// literal sibling")},
+		"foo.js":                      {Data: []byte("x")},
+		"foo-2d711642b726b0440162.js": {Data: []byte("// literal sibling")},
 	}
 	_, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected collision error")
 	}
-	for _, want := range []string{"foo.js", "foo-2d711642.js", "literal source"} {
+	for _, want := range []string{"foo.js", "foo-2d711642b726b0440162.js", "literal source"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing %q: %v", want, err)
 		}
@@ -214,23 +214,23 @@ func TestCompile_ErrorsWhenCompiledOutputShadowsLiteralSource(t *testing.T) {
 }
 
 func TestCompile_HashSuffixedSourceWithoutShadowIsFine(t *testing.T) {
-	// A literal foo-2d711642.js is OK as long as nothing ELSE
+	// A literal foo-2d711642b726b0440162.js is OK as long as nothing ELSE
 	// happens to compile to that exact name. Asserts the collision
 	// check doesn't fire on a hash-shaped filename that has no
 	// shadowing sibling.
 	src := fstest.MapFS{
-		"foo-2d711642.js": {Data: []byte("export default {}")},
+		"foo-2d711642b726b0440162.js": {Data: []byte("export default {}")},
 	}
 	manifest, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, t.TempDir())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	hashed := manifest.Entries["foo-2d711642.js"]
+	hashed := manifest.Entries["foo-2d711642b726b0440162.js"]
 	if hashed == "" {
 		t.Fatalf("missing manifest entry; entries = %v", manifest.Entries)
 	}
-	if !strings.HasPrefix(hashed, "foo-2d711642-") {
-		t.Errorf("hashed = %q, want foo-2d711642-<hash>.js", hashed)
+	if !strings.HasPrefix(hashed, "foo-2d711642b726b0440162-") {
+		t.Errorf("hashed = %q, want foo-2d711642b726b0440162-<hash>.js", hashed)
 	}
 }
 
@@ -313,12 +313,12 @@ func TestCompile_StreamingPathCleansUpTempOnCollision(t *testing.T) {
 	// the temp file must be removed; otherwise publicDir
 	// accumulates orphaned ".assetmapper-tmp-*.tmp" entries.
 	//
-	// foo.png with content "x" hashes to "2d711642" → output
-	// "foo-2d711642.png". A literal source file foo-2d711642.png
+	// foo.png with content "x" hashes to "2d711642b726b0440162" → output
+	// "foo-2d711642b726b0440162.png". A literal source file with that name
 	// triggers the shadow check.
 	src := fstest.MapFS{
-		"foo.png":          {Data: []byte("x")},
-		"foo-2d711642.png": {Data: []byte("shadow")},
+		"foo.png":                      {Data: []byte("x")},
+		"foo-2d711642b726b0440162.png": {Data: []byte("shadow")},
 	}
 	dir := t.TempDir()
 	_, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, dir)

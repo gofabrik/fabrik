@@ -8,7 +8,7 @@ rewriting, and vendoring from jspm.io. Stdlib only.
 
 Assets are plain files in a directory - CSS, ES modules, images,
 fonts. The library maps each logical path (`app.css`) to a
-content-hashed public URL (`/assets/app-4c9d02ef.css`), rewriting the
+content-hashed public URL (`/assets/app-4c9d02ef7129e84f21d3.css`), rewriting the
 references inside JS and CSS (`import "./nav.js"`, `url("bg.png")`,
 `@import`) so the whole graph is hash-addressed and cacheable forever.
 JavaScript stays standard ES modules the browser runs directly; bare

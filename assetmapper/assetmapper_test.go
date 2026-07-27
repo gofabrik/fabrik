@@ -413,7 +413,7 @@ func TestHandler_StaleHashStillServesContent(t *testing.T) {
 	fs := fstest.MapFS{"app.js": {Data: []byte("x")}}
 	m := mustMapper(t, assetmapper.Config{Roots: []assetmapper.Root{{FS: fs}}})
 
-	stale := "/assets/app-00000000.js"
+	stale := "/assets/app-00000000000000000000.js"
 	rec := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, stale, nil))
 	if rec.Code != http.StatusOK {
