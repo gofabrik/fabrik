@@ -1,8 +1,11 @@
 package directive
 
 import (
+	"go/types"
 	"testing"
 	"time"
+
+	"github.com/gofabrik/fabrik/gen"
 )
 
 func TestKebabCase(t *testing.T) {
@@ -87,5 +90,20 @@ func TestDurationLiteral(t *testing.T) {
 		if got := durationLiteral(d, "time"); got != c.want {
 			t.Errorf("durationLiteral(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestCommandScopeNameDisambiguatesPackages(t *testing.T) {
+	g := gen.New()
+	first := types.NewPackage("example.com/one/commands", "commands")
+	second := types.NewPackage("example.com/two/commands", "commands")
+
+	gotFirst := commandScopeName(g.ImportPkg(first), "List")
+	gotSecond := commandScopeName(g.ImportPkg(second), "List")
+	if gotFirst != "buildCommandsList" {
+		t.Errorf("first scope name = %q, want buildCommandsList", gotFirst)
+	}
+	if gotSecond != "buildCommands2List" {
+		t.Errorf("second scope name = %q, want buildCommands2List", gotSecond)
 	}
 }
