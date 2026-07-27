@@ -399,7 +399,7 @@ func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
 	return g.materializePath(path)
 }
 
-func (g *Gen) materializePath(path string) (string, diag.Diagnostics, bool) {
+func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok bool) {
 	lb, ok := g.lazyByPath[path]
 	if !ok {
 		return "", nil, false
@@ -416,7 +416,14 @@ func (g *Gen) materializePath(path string) (string, diag.Diagnostics, bool) {
 		g.materializing = g.materializing[:len(g.materializing)-1]
 		g.setLazyRunning(lb, false)
 	}()
-	expr, ds := lb.build()
+	defer func() {
+		if p := recover(); p != nil {
+			expr = ""
+			ok = false
+			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
+		}
+	}()
+	expr, ds = lb.build()
 	if len(ds) == 0 {
 		g.BindPath(path, expr)
 	}
@@ -438,7 +445,7 @@ func (g *Gen) setLazyRunning(lb *lazyBind, v bool) {
 	lb.running = v
 }
 
-func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag.Diagnostics, bool) {
+func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string, ds diag.Diagnostics, ok bool) {
 	// Avoid adding imports while formatting cycle diagnostics.
 	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
 	if g.lazyRunning(lb) {
@@ -453,12 +460,26 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (string, diag
 		g.materializing = g.materializing[:len(g.materializing)-1]
 		g.setLazyRunning(lb, false)
 	}()
-	expr, ds := lb.build()
+	defer func() {
+		if p := recover(); p != nil {
+			expr = ""
+			ok = false
+			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
+		}
+	}()
+	expr, ds = lb.build()
 	// BindPath may populate the type-keyed cache during the build.
 	if !g.typeBound(t, name) {
 		g.Bind(t, name, expr)
 	}
 	return expr, ds, true
+}
+
+func lazyPanicMessage(owner string, p any) string {
+	if owner == "" {
+		return fmt.Sprintf("internal error: lazy binding panicked during materialization: %v", p)
+	}
+	return fmt.Sprintf("internal error: directive %q panicked during lazy binding materialization: %v", owner, p)
 }
 
 func (g *Gen) typeBound(t types.Type, name string) bool {

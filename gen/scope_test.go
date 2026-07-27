@@ -227,6 +227,24 @@ func TestValidationPassReportsDiagnostics(t *testing.T) {
 	}
 }
 
+func TestValidationPassReportsLazyBindingPanic(t *testing.T) {
+	g := New()
+	g.SetDirective("test:provider")
+	g.BindLazy(types.Typ[types.Int], "", func() (string, diag.Diagnostics) {
+		panic("duplicate bind")
+	})
+
+	ds := g.RunValidationPass()
+	if !ds.HasFatal() || len(ds) != 1 {
+		t.Fatalf("validation pass diagnostics = %v, want one fatal diagnostic", ds)
+	}
+	for _, want := range []string{`directive "test:provider"`, "duplicate bind"} {
+		if !strings.Contains(ds[0].Message, want) {
+			t.Errorf("diagnostic %q missing %q", ds[0].Message, want)
+		}
+	}
+}
+
 func TestZeroExprKinds(t *testing.T) {
 	pkg := typecheckScopePkg(t, "example.com/z", `package z
 

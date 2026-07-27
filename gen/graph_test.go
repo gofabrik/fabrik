@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gofabrik/fabrik/diag"
@@ -183,10 +184,10 @@ func TestPanickingBuildLeavesStateClean(t *testing.T) {
 		}
 		return "v", nil
 	})
-	func() {
-		defer func() { _ = recover() }() // This mirrors the engine's panic guard.
-		g.InstancePath("*x.Panicky")
-	}()
+	_, ds, ok := g.InstancePath("*x.Panicky")
+	if ok || len(ds) != 1 || !strings.Contains(ds[0].Message, `directive "outer" panicked`) {
+		t.Fatalf("panicking build = %v %v, want attributed diagnostic", ds, ok)
+	}
 	if g.current != "outer" {
 		t.Fatalf("current = %q, provenance dirty after panic", g.current)
 	}
