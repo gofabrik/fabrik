@@ -292,7 +292,8 @@ func (f *Files) Serve(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		slog.ErrorContext(r.Context(), "file open failed", "key", key, "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	defer rc.Close()
