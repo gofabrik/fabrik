@@ -492,6 +492,38 @@ func TestHandler_StaleHashStillServesContent(t *testing.T) {
 	}
 }
 
+func TestHandler_PrefersExactHashShapedLogicalPath(t *testing.T) {
+	hashShaped := "foo-" + strings.Repeat("a", assetmapper.HashLength) + ".js"
+	for name, files := range map[string]fstest.MapFS{
+		"exact only": {
+			hashShaped: {Data: []byte("exact")},
+		},
+		"hashed fallback only": {
+			"foo.js": {Data: []byte("fallback")},
+		},
+		"ambiguous exact wins": {
+			hashShaped: {Data: []byte("exact")},
+			"foo.js":   {Data: []byte("fallback")},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := mustMapper(t, assetmapper.Config{Roots: []assetmapper.Root{{FS: files}}})
+			rec := httptest.NewRecorder()
+			m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/"+hashShaped, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			want := "exact"
+			if name == "hashed fallback only" {
+				want = "fallback"
+			}
+			if got := rec.Body.String(); got != want {
+				t.Fatalf("body = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestHandler_404ForUnknownAsset(t *testing.T) {
 	m := mustMapper(t, assetmapper.Config{
 		Roots: []assetmapper.Root{{FS: fstest.MapFS{}}},
