@@ -72,7 +72,8 @@ const (
 type OnTimeout int
 
 const (
-	// TimeoutRetry retries the attempt (subject to the retry cap).
+	// TimeoutRetry retries after a timeout while total executions remain
+	// under [Config.MaxAttempts].
 	TimeoutRetry OnTimeout = iota
 	// TimeoutFail moves the job to failed immediately.
 	TimeoutFail
