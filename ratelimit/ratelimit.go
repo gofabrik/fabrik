@@ -41,7 +41,14 @@ func (l Limit) capacity() int {
 	return l.Rate
 }
 
-func (l Limit) emission() time.Duration { return l.Period / time.Duration(l.Rate) }
+func (l Limit) emission() time.Duration {
+	rate := time.Duration(l.Rate)
+	interval := l.Period / rate
+	if l.Period%rate != 0 {
+		interval++
+	}
+	return interval
+}
 
 // Validate reports the first problem that makes the limit unusable.
 func (l Limit) Validate() error {

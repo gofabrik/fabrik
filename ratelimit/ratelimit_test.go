@@ -32,6 +32,7 @@ func TestLimitValidate(t *testing.T) {
 		ratelimit.PerSecond(1),
 		ratelimit.PerMinute(100).WithBurst(20),
 		ratelimit.PerHour(1),
+		{Rate: 2_000_000_000, Period: time.Nanosecond},
 	}
 	for _, l := range valid {
 		if err := l.Validate(); err != nil {
@@ -43,13 +44,42 @@ func TestLimitValidate(t *testing.T) {
 		{Rate: -1, Period: time.Second},
 		{Rate: 1, Period: -time.Second},
 		{Rate: 1, Period: time.Second, Burst: -1},
-		{Rate: 2_000_000_000, Period: time.Nanosecond},              // zero emission interval
 		{Rate: 1, Period: time.Duration(1) << 62, Burst: 1_000_000}, // overflowing burst window
 	}
 	for _, l := range invalid {
 		if err := l.Validate(); !errors.Is(err, ratelimit.ErrInvalidLimit) {
 			t.Errorf("%+v: err = %v, want ErrInvalidLimit", l, err)
 		}
+	}
+}
+
+func TestAllow_NonDivisiblePeriodRoundsUp(t *testing.T) {
+	now := base
+	lim, err := ratelimit.New(
+		ratelimit.PerSecond(3).WithBurst(1),
+		ratelimit.NewMemoryStore(),
+		ratelimit.WithClock(func() time.Time { return now }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var allowed int
+	for _, elapsed := range []time.Duration{0, 333_333_333, 333_333_334, 666_666_668, 999_999_999} {
+		now = base.Add(elapsed)
+		res, err := lim.Allow(context.Background(), "k")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Allowed {
+			allowed++
+		}
+		if elapsed == 333_333_333 && res.RetryAfter != time.Nanosecond {
+			t.Fatalf("RetryAfter at floored interval = %s, want 1ns", res.RetryAfter)
+		}
+	}
+	if allowed != 3 {
+		t.Fatalf("allowed %d events before one second, want 3", allowed)
 	}
 }
 
