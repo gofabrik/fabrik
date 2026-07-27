@@ -131,6 +131,12 @@ func Load[T any](opts ...Option) (*T, error) {
 		if err := dec.Decode(dst); err != nil && !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("config: parse %s: %w", layer.path, err)
 		}
+		var extra yaml.Node
+		if err := dec.Decode(&extra); err == nil {
+			return nil, fmt.Errorf("config: parse %s: multiple YAML documents are not supported", layer.path)
+		} else if !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("config: parse %s: %w", layer.path, err)
+		}
 	}
 
 	applyEnv(rv, &probs)

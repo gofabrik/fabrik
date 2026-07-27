@@ -80,6 +80,24 @@ csrf:
 	}
 }
 
+func TestLoad_RejectsMultipleYAMLDocuments(t *testing.T) {
+	type document struct {
+		Name string `yaml:"name"`
+	}
+	for _, yamlText := range []string{
+		"name: first\n---\nname: second\n",
+		"name: first\n---\n",
+	} {
+		_, err := config.Load[document](config.Bytes("multi.yaml", []byte(yamlText)))
+		if err == nil {
+			t.Fatal("multiple YAML documents must be rejected")
+		}
+		if !strings.Contains(err.Error(), "config: parse multi.yaml: multiple YAML documents are not supported") {
+			t.Fatalf("error = %q, want multiple-document diagnostic", err)
+		}
+	}
+}
+
 func TestLoad_DefaultDurationApplies(t *testing.T) {
 	path := write(t, "config.yaml", "csrf:\n  secret: \"longenoughsecret\"\n")
 	cfg, err := config.Load[appConfig](config.File(path))
