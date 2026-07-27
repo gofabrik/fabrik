@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Manifest maps logical asset paths to compiled public filenames.
@@ -33,6 +34,39 @@ const ManifestFilename = "manifest.json"
 // NewManifest returns an empty manifest.
 func NewManifest() *Manifest {
 	return &Manifest{Entries: map[string]string{}}
+}
+
+func snapshotManifest(src *Manifest) (*Manifest, error) {
+	if src == nil {
+		return nil, nil
+	}
+	dst := &Manifest{
+		URLPrefix: src.URLPrefix,
+		Entries:   make(map[string]string, len(src.Entries)),
+	}
+	for logical, output := range src.Entries {
+		if err := validateManifestPath(logical); err != nil {
+			return nil, fmt.Errorf("manifest logical path %q: %w", logical, err)
+		}
+		if err := validateManifestPath(output); err != nil {
+			return nil, fmt.Errorf("manifest output path for %q (%q): %w", logical, output, err)
+		}
+		dst.Entries[logical] = output
+	}
+	return dst, nil
+}
+
+func validateManifestPath(p string) error {
+	if p == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	if strings.ContainsRune(p, '\\') {
+		return fmt.Errorf("must use forward slashes")
+	}
+	if err := validateMount(p); err != nil {
+		return err
+	}
+	return nil
 }
 
 // LoadManifest reads publicDir/manifest.json.
