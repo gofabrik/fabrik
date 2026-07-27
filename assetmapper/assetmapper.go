@@ -192,6 +192,11 @@ func cleanLogical(p string) string {
 		return ""
 	}
 	p = strings.TrimPrefix(p, "/")
+	for _, segment := range strings.Split(p, "/") {
+		if segment == "." || segment == ".." {
+			return ""
+		}
+	}
 	cleaned := path.Clean(p)
 	if cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
 		return ""

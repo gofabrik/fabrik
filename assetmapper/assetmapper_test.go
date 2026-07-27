@@ -308,8 +308,16 @@ func TestAsset_RejectsTraversal(t *testing.T) {
 	m := mustMapper(t, assetmapper.Config{
 		Roots: []assetmapper.Root{{FS: fstest.MapFS{"app.js": {Data: []byte("x")}}}},
 	})
-	if _, err := m.Asset("../etc/passwd"); !errors.Is(err, assetmapper.ErrAssetNotFound) {
-		t.Errorf("err = %v, want ErrAssetNotFound for traversal", err)
+	for _, logical := range []string{
+		"../etc/passwd",
+		"a/../app.js",
+		"a/./app.js",
+		"./app.js",
+		"app.js/..",
+	} {
+		if _, err := m.Asset(logical); !errors.Is(err, assetmapper.ErrAssetNotFound) {
+			t.Errorf("Asset(%q): err = %v, want ErrAssetNotFound for dot segment", logical, err)
+		}
 	}
 }
 
