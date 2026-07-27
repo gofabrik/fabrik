@@ -29,15 +29,25 @@ func Config(ctx cli.Context, cfg *HTTPConfig, db *DatabaseConfig) error {
 //
 //fabrik:cli:command
 func Run(ctx cli.Context, server *httpserver.Server, worker *jobs.Runner) error {
+	return superviseRuntimes(ctx, server.Run, worker.Run)
+}
+
+func superviseRuntimes(ctx context.Context, runtimes ...func(context.Context) error) error {
+	if len(runtimes) == 0 {
+		return nil
+	}
 	ectx, ecancel := context.WithCancel(ctx)
 	defer ecancel()
-	errc := make(chan error, 2)
-	go func() { errc <- server.Run(ectx) }()
-	go func() { errc <- worker.Run(ectx) }()
+	errc := make(chan error, len(runtimes))
+	for _, run := range runtimes {
+		go func() { errc <- run(ectx) }()
+	}
 	var result error
-	for range 2 {
+	for i := range runtimes {
 		if e := <-errc; e != nil && !errors.Is(e, context.Canceled) && result == nil {
 			result = e
+		}
+		if i == 0 {
 			ecancel()
 		}
 	}
