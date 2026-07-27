@@ -357,6 +357,23 @@ func TestRenderGroupAndRootSpecs(t *testing.T) {
 	}
 }
 
+func TestRenderRejectsCommandAndGroupMetadataConflict(t *testing.T) {
+	g := New()
+	g.AddCommandGroup(CommandGroup{Path: []string{"database"}, Help: "Database tools"})
+	scope := g.AddScope("buildDatabase", token.Position{})
+	g.AddCommandFunc(CommandFunc{
+		Name:  "database",
+		Path:  []string{"database"},
+		Fn:    "app.Database",
+		Scope: scope,
+	})
+
+	_, err := g.Render()
+	if err == nil || !strings.Contains(err.Error(), `CLI path "database" has both executable command and group metadata`) {
+		t.Fatalf("Render error = %v, want command/group conflict", err)
+	}
+}
+
 // Sibling order follows the earliest group or command contribution.
 func TestBuildCommandTreeInterleavedOrder(t *testing.T) {
 	g := New()

@@ -559,6 +559,9 @@ func (g *Gen) Stmt(phase Phase, format string, a ...any) {
 
 // Render assembles and formats main.gen.go.
 func (g *Gen) Render() ([]byte, error) {
+	if err := validateCommandMetadata(g.commandFuncs, g.commandGroups); err != nil {
+		return nil, err
+	}
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
 	if hasCmd {
 		g.Context()
@@ -690,6 +693,26 @@ type commandNode struct {
 	cmd      *CommandFunc
 	group    *CommandGroup
 	children []*commandNode
+}
+
+func validateCommandMetadata(commands []CommandFunc, groups []CommandGroup) error {
+	executable := make(map[string][]string, len(commands))
+	for _, command := range commands {
+		commandPath := command.Path
+		if len(commandPath) == 0 {
+			commandPath = []string{command.Name}
+		}
+		executable[strings.Join(commandPath, "\x00")] = commandPath
+	}
+	for _, group := range groups {
+		if commandPath, ok := executable[strings.Join(group.Path, "\x00")]; ok {
+			return fmt.Errorf(
+				"gen: CLI path %q has both executable command and group metadata",
+				strings.Join(commandPath, " "),
+			)
+		}
+	}
+	return nil
 }
 
 // buildCommandTree merges paths and preserves first-contribution sibling order.
