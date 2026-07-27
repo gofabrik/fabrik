@@ -85,6 +85,7 @@ func run() int {
 			},
 			{
 				Name: "database",
+				Help: "Database maintenance commands",
 				Subcommands: []*cli.Command{
 					{
 						Name:  "migrate",

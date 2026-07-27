@@ -99,6 +99,9 @@ END;`
 			t.Fatalf("demo --help missing %q:\n%s", cmd, out)
 		}
 	}
+	if !strings.Contains(string(out), "Database maintenance commands") {
+		t.Fatalf("demo --help missing database group description:\n%s", out)
+	}
 	bare := exec.Command(bin) // #nosec G204 -- launches a controlled binary built by this test
 	bare.Dir = src
 	bare.Env = envNoFabrik

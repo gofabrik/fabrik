@@ -51,6 +51,11 @@ func Serve(ctx cli.Context, server *httpserver.Server) error {
 	return server.Run(ctx)
 }
 
+// Database maintenance commands.
+//
+//fabrik:cli:group name=database
+var _database struct{}
+
 // Apply pending database migrations.
 //
 //fabrik:cli:command path="database migrate"
