@@ -73,6 +73,23 @@ func TestFlag_LongAndShort(t *testing.T) {
 	}
 }
 
+func TestFlag_RejectsMultiCharacterShortWithInlineValue(t *testing.T) {
+	verbose := BoolFlag("verbose").Short('v')
+	root := &Command{
+		Name:  "myapp",
+		Flags: Flags(verbose),
+		Run:   func(Context) error { t.Fatal("invalid flag reached Run"); return nil },
+	}
+
+	code, _, stderr := exec(t, root, []string{"-verbose=true"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "combined short flags not supported") {
+		t.Fatalf("stderr = %q, want combined-short diagnostic", stderr)
+	}
+}
+
 func TestFlag_Required(t *testing.T) {
 	name := StringFlag("name").Required()
 	root := &Command{
