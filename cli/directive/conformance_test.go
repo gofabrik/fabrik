@@ -67,6 +67,14 @@ func TestConformance_DuplicateShortFlags(t *testing.T) {
 	}, "short")
 }
 
+func TestGroupRejectsEmptyName(t *testing.T) {
+	for _, args := range []string{"name=", `name="   "`} {
+		t.Run(args, func(t *testing.T) {
+			wantDiag(t, wireDiags(t, &Group{fam: newFamily()}, args), "name= needs at least one segment")
+		})
+	}
+}
+
 func TestConformance_ReservedHelpFlag(t *testing.T) {
 	flag := &Input{fam: newFamily(), kind: kindFlag}
 	wantDiag(t, wireDiags(t, flag, "name=help type=bool"), "reserved by the cli library")

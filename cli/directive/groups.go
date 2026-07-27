@@ -90,7 +90,11 @@ func (gr *Group) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	}
 	path, pds := splitPathSegments(a, name)
 	ds = append(ds, pds...)
-	if len(path) == 0 || ds.HasFatal() {
+	if ds.HasFatal() {
+		return nil, ds
+	}
+	if len(path) == 0 {
+		ds.Error(a.ArgPos(name.Col), "name= needs at least one segment", "")
 		return nil, ds
 	}
 	nd.path = path
