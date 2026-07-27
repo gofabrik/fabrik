@@ -2,6 +2,7 @@ package forms
 
 import (
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/url"
 	"reflect"
@@ -55,7 +56,13 @@ func setField(fv reflect.Value, submitted []string, present bool) error {
 	// Pointer fields stay nil when absent, blank, or unsupported.
 	if fv.Kind() == reflect.Pointer {
 		val := first(submitted)
-		if !present || val == "" || !isScalarKind(fv.Type().Elem().Kind()) {
+		if !present {
+			return nil
+		}
+		if !isScalarKind(fv.Type().Elem().Kind()) {
+			return fmt.Errorf("unsupported form field type %s", fv.Type())
+		}
+		if val == "" {
 			return nil
 		}
 		elem := reflect.New(fv.Type().Elem())
@@ -100,7 +107,7 @@ func setScalar(fv reflect.Value, s string) error {
 		}
 		fv.SetFloat(f)
 	default:
-		// Unsupported kinds stay zero.
+		return fmt.Errorf("unsupported form field type %s", fv.Type())
 	}
 	return nil
 }
