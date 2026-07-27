@@ -405,8 +405,6 @@ func TestImportmap_ModulePreloadLinksWithOptions_EmptyNonceMatchesPlain(t *testi
 	}
 }
 
-var inlineScriptRE = regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`)
-
 func TestRender_SingleInlineBodyAcrossVariants(t *testing.T) {
 	src := fstest.MapFS{
 		"app.js": {Data: []byte(`console.log("app");`)},
