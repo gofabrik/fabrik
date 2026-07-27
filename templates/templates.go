@@ -2,8 +2,7 @@
 // io.Writer without setting HTTP headers.
 //
 // Templates live in section directories. [_default] supplies fallback
-// layouts and partials for other sections. Non-HTML files are ignored, so
-// the same tree can hold files parsed by other engines.
+// layouts and partials for other sections. Non-HTML files are ignored.
 //
 // Names are bare basenames in [DefaultSection] and section-qualified
 // elsewhere, without the extension.

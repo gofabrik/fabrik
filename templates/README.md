@@ -1,8 +1,6 @@
 # templates
 
-Sectioned HTML templates for Go with a **layout-by-section** model, built on
-`html/template`. Rendering writes to any `io.Writer` and does not set HTTP
-headers.
+Sectioned `html/template` templates for Go with a **layout-by-section** model.
 
 ## The model
 
@@ -31,7 +29,7 @@ A section without a layout uses `_default`'s; section partials shadow
 `public/status`.
 
 Every template requires a layout and defines `content`. Non-HTML files are
-ignored, so the same tree can hold files parsed by other engines.
+ignored.
 
 ## Usage
 
