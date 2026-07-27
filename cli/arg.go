@@ -35,11 +35,8 @@ func StringArg(name string) *Arg[string] {
 // IntArg declares a single-value int positional.
 func IntArg(name string) *Arg[int] {
 	return &Arg[int]{
-		name: name,
-		parse: func(s string) (int, error) {
-			v, err := strconv.ParseInt(s, 10, 64)
-			return int(v), err
-		},
+		name:  name,
+		parse: strconv.Atoi,
 	}
 }
 
