@@ -534,6 +534,11 @@ func (f *family) validateSiblingTokens() diag.Diagnostics {
 
 	aliases := map[string]map[string]token.Position{}
 	claimAlias := func(parent, alias string, pos token.Position) {
+		if parent == "" && (alias == "completion" || alias == "__complete") {
+			ds.Error(pos, fmt.Sprintf("root alias %q is reserved for CLI completion", alias),
+				"use a different alias; canonical commands may intentionally replace the generated completion commands")
+			return
+		}
 		if canonical[parent][alias] {
 			ds.Error(pos, fmt.Sprintf("alias %q collides with a sibling command or group", alias),
 				"the cli library requires sibling names and aliases to be unique")
