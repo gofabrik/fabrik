@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/gofabrik/fabrik/mail"
-	"github.com/gofabrik/fabrik/templates"
+	mailtemplates "github.com/gofabrik/fabrik/mail/templates"
 )
 
 // GreetingNotification is enqueued when a visitor leaves a greeting.
@@ -12,15 +12,22 @@ type GreetingNotification struct {
 	Name string `json:"name"`
 }
 
+// GreetingEmail is the template data for both greeting bodies.
+type GreetingEmail struct {
+	Name string
+}
+
 //fabrik:job
-func SendGreetingNotification(ctx context.Context, mailer Mailer, cfg *MailerConfig, set *templates.Set, n GreetingNotification) error {
-	msg := mail.Message{
+func SendGreetingNotification(ctx context.Context, mailer Mailer, cfg *MailerConfig, emailTemplates *mailtemplates.Renderer, n GreetingNotification) error {
+	content, err := emailTemplates.Render("greeting", GreetingEmail{Name: n.Name})
+	if err != nil {
+		return err
+	}
+	return mailer.Send(ctx, &mail.Message{
 		From:    cfg.From,
 		To:      []string{cfg.To},
 		Subject: "New greeting",
-	}
-	if err := msg.Render(set, "mail/greeting.txt", "mail/greeting", map[string]any{"Name": n.Name}); err != nil {
-		return err
-	}
-	return mailer.Send(ctx, &msg)
+		Text:    content.Text,
+		HTML:    content.HTML,
+	})
 }

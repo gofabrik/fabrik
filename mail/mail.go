@@ -2,19 +2,12 @@
 package mail
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"mime"
 	netmail "net/mail"
 	"strings"
 )
-
-// Renderer renders a named template to a writer.
-type Renderer interface {
-	Render(w io.Writer, template string, data any) error
-}
 
 // Attachment is a file attached to a message.
 type Attachment struct {
@@ -36,28 +29,6 @@ type Message struct {
 	Text        string // required plain-text body
 	HTML        string // optional HTML alternative
 	Attachments []Attachment
-}
-
-// Render fills Text and HTML atomically; an empty htmlTemplate leaves HTML empty.
-func (m *Message) Render(renderer Renderer, textTemplate, htmlTemplate string, data any) error {
-	if m == nil {
-		return fmt.Errorf("mail: render on nil message")
-	}
-	if renderer == nil {
-		return fmt.Errorf("mail: nil renderer")
-	}
-	var text, html bytes.Buffer
-	if err := renderer.Render(&text, textTemplate, data); err != nil {
-		return fmt.Errorf("mail: text body: %w", err)
-	}
-	if htmlTemplate != "" {
-		if err := renderer.Render(&html, htmlTemplate, data); err != nil {
-			return fmt.Errorf("mail: html body: %w", err)
-		}
-	}
-	m.Text = text.String()
-	m.HTML = html.String()
-	return nil
 }
 
 // Validate reports the first message validation error.

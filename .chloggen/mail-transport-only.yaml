@@ -1,0 +1,4 @@
+change_type: breaking
+component: mail
+note: Remove `Message.Render` and the `Renderer` interface; render bodies with `mail/templates` and set `Text` and `HTML` directly.
+issues: [0]

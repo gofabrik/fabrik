@@ -1,4 +1,0 @@
-{{ template "content" . }}
-
---
-The demo app
