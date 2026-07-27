@@ -83,6 +83,8 @@ type Validatable interface {
 	Validate() error
 }
 
+var errMultipleYAMLDocuments = errors.New("multiple YAML documents are not supported")
+
 // Load builds a *T from the configured layers. T must be a struct.
 func Load[T any](opts ...Option) (*T, error) {
 	var l loader
@@ -111,6 +113,9 @@ func Load[T any](opts ...Option) (*T, error) {
 				return nil, fmt.Errorf("config: read %s: %w", layer.path, err)
 			}
 		}
+		if err := checkSingleYAMLDocument(data); err != nil {
+			return nil, fmt.Errorf("config: parse %s: %w", layer.path, err)
+		}
 		if len(l.sections) > 0 {
 			if err := checkSections(data, l.sections); err != nil {
 				return nil, fmt.Errorf("config: %s: %w", layer.path, err)
@@ -129,12 +134,6 @@ func Load[T any](opts ...Option) (*T, error) {
 		dec := yaml.NewDecoder(bytes.NewReader(data))
 		dec.KnownFields(true) // reject unknown YAML keys
 		if err := dec.Decode(dst); err != nil && !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("config: parse %s: %w", layer.path, err)
-		}
-		var extra yaml.Node
-		if err := dec.Decode(&extra); err == nil {
-			return nil, fmt.Errorf("config: parse %s: multiple YAML documents are not supported", layer.path)
-		} else if !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("config: parse %s: %w", layer.path, err)
 		}
 	}
@@ -156,6 +155,24 @@ func Load[T any](opts ...Option) (*T, error) {
 		return nil, &LoadError{Problems: probs}
 	}
 	return dst, nil
+}
+
+func checkSingleYAMLDocument(data []byte) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var document yaml.Node
+	if err := dec.Decode(&document); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); err == nil {
+		return errMultipleYAMLDocuments
+	} else if !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 // checkSections rejects top-level keys outside the declared set.

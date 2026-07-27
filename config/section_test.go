@@ -50,6 +50,22 @@ func TestSectionMissingUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestSectionRejectsMultipleYAMLDocuments(t *testing.T) {
+	for _, yamlText := range []string{
+		"store:\n  kind: sqlite\n---\nstore:\n  kind: memory\n",
+		"http:\n  addr: :9090\n---\nstore:\n  kind: sqlite\n",
+	} {
+		path := writeYAML(t, yamlText)
+		_, err := config.Load[storeSection](config.File(path), config.Section("store"))
+		if err == nil {
+			t.Fatal("sectioned load accepted multiple YAML documents")
+		}
+		if !strings.Contains(err.Error(), "multiple YAML documents are not supported") {
+			t.Fatalf("error = %q, want multiple-document diagnostic", err)
+		}
+	}
+}
+
 func TestSectionRejectsUnknownKeysWithin(t *testing.T) {
 	path := writeYAML(t, "store:\n  kind: sqlite\n  typo: x\n")
 	if _, err := config.Load[storeSection](config.File(path), config.Section("store")); err == nil {
