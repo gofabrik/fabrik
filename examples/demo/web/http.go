@@ -1,7 +1,7 @@
 package web
 
 import (
-	"demo/shared"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"time"
 
-	"context"
+	"demo/shared"
 
 	"github.com/gofabrik/fabrik/cache"
 	"github.com/gofabrik/fabrik/flash"
@@ -275,9 +275,10 @@ func (f *Files) Upload(req *web.Request) (web.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
 	key := storage.UniqueKey("uploads", form.Data.File.ClientFilename())
-	if err := f.Store.Put(req.Context(), key, rc); err != nil {
+	putErr := f.Store.Put(req.Context(), key, rc)
+	closeErr := rc.Close()
+	if err := errors.Join(putErr, closeErr); err != nil {
 		return nil, err
 	}
 	return web.Redirect("/files"), nil
@@ -296,14 +297,20 @@ func (f *Files) Serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	defer rc.Close()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			slog.WarnContext(r.Context(), "file close failed", "key", key, "error", err)
+		}
+	}()
 	// Force downloads so untrusted uploads cannot render as same-origin content.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment")
 	rs, ok := rc.(io.ReadSeeker)
 	if !ok {
-		io.Copy(w, rc)
+		if _, err := io.Copy(w, rc); err != nil {
+			slog.DebugContext(r.Context(), "file response write failed", "key", key, "error", err)
+		}
 		return
 	}
 	// A zero modtime avoids a racy Stat of a potentially newer version.

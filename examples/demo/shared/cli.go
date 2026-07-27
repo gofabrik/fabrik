@@ -57,12 +57,12 @@ func Serve(ctx cli.Context, server *httpserver.Server) error {
 //fabrik:cli:flag name=dry-run short=n type=bool help="Print what would run without applying migrations."
 func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources, dryRun bool) error {
 	if dryRun {
-		fmt.Fprintln(ctx.Stdout(), "would apply pending migrations")
-		return nil
+		_, err := fmt.Fprintln(ctx.Stdout(), "would apply pending migrations")
+		return err
 	}
 	if err := src.Migrate(ctx, db, migrations.DialectSQLite); err != nil {
 		return err
 	}
-	fmt.Fprintln(ctx.Stdout(), "migrations applied")
-	return nil
+	_, err := fmt.Fprintln(ctx.Stdout(), "migrations applied")
+	return err
 }
