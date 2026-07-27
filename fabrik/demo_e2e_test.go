@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -130,6 +131,7 @@ END;`
 	if out, err := badArgs.CombinedOutput(); err == nil || !strings.Contains(string(out), "unexpected argument") {
 		t.Fatalf("unexpected positional accepted: err=%v\n%s", err, out)
 	}
+	// #nosec G703 -- cfgPath is inside the test-owned copied demo tree.
 	if err := os.WriteFile(cfgPath, goodCfg, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -178,9 +180,7 @@ END;`
 		if err != nil {
 			return -1, ""
 		}
-		b, _ := io.ReadAll(resp.Body)
-		//nolint:errcheck // response body close after reading is cleanup only
-		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+		b := readResponse(t, resp)
 		m := visitRE.FindStringSubmatch(string(b))
 		if m == nil {
 			return -1, string(b)
@@ -326,10 +326,7 @@ func waitServe(t *testing.T, url string) string {
 	for {
 		resp, err := http.Get(url) // #nosec G107 -- test requests a loopback URL constructed above
 		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			//nolint:errcheck // response body close after reading is cleanup only
-			resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
-			return string(body)
+			return string(readResponse(t, resp))
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("server did not answer at %s: %v", url, err)
@@ -344,10 +341,7 @@ func getBody(t *testing.T, url string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	//nolint:errcheck // response body close after reading is cleanup only
-	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
-	return string(body)
+	return string(readResponse(t, resp))
 }
 
 func getHeader(t *testing.T, url, name string) string {
@@ -356,9 +350,7 @@ func getHeader(t *testing.T, url, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//nolint:errcheck // response body close after reading is cleanup only
-	defer resp.Body.Close()        // #nosec G104 -- response body close after reading is cleanup only
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck // drain before close
+	drainResponse(t, resp)
 	return resp.Header.Get(name)
 }
 
@@ -371,9 +363,7 @@ func postGreetSetCookie(t *testing.T, base string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//nolint:errcheck // response body close after reading is cleanup only
-	defer resp.Body.Close()        // #nosec G104 -- response body close after reading is cleanup only
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck // drain before close
+	drainResponse(t, resp)
 	return resp.Header.Get("Set-Cookie")
 }
 
@@ -427,6 +417,7 @@ func developmentFlow(t *testing.T, src, bin, tmp string) {
 		t.Fatal(err)
 	}
 	edited := append(append([]byte{}, orig...), []byte("\nconsole.log(\"dev-edit\");\n")...)
+	// #nosec G703 -- jsPath is inside the test-owned copied demo tree.
 	if err := os.WriteFile(jsPath, edited, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -438,6 +429,7 @@ func developmentFlow(t *testing.T, src, bin, tmp string) {
 	if body := getBody(t, base+appJSAfter); !strings.Contains(body, "dev-edit") {
 		t.Fatalf("served asset does not carry the disk edit:\n%s", body)
 	}
+	// #nosec G703 -- jsPath is inside the test-owned copied demo tree.
 	if err := os.WriteFile(jsPath, orig, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -482,9 +474,7 @@ func fabrikRunFlow(t *testing.T, src, tmp string) {
 	for {
 		resp, err := http.Get(base + "/") // #nosec G107 -- test requests a loopback URL constructed above
 		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			//nolint:errcheck // response body close after reading is cleanup only
-			resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+			body := readResponse(t, resp)
 			csp := resp.Header.Get("Content-Security-Policy")
 			if !strings.Contains(csp, "'unsafe-inline'") {
 				t.Fatalf("fabrik run did not select the development environment: CSP %q", csp)
@@ -512,14 +502,17 @@ func filesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fw.Write([]byte("hello storage"))
-	mw.Close()
+	if _, err := fw.Write([]byte("hello storage")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	resp, err := http.Post(base+"/files", mw.FormDataContentType(), &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	drainResponse(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("upload: %d", resp.StatusCode)
 	}
@@ -528,8 +521,7 @@ func filesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listing, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	listing := readResponse(t, resp)
 	keyRE := regexp.MustCompile(`uploads/[0-9a-f]{32}-hello\.txt`)
 	key := keyRE.FindString(string(listing))
 	if key == "" {
@@ -540,20 +532,21 @@ func filesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body := readResponse(t, resp)
 	if string(body) != "hello storage" {
 		t.Fatalf("serve = %q", body)
 	}
 
-	req, _ := http.NewRequest("GET", base+"/files/"+key, nil)
+	req, err := http.NewRequest("GET", base+"/files/"+key, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.Header.Set("Range", "bytes=0-4")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body = readResponse(t, resp)
 	if resp.StatusCode != http.StatusPartialContent || string(body) != "hello" {
 		t.Fatalf("range: %d %q", resp.StatusCode, body)
 	}
@@ -563,15 +556,21 @@ func filesFlow(t *testing.T, base string) {
 
 	var odd bytes.Buffer
 	odw := multipart.NewWriter(&odd)
-	ofw2, _ := odw.CreateFormFile("file", "/")
-	ofw2.Write([]byte("fallback"))
-	odw.Close()
+	ofw2, err := odw.CreateFormFile("file", "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ofw2.Write([]byte("fallback")); err != nil {
+		t.Fatal(err)
+	}
+	if err := odw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	resp, err = http.Post(base+"/files", odw.FormDataContentType(), &odd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
-	resp.Body.Close()
+	drainResponse(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("fallback upload: %d", resp.StatusCode)
 	}
@@ -579,8 +578,7 @@ func filesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listing2, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	listing2 := readResponse(t, resp)
 	if !regexp.MustCompile(`uploads/[0-9a-f]{32}[^-0-9a-f]`).Match(listing2) {
 		t.Fatalf("no bare fallback key in listing:\n%s", listing2)
 	}
@@ -588,14 +586,17 @@ func filesFlow(t *testing.T, base string) {
 
 	var missing bytes.Buffer
 	mmw := multipart.NewWriter(&missing)
-	mmw.WriteField("unused", "1")
-	mmw.Close()
+	if err := mmw.WriteField("unused", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mmw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	resp, err = http.Post(base+"/files", mmw.FormDataContentType(), &missing)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body = readResponse(t, resp)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "choose a file") {
 		t.Fatalf("missing file: %d\n%s", resp.StatusCode, body)
 	}
@@ -603,8 +604,7 @@ func filesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listing3, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	listing3 := readResponse(t, resp)
 	if got := strings.Count(string(listing3), "uploads/"); got != storedBefore {
 		t.Fatalf("invalid submission changed stored keys: %d -> %d", storedBefore, got)
 	}
@@ -612,15 +612,21 @@ func filesFlow(t *testing.T, base string) {
 	huge := bytes.Repeat([]byte("x"), 9<<20)
 	var over bytes.Buffer
 	omw := multipart.NewWriter(&over)
-	ofw, _ := omw.CreateFormFile("file", "big.bin")
-	ofw.Write(huge)
-	omw.Close()
+	ofw, err := omw.CreateFormFile("file", "big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ofw.Write(huge); err != nil {
+		t.Fatal(err)
+	}
+	if err := omw.Close(); err != nil {
+		t.Fatal(err)
+	}
 	resp, err = http.Post(base+"/files", omw.FormDataContentType(), &over)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body = readResponse(t, resp)
 	if resp.StatusCode != http.StatusRequestEntityTooLarge || string(body) != "Request Entity Too Large\n" {
 		t.Fatalf("oversize: %d %q", resp.StatusCode, body)
 	}
@@ -628,8 +634,7 @@ func filesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	body = readResponse(t, resp)
 	if resp.StatusCode != http.StatusBadRequest || string(body) != "Bad Request\n" {
 		t.Fatalf("malformed multipart: %d %q", resp.StatusCode, body)
 	}
@@ -642,10 +647,28 @@ func filesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	drainResponse(t, resp)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("encoded traversal: %d, want the handler's 400 (CheckKey rejection)", resp.StatusCode)
+	}
+}
+
+func readResponse(t *testing.T, resp *http.Response) []byte {
+	t.Helper()
+	body, readErr := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		t.Fatalf("read HTTP response: %v", err)
+	}
+	return body
+}
+
+func drainResponse(t *testing.T, resp *http.Response) {
+	t.Helper()
+	_, copyErr := io.Copy(io.Discard, resp.Body)
+	closeErr := resp.Body.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		t.Fatalf("drain HTTP response: %v", err)
 	}
 }
 
@@ -670,8 +693,7 @@ func secureHeadersFlow(t *testing.T, base string) {
 	}
 	assertBaseline := func(kind string, resp *http.Response, wantStatus int) {
 		t.Helper()
-		defer resp.Body.Close()
-		io.Copy(io.Discard, resp.Body) //nolint:errcheck
+		drainResponse(t, resp)
 		if resp.StatusCode != wantStatus {
 			t.Fatalf("%s status = %d, want %d", kind, resp.StatusCode, wantStatus)
 		}
@@ -680,8 +702,7 @@ func secureHeadersFlow(t *testing.T, base string) {
 
 	home := fetch(http.MethodGet, base+"/", nil)
 	homeCSP := home.Header.Get("Content-Security-Policy")
-	body, _ := io.ReadAll(home.Body)
-	home.Body.Close() //nolint:errcheck
+	body := readResponse(t, home)
 	if home.StatusCode != http.StatusOK {
 		t.Fatalf("home status = %d", home.StatusCode)
 	}
@@ -723,8 +744,7 @@ func secureHeadersFlow(t *testing.T, base string) {
 		t.Fatalf("cannot find the app module URL in the page:\n%s", body)
 	}
 	appResp := fetch(http.MethodGet, base+appURL, nil)
-	appJS, _ := io.ReadAll(appResp.Body)
-	appResp.Body.Close() //nolint:errcheck
+	appJS := readResponse(t, appResp)
 	if !strings.Contains(string(appJS), "includeIndicatorStyles = false") {
 		t.Fatal("served app.js does not disable htmx indicator styles")
 	}
@@ -733,8 +753,7 @@ func secureHeadersFlow(t *testing.T, base string) {
 		t.Fatalf("no stylesheet link on home:\n%s", body)
 	}
 	cssResp := fetch(http.MethodGet, base+cssURL[1], nil)
-	css, _ := io.ReadAll(cssResp.Body)
-	cssResp.Body.Close() //nolint:errcheck
+	css := readResponse(t, cssResp)
 	// The stylesheet preserves htmx's indicator visibility transitions.
 	for _, rule := range []string{
 		".htmx-indicator",
@@ -758,8 +777,7 @@ func secureHeadersFlow(t *testing.T, base string) {
 	assertBaseline("redirect", redirect, http.StatusSeeOther)
 	// The uploaded file exercises storage serving rather than listing.
 	listing := fetch(http.MethodGet, base+"/files", nil)
-	listingBody, _ := io.ReadAll(listing.Body)
-	listing.Body.Close() //nolint:errcheck // response body close after reading is cleanup only
+	listingBody := readResponse(t, listing)
 	storedKey := regexp.MustCompile(`uploads/[0-9a-f]{32}-hello\.txt`).FindString(string(listingBody))
 	if storedKey == "" {
 		t.Fatalf("listing carries no stored upload for the header check:\n%s", listingBody)
@@ -809,9 +827,7 @@ func rateLimitFlow(t *testing.T, base string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		//nolint:errcheck // response body close after reading is cleanup only
-		defer resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
-		io.Copy(io.Discard, resp.Body)
+		drainResponse(t, resp)
 		return resp
 	}
 	var last *http.Response
@@ -855,8 +871,7 @@ func rateLimitFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//nolint:errcheck // response body close after reading is cleanup only
-	defer resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	drainResponse(t, resp)
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("RateLimit-Limit") != "" {
 		t.Fatalf("GET / status=%d headers=%v; must be unaffected", resp.StatusCode, resp.Header)
 	}
@@ -868,9 +883,7 @@ func errorPagesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := io.ReadAll(resp.Body)
-	//nolint:errcheck // response body close after reading is cleanup only
-	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	b := readResponse(t, resp)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing route status = %d, want 404", resp.StatusCode)
 	}
@@ -889,9 +902,7 @@ func errorPagesFlow(t *testing.T, base string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ = io.ReadAll(resp.Body)
-	//nolint:errcheck // response body close after reading is cleanup only
-	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	b = readResponse(t, resp)
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("DELETE / status = %d, want 405", resp.StatusCode)
 	}
@@ -982,8 +993,7 @@ func crossOriginFlow(t *testing.T, port string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		//nolint:errcheck // response body close after reading is cleanup only
-		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+		drainResponse(t, resp)
 		return resp.StatusCode
 	}
 
@@ -1025,9 +1035,7 @@ func formsFlow(t *testing.T, port string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, _ := io.ReadAll(resp.Body)
-		//nolint:errcheck // response body close after reading is cleanup only
-		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+		b := readResponse(t, resp)
 		return resp.StatusCode, string(b)
 	}
 
@@ -1045,8 +1053,7 @@ func formsFlow(t *testing.T, port string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//nolint:errcheck // response body close after reading is cleanup only
-	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	drainResponse(t, resp)
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 		t.Fatalf("valid name should 303 to /, got %d Location=%q", resp.StatusCode, resp.Header.Get("Location"))
 	}
@@ -1068,9 +1075,7 @@ func crossOriginGet(t *testing.T, client *http.Client, url, origin string) strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := io.ReadAll(resp.Body)
-	//nolint:errcheck // response body close after reading is cleanup only
-	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	b := readResponse(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s = %d:\n%s", url, resp.StatusCode, b)
 	}
@@ -1083,9 +1088,7 @@ func postGreet(t *testing.T, client *http.Client, base, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := io.ReadAll(resp.Body)
-	//nolint:errcheck // response body close after reading is cleanup only
-	resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
+	b := readResponse(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST /greet = %d:\n%s", resp.StatusCode, b)
 	}
@@ -1105,12 +1108,7 @@ func sessionFlow(t *testing.T, port string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := io.ReadAll(resp.Body)
-		//nolint:errcheck // response body close after reading is cleanup only
-		resp.Body.Close() // #nosec G104 -- response body close after reading is cleanup only
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
+		b := readResponse(t, resp)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET %s = %d:\n%s", path, resp.StatusCode, b)
 		}
