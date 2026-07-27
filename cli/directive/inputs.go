@@ -139,6 +139,16 @@ type cmdReg struct {
 	pos     token.Position
 }
 
+func (f *family) commandFunctionCount(fn string) int {
+	count := 0
+	for _, cmd := range f.commands {
+		if cmd.fn == fn {
+			count++
+		}
+	}
+	return count
+}
+
 // state isolates handle allocation between validation and rendering passes.
 func (f *family) state(g *gen.Gen) *genState {
 	st, ok := f.perGen[g]

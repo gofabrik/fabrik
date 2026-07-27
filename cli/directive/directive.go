@@ -349,7 +349,7 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return ds
 	}
 	pkgAlias := g.ImportPkg(nd.pkg)
-	scope := g.AddScope(commandScopeName(pkgAlias, nd.fn), nd.pos, depTypes...)
+	scope := g.AddScope(commandScopeName(pkgAlias, nd.fn, c.fam.commandFunctionCount(nd.fn) > 1), nd.pos, depTypes...)
 	g.AddCommandFunc(gen.CommandFunc{
 		Name:       nd.name,
 		Path:       nd.path,
@@ -484,7 +484,10 @@ func lowerFirst(s string) string {
 	return string(r)
 }
 
-func commandScopeName(pkgAlias, fn string) string {
+func commandScopeName(pkgAlias, fn string, qualify bool) string {
+	if !qualify {
+		return "build" + fn
+	}
 	r := []rune(pkgAlias)
 	r[0] = unicode.ToUpper(r[0])
 	return "build" + string(r) + fn

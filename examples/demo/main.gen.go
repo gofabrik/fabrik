@@ -48,7 +48,7 @@ func run() int {
 				Name: "config",
 				Help: "Print the resolved configuration",
 				Run: func(ctx cli.Context) (err error) {
-					httpConfig, databaseConfig, err := buildSharedConfig(ctx)
+					httpConfig, databaseConfig, err := buildConfig(ctx)
 					if err != nil {
 						return err
 					}
@@ -59,7 +59,7 @@ func run() int {
 				Name: "run",
 				Help: "Start the HTTP server and background worker",
 				Run: func(ctx cli.Context) (err error) {
-					server, runner, cleanup, err := buildSharedRun(ctx)
+					server, runner, cleanup, err := buildRun(ctx)
 					if err != nil {
 						return err
 					}
@@ -73,7 +73,7 @@ func run() int {
 				Name: "serve",
 				Help: "Start only the HTTP server",
 				Run: func(ctx cli.Context) (err error) {
-					server, cleanup, err := buildSharedServe(ctx)
+					server, cleanup, err := buildServe(ctx)
 					if err != nil {
 						return err
 					}
@@ -92,7 +92,7 @@ func run() int {
 						Help:  "Apply pending database migrations",
 						Flags: cli.Flags(migrateDryRun),
 						Run: func(ctx cli.Context) (err error) {
-							db, sources, cleanup, err := buildSharedMigrate(ctx)
+							db, sources, cleanup, err := buildMigrate(ctx)
 							if err != nil {
 								return err
 							}
@@ -109,7 +109,7 @@ func run() int {
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
-func buildSharedConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfig, error) {
+func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfig, error) {
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
@@ -156,7 +156,7 @@ func buildSharedConfig(ctx context.Context) (*shared.HTTPConfig, *shared.Databas
 	return sharedHTTPConfig, sharedDatabaseConfig, nil
 }
 
-func buildSharedRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() error, error) {
+func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() error, error) {
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
@@ -594,7 +594,7 @@ func buildSharedRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func
 	return httpserver.New(r, sharedHttpServer), jobs.NewRunner(jobsManager, sharedJobsRuntimeConfig), cleanup, nil
 }
 
-func buildSharedServe(ctx context.Context) (*httpserver.Server, func() error, error) {
+func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
@@ -1024,7 +1024,7 @@ func buildSharedServe(ctx context.Context) (*httpserver.Server, func() error, er
 	return httpserver.New(r, sharedHttpServer), cleanup, nil
 }
 
-func buildSharedMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func() error, error) {
+func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func() error, error) {
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {

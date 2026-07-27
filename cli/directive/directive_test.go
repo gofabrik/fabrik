@@ -98,8 +98,11 @@ func TestCommandScopeNameDisambiguatesPackages(t *testing.T) {
 	first := types.NewPackage("example.com/one/commands", "commands")
 	second := types.NewPackage("example.com/two/commands", "commands")
 
-	gotFirst := commandScopeName(g.ImportPkg(first), "List")
-	gotSecond := commandScopeName(g.ImportPkg(second), "List")
+	if got := commandScopeName(g.ImportPkg(first), "List", false); got != "buildList" {
+		t.Errorf("unique scope name = %q, want buildList", got)
+	}
+	gotFirst := commandScopeName(g.ImportPkg(first), "List", true)
+	gotSecond := commandScopeName(g.ImportPkg(second), "List", true)
 	if gotFirst != "buildCommandsList" {
 		t.Errorf("first scope name = %q, want buildCommandsList", gotFirst)
 	}
