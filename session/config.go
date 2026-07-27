@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -22,6 +23,9 @@ type Config struct {
 
 	// 0 means the package default; negative disables retries.
 	MaxRetries int
+
+	// Logger reports commit failures. Defaults to slog.Default().
+	Logger *slog.Logger
 
 	Now func() time.Time // nil means time.Now
 

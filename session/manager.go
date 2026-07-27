@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sync"
 	"time"
@@ -28,6 +29,9 @@ type managerKey struct{ _ byte }
 func newCore(cfg Config) (*core, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
 	}
 	m := &core{
 		cfg:        cfg,
