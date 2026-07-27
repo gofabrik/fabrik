@@ -1,0 +1,4 @@
+change_type: breaking
+component: templates
+note: Make the template set HTML-only; `.txt` templates, `_layout.txt`, `TextLayoutFile`, and `TextBody` are removed, and non-HTML files in a tree are ignored. Render email text bodies with `mail/templates`.
+issues: [0]

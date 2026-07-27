@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"time"
 
 	"context"
@@ -19,6 +20,7 @@ import (
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
 	"github.com/gofabrik/fabrik/storage"
+	"github.com/gofabrik/fabrik/templates"
 	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
 )
@@ -96,6 +98,30 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	}
 
 	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent, Flashes: flashes}), nil
+}
+
+// AboutPage is the about page's view model; it carries no template name.
+type AboutPage struct {
+	Started   time.Time
+	GoVersion string
+}
+
+//fabrik:web GET /about
+func (h *Handlers) About(req *web.Request) (web.Response, error) {
+	return web.Template("web/about", AboutPage{Started: started, GoVersion: runtime.Version()}), nil
+}
+
+// Status renders through the template set directly, without the web adapter.
+type Status struct {
+	Templates *templates.Set
+}
+
+//fabrik:http GET /uptime
+func (s *Status) Uptime(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.Templates.Render(w, "web/uptime", map[string]any{"Started": started}); err != nil {
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
 }
 
 //fabrik:http:group /api

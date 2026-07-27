@@ -284,6 +284,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		Templates: appTemplates,
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+	webStatus := &web.Status{
+		Templates: appTemplates,
+	}
 
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
@@ -561,6 +564,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	}
 
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
+	r.Method("GET", "/uptime", webStatus.Uptime)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
 	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update), greetlimitMW)
@@ -710,6 +715,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		Templates: appTemplates,
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+	webStatus := &web.Status{
+		Templates: appTemplates,
+	}
 
 	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
@@ -986,6 +994,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	}
 
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
+	r.Method("GET", "/uptime", webStatus.Uptime)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
 	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update), greetlimitMW)

@@ -1,0 +1,7 @@
+{{ define "title" }}Uptime{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Uptime</h1>
+  <p>Up for {{ humanizeAge .Started }}.</p>
+{{ end }}

@@ -61,8 +61,8 @@ func (*Templates) Meta() gen.Meta {
 			"startup into a `*templates.Set`, injectable into handler structs " +
 			"and providers. Templates live in sections; `_default` provides " +
 			"fallback layouts and partials. `dir=` names the subdirectory " +
-			"inside the FS. `*.html` files use html/template; `*.txt` files " +
-			"use text/template with an optional `_layout.txt`. Use `all:<dir>` so " +
+			"inside the FS. `*.html` files use html/template; non-HTML files " +
+			"are ignored. Use `all:<dir>` so " +
 			"layouts and `_`-prefixed partials are embedded. Several " +
 			"packages may declare trees: shared can own `_default` while " +
 			"each domain package ships its own section directories. A " +
