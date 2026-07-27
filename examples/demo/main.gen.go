@@ -410,6 +410,17 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		return nil, nil, nil, err
 	}
 
+	sharedMailtemplatesRenderer, err := shared.NewEmailTemplates()
+	if err != nil {
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, nil, err
+	}
+
 	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
 
 	sharedStorage, sharedStorageClose, err := shared.NewStorage(sharedStorageConfig)
@@ -498,7 +509,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		return nil, nil, nil, err
 	}
 	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
-		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
 	}); err != nil {
 		if sharedStorageClose != nil {
 			err = errors.Join(err, sharedStorageClose())
@@ -824,6 +835,17 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		return nil, nil, err
 	}
 
+	sharedMailtemplatesRenderer, err := shared.NewEmailTemplates()
+	if err != nil {
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, err
+	}
+
 	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
 
 	sharedStorage, sharedStorageClose, err := shared.NewStorage(sharedStorageConfig)
@@ -912,7 +934,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		return nil, nil, err
 	}
 	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
-		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, appTemplates, m)
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
 	}); err != nil {
 		if sharedStorageClose != nil {
 			err = errors.Join(err, sharedStorageClose())

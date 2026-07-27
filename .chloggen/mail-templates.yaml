@@ -1,0 +1,4 @@
+change_type: enhancement
+component: mail
+note: Add the `mail/templates` renderer, which loads paired `.txt` and `.html` templates from one tree and atomically renders both bodies of a message under one name.
+issues: [0]

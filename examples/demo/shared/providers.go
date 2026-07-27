@@ -14,6 +14,7 @@ import (
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/mail"
+	mailtemplates "github.com/gofabrik/fabrik/mail/templates"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
@@ -148,6 +149,11 @@ func (c MailerConfig) smtp() *mail.SMTP {
 		Password: c.Password,
 		TLSMode:  mail.TLSMode(c.TLSMode),
 	}
+}
+
+//fabrik:provider
+func NewEmailTemplates() (*mailtemplates.Renderer, error) {
+	return mailtemplates.Load(Templates, "templates/mail")
 }
 
 //fabrik:provider

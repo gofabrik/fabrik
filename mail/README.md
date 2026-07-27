@@ -1,25 +1,44 @@
 # mail
 
-The mail package composes template-rendered transactional email and delivers it
-through pluggable transports using only the standard library.
+The mail package delivers transactional email through pluggable transports
+using only the standard library. Rendering lives in the `mail/templates`
+package (imported as `mailtemplates`), which loads paired text and HTML bodies
+from one template tree.
 
 ## Composing
 
 ```go
+emailTemplates, err := mailtemplates.Load(templatesFS, "templates/mail")
+if err != nil {
+	return err
+}
+
+content, err := emailTemplates.Render("welcome", data)
+if err != nil {
+	return err
+}
+
 msg := mail.Message{
 	From:    "noreply@example.com",
 	To:      []string{"ada@example.com"},
 	Subject: "Welcome!",
-}
-if err := msg.Render(set, "mail/welcome.txt", "mail/welcome", data); err != nil {
-	return err
+	Text:    content.Text,
+	HTML:    content.HTML,
 }
 ```
 
-`Render` fills `Text` and `HTML` through a `Renderer`; `*templates.Set`
-implements that interface. An empty HTML template name produces text-only mail,
-and a render error leaves both fields unchanged. Callers may also set the body
-fields directly.
+A template's name is its dir-relative path without the extension: `welcome.txt`
+and `welcome.html` are both `welcome`, so one name renders both bodies. Text
+bodies use text/template; HTML bodies use html/template with contextual
+escaping. Files with a `_`-prefixed base name are shared partials, addressed by
+explicit `{{ template "_footer" . }}` calls. Every other `.html` file must have
+a `.txt` sibling, so a forgotten text body fails at `Load`, not at send time.
+
+`Render` fills both bodies atomically: each renders into a private buffer and
+`Content` is returned only when both succeed. `RenderText` renders the text
+body alone and leaves `HTML` empty; a message is text-only because the caller
+asks for text, not because a template is missing. Callers may also set the
+body fields directly.
 
 Address parts must be ASCII, so internationalized domains require punycode;
 display names may contain UTF-8. If `Message.ID` is set, retries can reuse it as

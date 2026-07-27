@@ -1,8 +1,6 @@
 package mail_test
 
 import (
-	"errors"
-	"io"
 	"strings"
 	"testing"
 
@@ -92,64 +90,5 @@ func TestValidate_NilMessage(t *testing.T) {
 	var m *mail.Message
 	if err := m.Validate(); err == nil {
 		t.Fatal("nil message must be an explicit error, not a panic")
-	}
-}
-
-type mapRenderer map[string]string
-
-func (r mapRenderer) Render(w io.Writer, template string, data any) error {
-	body, ok := r[template]
-	if !ok {
-		return errors.New("unknown template " + template)
-	}
-	_, err := io.WriteString(w, body)
-	return err
-}
-
-func TestRender_FillsBodies(t *testing.T) {
-	m := valid()
-	r := mapRenderer{"welcome.txt": "text body", "welcome": "<p>html</p>"}
-	if err := m.Render(r, "welcome.txt", "welcome", nil); err != nil {
-		t.Fatal(err)
-	}
-	if m.Text != "text body" || m.HTML != "<p>html</p>" {
-		t.Fatalf("bodies = %q / %q", m.Text, m.HTML)
-	}
-}
-
-func TestRender_TextOnly(t *testing.T) {
-	m := valid()
-	m.HTML = "stale"
-	if err := m.Render(mapRenderer{"welcome.txt": "text"}, "welcome.txt", "", nil); err != nil {
-		t.Fatal(err)
-	}
-	if m.Text != "text" || m.HTML != "" {
-		t.Fatalf("bodies = %q / %q; empty html template means text-only", m.Text, m.HTML)
-	}
-}
-
-func TestRender_FailureLeavesMessageUntouched(t *testing.T) {
-	m := valid()
-	m.Text, m.HTML = "keep-text", "keep-html"
-	r := mapRenderer{"welcome.txt": "new text"}
-	if err := m.Render(r, "welcome.txt", "missing", nil); err == nil {
-		t.Fatal("want error for failing html render")
-	}
-	if m.Text != "keep-text" || m.HTML != "keep-html" {
-		t.Fatalf("bodies = %q / %q; a failed render must not modify the message", m.Text, m.HTML)
-	}
-}
-
-func TestRender_NilInputs(t *testing.T) {
-	var nilMsg *mail.Message
-	if err := nilMsg.Render(mapRenderer{}, "a", "", nil); err == nil {
-		t.Error("nil receiver must error")
-	}
-	m := valid()
-	if err := m.Render(nil, "a", "", nil); err == nil {
-		t.Error("nil renderer must error")
-	}
-	if !strings.Contains(m.Text, "Hi!") {
-		t.Errorf("message modified by failed render: %q", m.Text)
 	}
 }
