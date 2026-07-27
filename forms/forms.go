@@ -21,6 +21,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reflect"
 
 	"github.com/gofabrik/fabrik/validation"
 )
@@ -88,6 +89,11 @@ func WithMaxMemory(n int64) Option { return func(c *config) { c.maxMemory = n } 
 // Bind decodes r into a Form[T], validating T if it implements
 // [validation.Validatable].
 func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
+	typ := reflect.TypeFor[T]()
+	if typ.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("forms: Bind[T]: T must be a struct, got %s", typ)
+	}
+
 	cfg := config{maxBytes: defaultMaxBytes, maxMemory: defaultMaxMemory}
 	for _, o := range opts {
 		o(&cfg)

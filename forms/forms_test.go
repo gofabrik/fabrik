@@ -131,6 +131,44 @@ func TestBind_Query(t *testing.T) {
 	}
 }
 
+func TestBind_RejectsNonStructRootTypes(t *testing.T) {
+	type input struct {
+		Name string
+	}
+	cases := []struct {
+		name string
+		bind func(*http.Request) error
+	}{
+		{
+			name: "scalar",
+			bind: func(r *http.Request) error {
+				_, err := forms.Bind[string](r)
+				return err
+			},
+		},
+		{
+			name: "pointer",
+			bind: func(r *http.Request) error {
+				_, err := forms.Bind[*input](r)
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{not json"))
+			r.Header.Set("Content-Type", "application/json")
+			err := tc.bind(r)
+			if err == nil || !strings.Contains(err.Error(), "forms: Bind[T]: T must be a struct") {
+				t.Fatalf("Bind error = %v, want unsupported root type", err)
+			}
+			if strings.Contains(err.Error(), "decode json") {
+				t.Fatalf("request was parsed before root validation: %v", err)
+			}
+		})
+	}
+}
+
 func TestBind_JSON(t *testing.T) {
 	type loginInput struct {
 		Email    string `json:"email"`
