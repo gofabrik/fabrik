@@ -19,13 +19,32 @@ type Host struct {
 	deferred []func(*gen.Gen) diag.Diagnostics
 	building map[any]bool
 	built    map[any]bool
+	demanded map[any]bool
+	epilogue map[*gen.Gen]bool
 }
 
 // NewHost bundles the routing state one generation run shares.
 func NewHost(groups *Group, routes *routeTable, mw *Middleware) *Host {
-	h := &Host{groups: groups, routes: routes, mw: mw, building: map[any]bool{}, built: map[any]bool{}}
+	h := &Host{
+		groups: groups, routes: routes, mw: mw,
+		building: map[any]bool{}, built: map[any]bool{},
+		demanded: map[any]bool{}, epilogue: map[*gen.Gen]bool{},
+	}
 	mw.host = h
 	return h
+}
+
+func (h *Host) replayDemandedRouterAfterScope(g *gen.Gen) {
+	if h.epilogue[g] {
+		return
+	}
+	h.epilogue[g] = true
+	g.ScopeEpilogue(func() diag.Diagnostics {
+		if !h.demanded[g.ScopeID()] {
+			return nil
+		}
+		return h.FinishBundle(g)
+	})
 }
 
 func (h *Host) record(fn func(*gen.Gen) diag.Diagnostics) {

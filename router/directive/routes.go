@@ -156,9 +156,11 @@ func (h *Host) registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 			continue
 		}
 		if !g.HasBinding(ft, "") {
-			// Replaying here would re-resolve the receiver and report a false cycle;
-			// FinishBundle provides the fallback.
+			// Replay after roots resolve so registrations can safely reference
+			// the receiver whose router field caused this fallback binding.
+			h.replayDemandedRouterAfterScope(g)
 			g.BindLazy(ft, "", func() (string, diag.Diagnostics) {
+				h.demanded[g.ScopeID()] = true
 				return g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"), nil
 			})
 		}

@@ -69,6 +69,7 @@ type Gen struct {
 	// treeOrder preserves arrival order: commands use positive indices, groups negative, and root zero.
 	treeOrder []int
 	prologues []func() diag.Diagnostics
+	epilogues []func() diag.Diagnostics
 
 	scopes      []*Scope
 	scope       *Scope          // active scope; nil uses default state

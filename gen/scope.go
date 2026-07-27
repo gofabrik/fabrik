@@ -67,6 +67,11 @@ func (g *Gen) ScopePrologue(fn func() diag.Diagnostics) {
 	g.prologues = append(g.prologues, fn)
 }
 
+// ScopeEpilogue registers a callback that runs after dependency resolution in every scope.
+func (g *Gen) ScopeEpilogue(fn func() diag.Diagnostics) {
+	g.epilogues = append(g.epilogues, fn)
+}
+
 func (g *Gen) enterScope(s *Scope, validation bool) {
 	s.idents = map[string]bool{}
 	for a := range g.aliasIdents {
@@ -107,6 +112,9 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 			s.rootExprs = append(s.rootExprs, expr)
 			s.resultTypes = append(s.resultTypes, g.TypeExpr(root))
 			s.zeros = append(s.zeros, zeroExpr(g, root))
+		}
+		for _, fn := range g.epilogues {
+			ds = append(ds, fn()...)
 		}
 		for _, n := range s.nodes {
 			if c, ok := n.(*Call); ok && c.Cleanup != "" {
@@ -161,6 +169,9 @@ func (g *Gen) RunValidationPass() diag.Diagnostics {
 	for _, p := range paths {
 		_, pds, _ := g.InstancePath(p)
 		ds = append(ds, pds...)
+	}
+	for _, fn := range g.epilogues {
+		ds = append(ds, fn()...)
 	}
 	return ds
 }
