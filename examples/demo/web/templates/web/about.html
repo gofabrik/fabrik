@@ -1,0 +1,7 @@
+{{ define "title" }}About{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>About</h1>
+  <p>Running {{ .GoVersion }}; up for {{ humanizeAge .Started }}.</p>
+{{ end }}

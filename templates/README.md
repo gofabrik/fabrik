@@ -1,14 +1,14 @@
 # templates
 
-Sectioned HTML and text templates for Go with a **layout-by-section** model.
-`*.html` files use `html/template`; `*.txt` files use `text/template`.
-Rendering writes to any `io.Writer` and does not set HTTP headers.
+Sectioned HTML templates for Go with a **layout-by-section** model, built on
+`html/template`. Rendering writes to any `io.Writer` and does not set HTTP
+headers.
 
 ## The model
 
-Templates live under section directories. Each section may declare layouts
-(`_layout.html`, `_layout.txt`) and partials (`_*.html`, `_*.txt`). The
-`_default` section provides fallback layouts and partials for each format.
+Templates live under section directories. Each section may declare a layout
+(`_layout.html`) and partials (`_*.html`). The `_default` section provides
+fallback layouts and partials for every other section.
 
 ```
 templates/
@@ -20,22 +20,18 @@ templates/
 ├── public/
 │   ├── _layout.html
 │   └── status.html
-└── mail/
-    ├── _layout.txt
-    ├── welcome.html
-    └── welcome.txt
+└── errors/
+    ├── 404.html
+    └── 405.html
 ```
 
 A section without a layout uses `_default`'s; section partials shadow
 `_default` partials with the same filename. Names are bare basenames in
-`_default` and section-qualified elsewhere. HTML names omit the extension;
-text names retain it, as in `mail/welcome.txt`.
+`_default` and section-qualified elsewhere, without the extension, as in
+`public/status`.
 
-HTML templates require a layout and define `content`. Each text file is a
-complete template body. A resolved `_layout.txt` wraps the body through
-`{{ template "content" . }}`; without one, the body renders directly. Text
-bodies cannot declare named templates; put `define` and `block` actions in
-partials.
+Every template requires a layout and defines `content`. Non-HTML files are
+ignored, so the same tree can hold files parsed by other engines.
 
 ## Usage
 
@@ -48,8 +44,7 @@ if err != nil {
 	log.Fatal(err)
 }
 
-var body bytes.Buffer
-if err := set.Render(&body, "mail/welcome.txt", data); err != nil {
+if err := set.Render(w, "public/status", data); err != nil {
 	log.Fatal(err)
 }
 ```
@@ -73,9 +68,7 @@ set, err := templates.Load(files, "templates", templates.FuncMap{
 })
 ```
 
-`FuncMap` aliases `html/template.FuncMap`. Both formats use the same functions.
-Trusted HTML value types render unescaped in text templates; use a
-string-returning helper for values intended for both formats.
+`FuncMap` aliases `html/template.FuncMap`.
 
 ## Multiple trees
 
@@ -95,7 +88,6 @@ in one tree can render through another tree's `_default` layout and partials.
 
 ## Errors
 
-Load rejects parse errors, unknown functions, duplicate names, HTML templates
-without a layout, and named definitions in text bodies. Parse errors identify
-the source file. `Render` returns lookup and execution errors without writing
-to the writer.
+Load rejects parse errors, unknown functions, and sections with templates but
+no resolvable layout. Parse errors identify the source file. `Render` returns
+lookup and execution errors without writing to the writer.

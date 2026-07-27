@@ -410,7 +410,7 @@ Positional arguments:
 
 **`//fabrik:templates [dir=templates]`**
 
-Declared on an exported `embed.FS` variable: the tree loads at startup into a `*templates.Set`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; `*.txt` files use text/template with an optional `_layout.txt`. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
+Declared on an exported `embed.FS` variable: the tree loads at startup into a `*templates.Set`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored, so the tree can also hold templates parsed by other engines. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
 
 ```go
 //fabrik:templates

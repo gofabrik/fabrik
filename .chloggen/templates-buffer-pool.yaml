@@ -1,0 +1,4 @@
+change_type: enhancement
+component: templates
+note: Pool render buffers, cutting allocated bytes per render by about a third.
+issues: [0]
