@@ -262,6 +262,89 @@ END;`
 	fabrikRunFlow(t, src, tmp)
 }
 
+func TestDemoCommandScopeIsolation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the demo binary; skipped under -short")
+	}
+	demoDir, err := filepath.Abs("../examples/demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wireCheck(demoDir); err != nil {
+		t.Fatalf("demo main.gen.go is stale: %v", err)
+	}
+	repoRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := copyDemoWithLocalReplaces(t, demoDir, repoRoot)
+	bin := filepath.Join(t.TempDir(), "demo-bin")
+	build := exec.Command("go", "build", "-o", bin, ".") // #nosec G204 -- builds the controlled demo fixture
+	build.Dir = src
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+
+	cfgPath := filepath.Join(src, "config.yaml")
+	run := func(args []string, env []string) ([]byte, error) {
+		t.Helper()
+		cmd := exec.Command(bin, args...) // #nosec G204 -- executes the controlled demo fixture
+		cmd.Dir = src
+		cmd.Env = env
+		return cmd.CombinedOutput()
+	}
+
+	if err := os.WriteFile(cfgPath, []byte("http: [broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	noIdentity := slices.DeleteFunc(slices.Clone(os.Environ()), func(kv string) bool {
+		return strings.HasPrefix(kv, "FABRIK_ENV=")
+	})
+	out, err := run([]string{"__complete", "--", ""}, noIdentity)
+	if err != nil || !strings.Contains(string(out), "database") {
+		t.Fatalf("completion with invalid config: err=%v\n%s", err, out)
+	}
+
+	baseEnv := slices.DeleteFunc(slices.Clone(os.Environ()), func(kv string) bool {
+		return strings.HasPrefix(kv, "FABRIK_ENV=") ||
+			strings.HasPrefix(kv, "DEMO_HTTP_ADDR=") ||
+			strings.HasPrefix(kv, "DEMO_JOBS_CONCURRENCY=")
+	})
+	baseEnv = append(baseEnv,
+		"FABRIK_ENV=production",
+		"DEMO_DATABASE_PATH="+filepath.Join(t.TempDir(), "scope.db"),
+	)
+	cases := []struct {
+		name, config, wantFailure string
+	}{
+		{
+			name:        "HTTP",
+			config:      "database:\n  path: ignored.db\nhttp:\n  addr: [invalid]\n",
+			wantFailure: "cannot unmarshal !!seq into string",
+		},
+		{
+			name:        "worker",
+			config:      "database:\n  path: ignored.db\nhttp:\n  addr: ':0'\njobs:\n  concurrency: invalid\n",
+			wantFailure: "cannot unmarshal !!str",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(cfgPath, []byte(tc.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := run([]string{"run"}, baseEnv); err == nil || !strings.Contains(strings.ToLower(string(out)), tc.wantFailure) {
+				t.Fatalf("run did not prove the %s dependency is invalid: err=%v\n%s", tc.name, err, out)
+			}
+			out, err := run([]string{"database", "migrate", "-n"}, baseEnv)
+			if err != nil || !strings.Contains(string(out), "would apply pending migrations") {
+				t.Fatalf("database migrate constructed the invalid %s dependency: err=%v\n%s", tc.name, err, out)
+			}
+		})
+	}
+}
+
 func withFabrikEnv(env []string, value string) []string {
 	return append(slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		return strings.HasPrefix(kv, "FABRIK_ENV=")

@@ -19,9 +19,15 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 
 	g := New()
 	g.SetModule("fixture")
-	pkg := typecheckScopePkg(t, "fixture/dep", "package dep\n\ntype Store struct{}\n\ntype Extra struct{}\n")
+	pkg := typecheckScopePkg(t, "fixture/dep", "package dep\n\ntype Store struct{}\n\ntype Extra struct{}\n\ntype Final struct{}\n")
 	storeT := types.NewPointer(pkg.Scope().Lookup("Store").Type())
 	extraT := types.NewPointer(pkg.Scope().Lookup("Extra").Type())
+	finalT := types.NewPointer(pkg.Scope().Lookup("Final").Type())
+
+	g.ScopePrologue(func() diag.Diagnostics {
+		g.Node(&Call{Base: Base{Phase: PhaseSetup}, Fn: "setup", Err: ErrInline})
+		return nil
+	})
 
 	g.BindLazy(storeT, "", func() (string, diag.Diagnostics) {
 		v := g.Var("store")
@@ -38,14 +44,28 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 	})
 	g.BindLazy(extraT, "", func() (string, diag.Diagnostics) {
 		v := g.Var("extra")
-		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: "newExtra", Err: ErrReturn})
+		c := g.Var(v + "Close")
+		g.Node(&Call{
+			Base:    Base{Phase: PhaseWire},
+			Var:     v,
+			Fn:      "newExtra",
+			Err:     ErrReturn,
+			Cleanup: c,
+		})
+		return v, nil
+	})
+	g.BindLazy(finalT, "", func() (string, diag.Diagnostics) {
+		v := g.Var("final")
+		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: "newFinal", Err: ErrReturn})
 		return v, nil
 	})
 
-	greet := g.AddScope("buildGreet", token.Position{}, storeT)
+	greet := g.AddScope("buildGreet", token.Position{}, storeT, extraT, finalT)
 	g.AddCommandFunc(CommandFunc{Name: "greet", Help: "Greet", Fn: "greet", Scope: greet, Pos: token.Position{}})
 	other := g.AddScope("buildOther", token.Position{}, extraT)
 	g.AddCommandFunc(CommandFunc{Name: "other", Fn: "other", Scope: other, Pos: token.Position{}})
+	version := g.AddScope("buildVersion", token.Position{})
+	g.AddCommandFunc(CommandFunc{Name: "version", Fn: "version", Scope: version, Pos: token.Position{}})
 
 	if ds := g.MaterializeScopes(); ds.HasFatal() {
 		t.Fatalf("MaterializeScopes: %v", ds)
@@ -71,7 +91,7 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 	write("main.gen.go", string(out))
 	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
 	write("support.go", fixtureSupport)
-	write("dep/dep.go", "package dep\n\ntype Store struct{}\n\ntype Extra struct{}\n")
+	write("dep/dep.go", "package dep\n\ntype Store struct{}\n\ntype Extra struct{}\n\ntype Final struct{}\n")
 	write("go.mod", "module fixture\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/cli v0.1.0\n\nreplace github.com/gofabrik/fabrik/cli => "+cliPath+"\n")
 
 	goEnv := append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
@@ -114,8 +134,8 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 		t.Errorf("__complete: code=%d stdout=%q stderr=%q", code, so, se)
 	}
 
-	if code, so, _ := run([]string{"greet"}); code != 0 || !strings.Contains(so, "hello store\nstore closed\n") {
-		t.Errorf("greet: code=%d stdout=%q (want hello then cleanup)", code, so)
+	if code, so, _ := run([]string{"greet"}); code != 0 || !strings.Contains(so, "setup\nhello store\nextra closed\nstore closed\n") {
+		t.Errorf("greet: code=%d stdout=%q (want setup, hello, then reverse cleanup)", code, so)
 	}
 
 	if code, _, se := run([]string{"other"}); code != 0 || strings.Contains(se, "CONSTRUCTED store") || !strings.Contains(se, "CONSTRUCTED extra") {
@@ -126,12 +146,26 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 		t.Errorf("FAIL_STORE greet: code=%d stdout=%q stderr=%q", code, so, se)
 	}
 
+	if code, so, se := run([]string{"greet"}, "FAIL_FINAL=1"); code != 1 ||
+		!strings.Contains(se, "fixture: final failed") ||
+		!strings.Contains(so, "extra closed\nstore closed\n") {
+		t.Errorf("FAIL_FINAL greet: code=%d stdout=%q stderr=%q (want reverse cleanup after later failure)", code, so, se)
+	}
+
 	if code, so, se := run([]string{"greet"}, "FAIL_CLOSE=1"); code != 1 || !strings.Contains(se, "fixture: close failed") || !strings.Contains(so, "hello store") {
 		t.Errorf("FAIL_CLOSE greet: code=%d stdout=%q stderr=%q (want cleanup error surfaced)", code, so, se)
 	}
 
 	if code, _, se := run([]string{"greet"}, "FORCE_CANCEL=1"); code != 130 || strings.Contains(se, "fixture:") {
 		t.Errorf("FORCE_CANCEL greet: code=%d stderr=%q (want exit 130, no error line)", code, se)
+	}
+
+	if code, so, se := run([]string{"version"}); code != 0 || so != "setup\nversion\n" || se != "" {
+		t.Errorf("version: code=%d stdout=%q stderr=%q (dependency-free command must run setup)", code, so, se)
+	}
+	if code, so, se := run([]string{"version"}, "FAIL_SETUP=1"); code != 1 ||
+		!strings.Contains(se, "fixture: setup failed") || strings.Contains(so, "version") {
+		t.Errorf("FAIL_SETUP version: code=%d stdout=%q stderr=%q", code, so, se)
 	}
 
 	if code, so, se := run([]string{}); code != 2 || !strings.Contains(so+se, "greet") {
@@ -172,17 +206,41 @@ func newStore(ctx context.Context) (*dep.Store, func() error, error) {
 	}, nil
 }
 
-func newExtra() (*dep.Extra, error) {
+func newExtra() (*dep.Extra, func() error, error) {
 	fmt.Fprintln(os.Stderr, "CONSTRUCTED extra")
-	return &dep.Extra{}, nil
+	return &dep.Extra{}, func() error {
+		fmt.Println("extra closed")
+		return nil
+	}, nil
 }
 
-func greet(ctx cli.Context, s *dep.Store) error {
+func newFinal() (*dep.Final, error) {
+	fmt.Fprintln(os.Stderr, "CONSTRUCTED final")
+	if os.Getenv("FAIL_FINAL") != "" {
+		return nil, errors.New("final failed")
+	}
+	return &dep.Final{}, nil
+}
+
+func setup() error {
+	fmt.Println("setup")
+	if os.Getenv("FAIL_SETUP") != "" {
+		return errors.New("setup failed")
+	}
+	return nil
+}
+
+func greet(ctx cli.Context, s *dep.Store, e *dep.Extra, f *dep.Final) error {
 	fmt.Fprintln(ctx.Stdout(), "hello store")
 	return nil
 }
 
 func other(ctx cli.Context, e *dep.Extra) error {
+	return nil
+}
+
+func version(ctx cli.Context) error {
+	fmt.Fprintln(ctx.Stdout(), "version")
 	return nil
 }
 `
