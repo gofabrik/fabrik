@@ -11,7 +11,11 @@ func TestPruneParentsSparesBlobAtParentPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close local storage: %v", err)
+		}
+	})
 	ctx := context.Background()
 	if err := s.Put(ctx, "a", strings.NewReader("blob")); err != nil {
 		t.Fatal(err)

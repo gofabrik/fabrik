@@ -29,7 +29,7 @@ type memBlob struct {
 func NewMemory() *Memory { return &Memory{m: map[string]memBlob{}, now: time.Now} }
 
 func (s *Memory) Put(ctx context.Context, key string, r io.Reader) error {
-	if err := opCheck("put", key, ctx); err != nil {
+	if err := opCheck(ctx, "put", key); err != nil {
 		return err
 	}
 	var buf bytes.Buffer
@@ -47,7 +47,7 @@ func (s *Memory) Put(ctx context.Context, key string, r io.Reader) error {
 }
 
 func (s *Memory) Open(ctx context.Context, key string) (io.ReadCloser, error) {
-	if err := opCheck("open", key, ctx); err != nil {
+	if err := opCheck(ctx, "open", key); err != nil {
 		return nil, err
 	}
 	s.mu.RLock()
@@ -65,7 +65,7 @@ type memReader struct{ *bytes.Reader }
 func (memReader) Close() error { return nil }
 
 func (s *Memory) Stat(ctx context.Context, key string) (Info, error) {
-	if err := opCheck("stat", key, ctx); err != nil {
+	if err := opCheck(ctx, "stat", key); err != nil {
 		return Info{}, err
 	}
 	s.mu.RLock()
@@ -78,7 +78,7 @@ func (s *Memory) Stat(ctx context.Context, key string) (Info, error) {
 }
 
 func (s *Memory) Delete(ctx context.Context, key string) error {
-	if err := opCheck("delete", key, ctx); err != nil {
+	if err := opCheck(ctx, "delete", key); err != nil {
 		return err
 	}
 	s.mu.Lock()

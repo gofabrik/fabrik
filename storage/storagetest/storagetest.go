@@ -49,11 +49,10 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rc.Close()
 		must(t, s.Put(ctx, "k", strings.NewReader("new")))
 		b, err := io.ReadAll(rc)
-		if err != nil {
-			t.Fatal(err)
+		if closeErr := rc.Close(); err != nil || closeErr != nil {
+			t.Fatalf("read old version: read error=%v close error=%v", err, closeErr)
 		}
 		if string(b) != "old" {
 			t.Fatalf("reader opened before overwrite read %q, want the version it opened", b)
@@ -150,7 +149,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 			if err := s.Delete(ctx, bad); err == nil {
 				t.Fatalf("Delete accepted %q", bad)
 			}
-			infos, errs := drainList(s, ctx, bad+"/")
+			infos, errs := drainList(ctx, s, bad+"/")
 			if len(infos) != 0 || len(errs) != 1 {
 				t.Fatalf("List(%q/): %d items, %d errors (want exactly one error)", bad, len(infos), len(errs))
 			}
@@ -174,7 +173,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 		if err := s.Delete(canceled, "k"); !errors.Is(err, context.Canceled) {
 			t.Fatalf("Delete: %v", err)
 		}
-		infos, errs := drainList(s, canceled, "")
+		infos, errs := drainList(canceled, s, "")
 		if len(infos) != 0 || len(errs) != 1 || !errors.Is(errs[0], context.Canceled) {
 			t.Fatalf("canceled List: %d items, errs %v (want exactly one canceled error)", len(infos), errs)
 		}
@@ -191,7 +190,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 		s := factory(t)
 		canceled, cancel := context.WithCancel(context.Background())
 		cancel()
-		infos, errs := drainList(s, canceled, "")
+		infos, errs := drainList(canceled, s, "")
 		if len(infos) != 0 || len(errs) != 1 || !errors.Is(errs[0], context.Canceled) {
 			t.Fatalf("canceled List on empty store: %d items, errs %v", len(infos), errs)
 		}
@@ -233,8 +232,8 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 				default:
 				}
 				r := io.MultiReader(strings.NewReader("x"), errReader{})
-				s.Put(ctx, "shared/failing", r)
-				s.Delete(ctx, "shared/failing")
+				_ = s.Put(ctx, "shared/failing", r)
+				_ = s.Delete(ctx, "shared/failing")
 			}
 		}()
 		for i := 0; i < 30; i++ {
@@ -285,7 +284,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 			if err != nil || info.Key != key {
 				t.Fatalf("Stat %q: %+v %v", key, info, err)
 			}
-			infos, errs := drainList(s, ctx, key)
+			infos, errs := drainList(ctx, s, key)
 			if len(errs) != 0 || len(infos) != 1 || infos[0].Key != key {
 				t.Fatalf("List(%q): %v items, errs %v (metacharacter prefixes must list)", key, infos, errs)
 			}
@@ -315,7 +314,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 
 	t.Run("InvalidListPrefixYieldsError", func(t *testing.T) {
 		s := factory(t)
-		infos, errs := drainList(s, ctx, "../up/")
+		infos, errs := drainList(ctx, s, "../up/")
 		if len(infos) != 0 || len(errs) != 1 {
 			t.Fatalf("invalid prefix: %d items, %d errors (want exactly one error, nothing else)", len(infos), len(errs))
 		}
@@ -383,7 +382,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				k := "c/" + string(rune('a'+i))
+				k := fmt.Sprintf("c/key-%02d", i)
 				if err := s.Put(ctx, k, strings.NewReader(k)); err != nil {
 					t.Error(err)
 					return
@@ -393,10 +392,10 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 					t.Error(err)
 					return
 				}
-				b, err := io.ReadAll(rc)
-				rc.Close()
-				if err != nil || string(b) != k {
-					t.Errorf("key %s = %q (%v)", k, b, err)
+				b, readErr := io.ReadAll(rc)
+				closeErr := rc.Close()
+				if readErr != nil || closeErr != nil || string(b) != k {
+					t.Errorf("key %s = %q (read error=%v close error=%v)", k, b, readErr, closeErr)
 				}
 			}(i)
 		}
@@ -405,7 +404,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 }
 
 // drainList consumes all yields, including trailing errors.
-func drainList(s storage.Storage, ctx context.Context, prefix string) (infos []storage.Info, errs []error) {
+func drainList(ctx context.Context, s storage.Storage, prefix string) (infos []storage.Info, errs []error) {
 	for info, err := range s.List(ctx, prefix) {
 		if err != nil {
 			errs = append(errs, err)
@@ -448,10 +447,9 @@ func read(t *testing.T, s storage.Storage, key string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
 	b, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatal(err)
+	if closeErr := rc.Close(); err != nil || closeErr != nil {
+		t.Fatalf("read %q: read error=%v close error=%v", key, err, closeErr)
 	}
 	return string(b)
 }

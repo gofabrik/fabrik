@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -110,8 +111,8 @@ func (s *S3) do(ctx context.Context, method, rawurl string, body io.Reader, payl
 	return s.client.Do(req)
 }
 
-func (s *S3) Put(ctx context.Context, key string, r io.Reader) error {
-	if err := opCheck("put", key, ctx); err != nil {
+func (s *S3) Put(ctx context.Context, key string, r io.Reader) (retErr error) {
+	if err := opCheck(ctx, "put", key); err != nil {
 		return err
 	}
 	// S3 PutObject requires Content-Length, so unknown-length readers spool to disk.
@@ -119,7 +120,11 @@ func (s *S3) Put(ctx context.Context, key string, r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("storage: put %q: %w", key, err)
 	}
-	defer cleanup()
+	defer func() {
+		if err := cleanup(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("storage: put %q: clean up request body: %w", key, err))
+		}
+	}()
 	if length == 0 {
 		// NoBody preserves explicit zero-length framing in net/http.
 		body = http.NoBody
@@ -134,15 +139,17 @@ func (s *S3) Put(ctx context.Context, key string, r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("storage: put %q: %w", key, err)
 	}
-	defer drain(resp)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("storage: put %q: s3 status %d", key, resp.StatusCode)
+		return errors.Join(
+			fmt.Errorf("storage: put %q: s3 status %d", key, resp.StatusCode),
+			drainFor("put", key, resp),
+		)
 	}
-	return nil
+	return drainFor("put", key, resp)
 }
 
 func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
-	if err := opCheck("open", key, ctx); err != nil {
+	if err := opCheck(ctx, "open", key); err != nil {
 		return nil, err
 	}
 	resp, err := s.do(ctx, "GET", s.objectURL(key), nil, emptyPayloadSHA)
@@ -150,48 +157,63 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("storage: open %q: %w", key, err)
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		drain(resp)
-		return nil, fmt.Errorf("storage: open %q: %w", key, ErrNotExist)
+		return nil, errors.Join(
+			fmt.Errorf("storage: open %q: %w", key, ErrNotExist),
+			drainFor("open", key, resp),
+		)
 	}
 	if resp.StatusCode != http.StatusOK {
-		drain(resp)
-		return nil, fmt.Errorf("storage: open %q: s3 status %d", key, resp.StatusCode)
+		return nil, errors.Join(
+			fmt.Errorf("storage: open %q: s3 status %d", key, resp.StatusCode),
+			drainFor("open", key, resp),
+		)
 	}
 	return resp.Body, nil
 }
 
 func (s *S3) Stat(ctx context.Context, key string) (Info, error) {
-	if err := opCheck("stat", key, ctx); err != nil {
+	if err := opCheck(ctx, "stat", key); err != nil {
 		return Info{}, err
 	}
 	resp, err := s.do(ctx, "HEAD", s.objectURL(key), nil, emptyPayloadSHA)
 	if err != nil {
 		return Info{}, fmt.Errorf("storage: stat %q: %w", key, err)
 	}
-	defer drain(resp)
 	if resp.StatusCode == http.StatusNotFound {
-		return Info{}, fmt.Errorf("storage: stat %q: %w", key, ErrNotExist)
+		return Info{}, errors.Join(
+			fmt.Errorf("storage: stat %q: %w", key, ErrNotExist),
+			drainFor("stat", key, resp),
+		)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Info{}, fmt.Errorf("storage: stat %q: s3 status %d", key, resp.StatusCode)
+		return Info{}, errors.Join(
+			fmt.Errorf("storage: stat %q: s3 status %d", key, resp.StatusCode),
+			drainFor("stat", key, resp),
+		)
 	}
 	mod, _ := http.ParseTime(resp.Header.Get("Last-Modified"))
-	return Info{Key: key, Size: resp.ContentLength, ModTime: mod}, nil
+	info := Info{Key: key, Size: resp.ContentLength, ModTime: mod}
+	if err := drainFor("stat", key, resp); err != nil {
+		return Info{}, err
+	}
+	return info, nil
 }
 
 func (s *S3) Delete(ctx context.Context, key string) error {
-	if err := opCheck("delete", key, ctx); err != nil {
+	if err := opCheck(ctx, "delete", key); err != nil {
 		return err
 	}
 	resp, err := s.do(ctx, "DELETE", s.objectURL(key), nil, emptyPayloadSHA)
 	if err != nil {
 		return fmt.Errorf("storage: delete %q: %w", key, err)
 	}
-	defer drain(resp)
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("storage: delete %q: s3 status %d", key, resp.StatusCode)
+		return errors.Join(
+			fmt.Errorf("storage: delete %q: s3 status %d", key, resp.StatusCode),
+			drainFor("delete", key, resp),
+		)
 	}
-	return nil
+	return drainFor("delete", key, resp)
 }
 
 type listResult struct {
@@ -230,13 +252,16 @@ func (s *S3) List(ctx context.Context, prefix string) iter.Seq2[Info, error] {
 				return
 			}
 			if resp.StatusCode != http.StatusOK {
-				drain(resp)
-				yield(Info{}, fmt.Errorf("storage: list %q: s3 status %d", prefix, resp.StatusCode))
+				err := errors.Join(
+					fmt.Errorf("storage: list %q: s3 status %d", prefix, resp.StatusCode),
+					drainFor("list", prefix, resp),
+				)
+				yield(Info{}, err)
 				return
 			}
 			var lr listResult
 			err = xml.NewDecoder(resp.Body).Decode(&lr)
-			resp.Body.Close()
+			err = errors.Join(err, drainFor("list", prefix, resp))
 			if err != nil {
 				yield(Info{}, fmt.Errorf("storage: list %q: %w", prefix, err))
 				return
@@ -258,9 +283,13 @@ func (s *S3) List(ctx context.Context, prefix string) iter.Seq2[Info, error] {
 	}
 }
 
-func drain(resp *http.Response) {
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+func drainFor(op, key string, resp *http.Response) error {
+	_, copyErr := io.Copy(io.Discard, resp.Body)
+	closeErr := resp.Body.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return fmt.Errorf("storage: %s %q: release response: %w", op, key, err)
+	}
+	return nil
 }
 
 // CreateBucket provisions the bucket, treating BucketAlreadyOwnedByYou as
@@ -278,18 +307,22 @@ func (s *S3) CreateBucket(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("storage: create bucket: %w", err)
 	}
-	defer drain(resp)
 	if resp.StatusCode == http.StatusOK {
-		return nil
+		return drainFor("create bucket", s.bucket, resp)
 	}
 	if resp.StatusCode == http.StatusConflict {
 		var e struct{ Code string }
-		if xml.NewDecoder(resp.Body).Decode(&e) == nil && e.Code == "BucketAlreadyOwnedByYou" {
-			return nil
+		decodeErr := xml.NewDecoder(resp.Body).Decode(&e)
+		drainErr := drainFor("create bucket", s.bucket, resp)
+		if decodeErr == nil && e.Code == "BucketAlreadyOwnedByYou" {
+			return drainErr
 		}
-		return fmt.Errorf("storage: create bucket: conflict %s", s.bucket)
+		return errors.Join(fmt.Errorf("storage: create bucket: conflict %s", s.bucket), drainErr)
 	}
-	return fmt.Errorf("storage: create bucket: s3 status %d", resp.StatusCode)
+	return errors.Join(
+		fmt.Errorf("storage: create bucket: s3 status %d", resp.StatusCode),
+		drainFor("create bucket", s.bucket, resp),
+	)
 }
 
 // validBucket applies the portable subset of S3 bucket naming rules.
@@ -339,8 +372,8 @@ func isIPv4Shaped(b string) bool {
 
 // knownLength returns a non-closing body, length, and cleanup function,
 // spooling unknown-length readers.
-func knownLength(ctx context.Context, r io.Reader) (io.Reader, int64, func(), error) {
-	none := func() {}
+func knownLength(ctx context.Context, r io.Reader) (io.Reader, int64, func() error, error) {
+	none := func() error { return nil }
 	switch v := r.(type) {
 	case *bytes.Reader:
 		return noClose{r}, int64(v.Len()), none, nil
@@ -359,22 +392,18 @@ func knownLength(ctx context.Context, r io.Reader) (io.Reader, int64, func(), er
 	if err != nil {
 		return nil, 0, none, err
 	}
-	cleanup := func() {
-		spool.Close()
-		os.Remove(spool.Name())
+	cleanup := func() error {
+		return errors.Join(spool.Close(), os.Remove(spool.Name()))
 	}
 	if err := copyChunks(ctx, spool, r); err != nil {
-		cleanup()
-		return nil, 0, none, err
+		return nil, 0, none, errors.Join(err, cleanup())
 	}
 	length, err := spool.Seek(0, io.SeekCurrent)
 	if err != nil {
-		cleanup()
-		return nil, 0, none, err
+		return nil, 0, none, errors.Join(err, cleanup())
 	}
 	if _, err := spool.Seek(0, io.SeekStart); err != nil {
-		cleanup()
-		return nil, 0, none, err
+		return nil, 0, none, errors.Join(err, cleanup())
 	}
 	return noClose{spool}, length, cleanup, nil
 }
