@@ -153,7 +153,7 @@ func (c MailerConfig) smtp() *mail.SMTP {
 
 //fabrik:provider
 func NewEmailTemplates() (*mailtemplates.Renderer, error) {
-	return mailtemplates.Load(Templates, "templates/mail")
+	return mailtemplates.Load(MailTemplates, "mailtemplates")
 }
 
 //fabrik:provider
