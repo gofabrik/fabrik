@@ -86,7 +86,7 @@ func (s Spec) next(t time.Time, loc *time.Location) (time.Time, error) {
 type ScheduleOptions struct {
 	Queue       string        `json:"queue,omitempty"`
 	Priority    int           `json:"priority,omitempty"`
-	MaxAttempts int           `json:"max_attempts,omitempty"`
+	MaxAttempts int           `json:"max_attempts,omitempty"` // total executions; 0 uses the manager default
 	Timeout     time.Duration `json:"timeout,omitempty"`
 	OnTimeout   OnTimeout     `json:"on_timeout,omitempty"`
 	Singleton   bool          `json:"singleton,omitempty"`

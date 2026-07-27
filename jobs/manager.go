@@ -23,8 +23,8 @@ type Config struct {
 	// DefaultBackoff drives retries when a job has no serializable
 	// per-job override. May be any [Backoff]. Defaults to [DefaultBackoff].
 	DefaultBackoff Backoff
-	// DefaultMaxAttempts is the retry cap when an enqueue names none.
-	// Defaults to 25.
+	// DefaultMaxAttempts caps total executions, including the first run.
+	// Zero selects the package default of 25.
 	DefaultMaxAttempts int
 	// Hooks attach observability. Nil fields are skipped.
 	Hooks Hooks
@@ -266,7 +266,8 @@ func Queue(name string) Option { return func(o *jobOpts) { o.queue = name } }
 // Priority sets the claim priority (higher is claimed first).
 func Priority(p int) Option { return func(o *jobOpts) { o.priority = p } }
 
-// MaxAttempts caps the number of runs.
+// MaxAttempts caps total executions, including the first run. Zero uses the
+// manager's DefaultMaxAttempts.
 func MaxAttempts(n int) Option { return func(o *jobOpts) { o.maxAttempts = n } }
 
 // WithBackoff sets a per-job backoff override (must be serializable).
