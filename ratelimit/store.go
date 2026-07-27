@@ -12,5 +12,5 @@ import (
 type Store interface {
 	Get(ctx context.Context, key string, now time.Time) (value int64, exists bool, err error)
 	SetIfAbsent(ctx context.Context, key string, value int64, now, expiresAt time.Time) (ok bool, err error)
-	CompareAndSwap(ctx context.Context, key string, old, new int64, now, expiresAt time.Time) (ok bool, err error)
+	CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (ok bool, err error)
 }

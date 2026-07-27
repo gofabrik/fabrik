@@ -45,14 +45,14 @@ func (s *MemoryStore) SetIfAbsent(ctx context.Context, key string, value int64, 
 	return true, nil
 }
 
-func (s *MemoryStore) CompareAndSwap(ctx context.Context, key string, old, new int64, now, expiresAt time.Time) (bool, error) {
+func (s *MemoryStore) CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.m[key]
 	if !ok || !e.expiresAt.After(now) || e.value != old {
 		return false, nil
 	}
-	s.m[key] = memEntry{value: new, expiresAt: expiresAt}
+	s.m[key] = memEntry{value: newValue, expiresAt: expiresAt}
 	return true, nil
 }
 

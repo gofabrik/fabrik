@@ -101,9 +101,9 @@ func (s *spyStore) SetIfAbsent(ctx context.Context, key string, value int64, now
 	return s.Store.SetIfAbsent(ctx, key, value, now, expiresAt)
 }
 
-func (s *spyStore) CompareAndSwap(ctx context.Context, key string, old, new int64, now, expiresAt time.Time) (bool, error) {
+func (s *spyStore) CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (bool, error) {
 	atomic.AddInt32(&s.writes, 1)
-	return s.Store.CompareAndSwap(ctx, key, old, new, now, expiresAt)
+	return s.Store.CompareAndSwap(ctx, key, old, newValue, now, expiresAt)
 }
 
 // losingStore forces CAS conflicts and signals after the first write attempt.
@@ -122,7 +122,7 @@ func (s *losingStore) SetIfAbsent(ctx context.Context, key string, value int64, 
 	return false, nil
 }
 
-func (s *losingStore) CompareAndSwap(ctx context.Context, key string, old, new int64, now, expiresAt time.Time) (bool, error) {
+func (s *losingStore) CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (bool, error) {
 	s.signal()
 	return false, nil
 }
@@ -231,8 +231,12 @@ func TestReserve_SpacingAndHorizon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cappedSpy.Reserve(ctx, "k")
-	cappedSpy.Reserve(ctx, "k")
+	if _, err := cappedSpy.Reserve(ctx, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cappedSpy.Reserve(ctx, "k"); err != nil {
+		t.Fatal(err)
+	}
 	writesBefore := atomic.LoadInt32(&spy.writes)
 	if _, err := cappedSpy.Reserve(ctx, "k"); err == nil {
 		t.Fatal("reservation beyond the horizon accepted")
@@ -271,7 +275,10 @@ func TestWait(t *testing.T) {
 		t.Error("Wait for a past-or-now ReadyAt must return immediately under an injected clock")
 	}
 
-	future, _ := lim.Reserve(ctx, "past")
+	future, err := lim.Reserve(ctx, "past")
+	if err != nil {
+		t.Fatal(err)
+	}
 	cctx, cancel := context.WithCancel(ctx)
 	go cancel()
 	if err := lim.Wait(cctx, future); !errors.Is(err, context.Canceled) {

@@ -271,9 +271,6 @@ func (l *Limiter) admit(ctx context.Context, key string, n int, reserve bool) (R
 		if !ok {
 			continue
 		}
-		if wait < 0 {
-			wait = 0
-		}
 		return Result{
 			Allowed:    true,
 			Limit:      l.limit.capacity(),
