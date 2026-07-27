@@ -267,7 +267,7 @@ func TestRenderNestedCommandPaths(t *testing.T) {
 	migrate := strings.Index(src, `Name: "migrate",`)
 	reset := strings.Index(src, `Name: "reset",`)
 	jobs := strings.Index(src, `Name: "jobs",`)
-	if !(status < database && database < migrate && migrate < reset && reset < jobs) {
+	if status >= database || database >= migrate || migrate >= reset || reset >= jobs {
 		t.Errorf("sibling order must follow first contribution: status=%d database=%d migrate=%d reset=%d jobs=%d\n%s",
 			status, database, migrate, reset, jobs, src)
 	}
@@ -278,7 +278,7 @@ func TestRenderNestedCommandPaths(t *testing.T) {
 		t.Errorf("status must appear under root and under jobs:\n%s", src)
 	}
 	dbRun := strings.Index(src, "app.Database(ctx)")
-	if !(database < migrate && migrate < reset && reset < dbRun) {
+	if database >= migrate || migrate >= reset || reset >= dbRun {
 		t.Errorf("database children must render inside the database node before its Run: db=%d migrate=%d reset=%d dbRun=%d", database, migrate, reset, dbRun)
 	}
 	tree := buildCommandTree(g.commandFuncs, nil, nil)

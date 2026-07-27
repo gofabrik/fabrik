@@ -163,10 +163,11 @@ func TestScopeWithoutCleanupOmitsSlot(t *testing.T) {
 	g.AddScope("buildFlags", token.Position{}, flags)
 	src := renderScopes(t, g)
 
-	if !strings.Contains(src, "func buildFlags(ctx context.Context) (*flag.Flags, error) {") {
+	buildFlags := strings.Index(src, "func buildFlags(ctx context.Context) (*flag.Flags, error) {")
+	if buildFlags < 0 {
 		t.Fatalf("cleanup-free scope should omit the cleanup slot:\n%s", src)
 	}
-	if strings.Contains(src, "buildFlags") && strings.Contains(src[strings.Index(src, "buildFlags"):], "cleanup :=") {
+	if strings.Contains(src[buildFlags:], "cleanup :=") {
 		t.Fatalf("cleanup composed in a cleanup-free scope:\n%s", src)
 	}
 }
