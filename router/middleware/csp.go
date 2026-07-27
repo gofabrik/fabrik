@@ -49,7 +49,7 @@ const (
 	CSPSelf           = "'self'"
 	CSPUnsafeInline   = "'unsafe-inline'"
 	CSPUnsafeEval     = "'unsafe-eval'"
-	CSPWasmUnsafeEval = "'wasm-unsafe-eval'"
+	CSPWasmUnsafeEval = "'wasm-unsafe-eval'" // #nosec G101 -- standardized CSP keyword, not a credential
 	CSPStrictDynamic  = "'strict-dynamic'"
 	CSPReportSample   = "'report-sample'"
 	CSPUnsafeHashes   = "'unsafe-hashes'"
@@ -127,7 +127,7 @@ func serializeCSP(policy *CSP) string {
 		if sources == nil {
 			sources = d.field(&cspBaseline)
 		}
-		if sources == nil || len(sources) == 0 {
+		if len(sources) == 0 {
 			continue
 		}
 		validateCSPSources(d.name, sources)
