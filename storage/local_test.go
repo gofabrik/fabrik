@@ -23,7 +23,11 @@ func TestLocalListYieldsNonNotExistErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close local storage: %v", err)
+		}
+	})
 	ctx := context.Background()
 	if err := s.Put(ctx, "sub/blob", strings.NewReader("x")); err != nil {
 		t.Fatal(err)
@@ -31,7 +35,11 @@ func TestLocalListYieldsNonNotExistErrors(t *testing.T) {
 	if err := os.Chmod(filepath.Join(dir, "sub"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(filepath.Join(dir, "sub"), 0o755) })
+	t.Cleanup(func() {
+		if err := os.Chmod(filepath.Join(dir, "sub"), 0o755); err != nil {
+			t.Errorf("restore directory permissions: %v", err)
+		}
+	})
 
 	var infos, errCount int
 	var sawErr error

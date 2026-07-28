@@ -15,7 +15,7 @@ func TestSigV4AWSDocVector(t *testing.T) {
 	req.Header.Set("Range", "bytes=0-9")
 	creds := credentials{
 		accessKey: "AKIAIOSFODNN7EXAMPLE",
-		secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", // #nosec G101 -- public AWS documentation test vector
 		region:    "us-east-1",
 	}
 	at := time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC)

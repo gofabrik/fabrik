@@ -163,10 +163,11 @@ func TestScopeWithoutCleanupOmitsSlot(t *testing.T) {
 	g.AddScope("buildFlags", token.Position{}, flags)
 	src := renderScopes(t, g)
 
-	if !strings.Contains(src, "func buildFlags(ctx context.Context) (*flag.Flags, error) {") {
+	buildFlags := strings.Index(src, "func buildFlags(ctx context.Context) (*flag.Flags, error) {")
+	if buildFlags < 0 {
 		t.Fatalf("cleanup-free scope should omit the cleanup slot:\n%s", src)
 	}
-	if strings.Contains(src, "buildFlags") && strings.Contains(src[strings.Index(src, "buildFlags"):], "cleanup :=") {
+	if strings.Contains(src[buildFlags:], "cleanup :=") {
 		t.Fatalf("cleanup composed in a cleanup-free scope:\n%s", src)
 	}
 }
@@ -223,6 +224,24 @@ func TestValidationPassReportsDiagnostics(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("diagnostics = %v, want the provider error surfaced", ds)
+	}
+}
+
+func TestValidationPassReportsLazyBindingPanic(t *testing.T) {
+	g := New()
+	g.SetDirective("test:provider")
+	g.BindLazy(types.Typ[types.Int], "", func() (string, diag.Diagnostics) {
+		panic("duplicate bind")
+	})
+
+	ds := g.RunValidationPass()
+	if !ds.HasFatal() || len(ds) != 1 {
+		t.Fatalf("validation pass diagnostics = %v, want one fatal diagnostic", ds)
+	}
+	for _, want := range []string{`directive "test:provider"`, "duplicate bind"} {
+		if !strings.Contains(ds[0].Message, want) {
+			t.Errorf("diagnostic %q missing %q", ds[0].Message, want)
+		}
 	}
 }
 

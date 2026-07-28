@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	netmail "net/mail"
@@ -88,7 +89,9 @@ func (s *SMTP) Send(ctx context.Context, m *Message) error {
 		return fmt.Errorf("mail: dial %s: %w", s.Addr, err)
 	}
 	// Closing the connection makes context cancellation interrupt net/smtp I/O.
-	stop := context.AfterFunc(ctx, func() { rawConn.Close() })
+	stop := context.AfterFunc(ctx, func() {
+		_ = rawConn.Close()
+	})
 	defer stop()
 	wrap := func(err error) error {
 		if ctx.Err() != nil {
@@ -99,8 +102,7 @@ func (s *SMTP) Send(ctx context.Context, m *Message) error {
 
 	host, _, err := net.SplitHostPort(s.Addr)
 	if err != nil {
-		rawConn.Close()
-		return wrap(err)
+		return wrap(errors.Join(err, rawConn.Close()))
 	}
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if s.TLSConfig != nil {
@@ -118,7 +120,9 @@ func (s *SMTP) Send(ctx context.Context, m *Message) error {
 	if err != nil {
 		return wrap(err)
 	}
-	defer c.Close()
+	defer func() {
+		_ = c.Close()
+	}()
 
 	if s.TLSMode == TLSModeSTARTTLS || s.TLSMode == "starttls" {
 		if ok, _ := c.Extension("STARTTLS"); !ok {
@@ -152,7 +156,7 @@ func (s *SMTP) Send(ctx context.Context, m *Message) error {
 		return wrap(err)
 	}
 	// DATA acceptance commits delivery, so QUIT errors are ignored.
-	c.Quit()
+	_ = c.Quit()
 	return nil
 }
 

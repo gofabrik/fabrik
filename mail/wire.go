@@ -52,11 +52,17 @@ func wireMessage(m *Message, now time.Time) (string, error) {
 			return "", err
 		}
 	case m.HTML != "":
-		writeAlternative(&b, m)
+		if err := writeAlternative(&b, m); err != nil {
+			return "", err
+		}
 	default:
 		b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 		b.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
-		b.WriteString(qp(m.Text))
+		encoded, err := qp(m.Text)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(encoded)
 	}
 	return b.String(), nil
 }
@@ -94,28 +100,52 @@ func foldHeader(b *strings.Builder, name, value string) {
 	b.WriteString("\r\n")
 }
 
-func writeAlternative(b *strings.Builder, m *Message) {
+func writeAlternative(b *strings.Builder, m *Message) error {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	writeBodyParts(mw, m)
-	mw.Close()
-	fmt.Fprintf(b, "Content-Type: multipart/alternative; boundary=%q\r\n\r\n", mw.Boundary())
+	if err := writeBodyParts(mw, m); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return fmt.Errorf("mail: close alternative MIME body: %w", err)
+	}
+	b.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=%q\r\n\r\n", mw.Boundary()))
 	b.Write(body.Bytes())
+	return nil
 }
 
-func writeBodyParts(mw *multipart.Writer, m *Message) {
-	text, _ := mw.CreatePart(textproto.MIMEHeader{
+func writeBodyParts(mw *multipart.Writer, m *Message) error {
+	text, err := mw.CreatePart(textproto.MIMEHeader{
 		"Content-Type":              {"text/plain; charset=utf-8"},
 		"Content-Transfer-Encoding": {"quoted-printable"},
 	})
-	fmt.Fprint(text, qp(m.Text))
+	if err != nil {
+		return fmt.Errorf("mail: create plain-text MIME part: %w", err)
+	}
+	encoded, err := qp(m.Text)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprint(text, encoded); err != nil {
+		return fmt.Errorf("mail: write plain-text MIME part: %w", err)
+	}
 	if m.HTML != "" {
-		html, _ := mw.CreatePart(textproto.MIMEHeader{
+		html, err := mw.CreatePart(textproto.MIMEHeader{
 			"Content-Type":              {"text/html; charset=utf-8"},
 			"Content-Transfer-Encoding": {"quoted-printable"},
 		})
-		fmt.Fprint(html, qp(m.HTML))
+		if err != nil {
+			return fmt.Errorf("mail: create HTML MIME part: %w", err)
+		}
+		encoded, err := qp(m.HTML)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprint(html, encoded); err != nil {
+			return fmt.Errorf("mail: write HTML MIME part: %w", err)
+		}
 	}
+	return nil
 }
 
 func writeMixed(b *strings.Builder, m *Message) error {
@@ -125,14 +155,25 @@ func writeMixed(b *strings.Builder, m *Message) error {
 	if m.HTML != "" {
 		var alt bytes.Buffer
 		inner := multipart.NewWriter(&alt)
-		writeBodyParts(inner, m)
-		inner.Close()
-		part, _ := outer.CreatePart(textproto.MIMEHeader{
+		if err := writeBodyParts(inner, m); err != nil {
+			return err
+		}
+		if err := inner.Close(); err != nil {
+			return fmt.Errorf("mail: close alternative MIME body: %w", err)
+		}
+		part, err := outer.CreatePart(textproto.MIMEHeader{
 			"Content-Type": {mime.FormatMediaType("multipart/alternative", map[string]string{"boundary": inner.Boundary()})},
 		})
-		part.Write(alt.Bytes())
+		if err != nil {
+			return fmt.Errorf("mail: create alternative MIME part: %w", err)
+		}
+		if _, err := part.Write(alt.Bytes()); err != nil {
+			return fmt.Errorf("mail: write alternative MIME part: %w", err)
+		}
 	} else {
-		writeBodyParts(outer, m)
+		if err := writeBodyParts(outer, m); err != nil {
+			return err
+		}
 	}
 
 	for _, a := range m.Attachments {
@@ -148,20 +189,28 @@ func writeMixed(b *strings.Builder, m *Message) error {
 		if err != nil {
 			return err
 		}
-		part.Write([]byte(wrapBase64(a.Content)))
+		if _, err := part.Write([]byte(wrapBase64(a.Content))); err != nil {
+			return fmt.Errorf("mail: write attachment %q: %w", a.Filename, err)
+		}
 	}
-	outer.Close()
-	fmt.Fprintf(b, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", outer.Boundary())
+	if err := outer.Close(); err != nil {
+		return fmt.Errorf("mail: close mixed MIME body: %w", err)
+	}
+	b.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q\r\n\r\n", outer.Boundary()))
 	b.Write(body.Bytes())
 	return nil
 }
 
-func qp(s string) string {
+func qp(s string) (string, error) {
 	var b strings.Builder
 	w := quotedprintable.NewWriter(&b)
-	w.Write([]byte(s))
-	w.Close()
-	return b.String()
+	if _, err := w.Write([]byte(s)); err != nil {
+		return "", fmt.Errorf("mail: encode quoted-printable body: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("mail: finish quoted-printable body: %w", err)
+	}
+	return b.String(), nil
 }
 
 // wrapBase64 limits encoded lines to RFC 2045's 76 columns.

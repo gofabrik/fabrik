@@ -2,6 +2,7 @@ package mail_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -40,11 +41,15 @@ func TestRecorder_NoRecordOnInvalidOrCanceled(t *testing.T) {
 	rec := &mail.Recorder{}
 	bad := valid()
 	bad.From = ""
-	rec.Send(context.Background(), &bad)
+	if err := rec.Send(context.Background(), &bad); err == nil {
+		t.Fatal("Send accepted an invalid message")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	good := valid()
-	rec.Send(ctx, &good)
+	if err := rec.Send(ctx, &good); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Send error = %v, want context.Canceled", err)
+	}
 	if n := len(rec.Sent()); n != 0 {
 		t.Fatalf("rejected sends recorded %d messages", n)
 	}

@@ -146,9 +146,17 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	}
 	// Validate all lazy bindings before materializing command scopes.
 	if g.ScopeCount() > 0 {
-		diags = append(diags, g.RunValidationPass()...)
+		scopeDiags, err := guardedScopePass("validation", g.RunValidationPass)
+		if err != nil {
+			return nil, err
+		}
+		diags = append(diags, scopeDiags...)
 		if !diags.HasFatal() {
-			diags = append(diags, g.MaterializeScopes()...)
+			scopeDiags, err = guardedScopePass("materialization", g.MaterializeScopes)
+			if err != nil {
+				return nil, err
+			}
+			diags = append(diags, scopeDiags...)
 		}
 	}
 	for _, d := range directives {
@@ -230,4 +238,13 @@ func guard(name, phase string, fn func()) (err error) {
 	}()
 	fn()
 	return nil
+}
+
+func guardedScopePass(phase string, fn func() diag.Diagnostics) (ds diag.Diagnostics, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("internal error: command scope %s panicked: %v", phase, p)
+		}
+	}()
+	return fn(), nil
 }

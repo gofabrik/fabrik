@@ -29,6 +29,18 @@ func TestFixtures(t *testing.T) {
 	}
 }
 
+func TestGuardedScopePassConvertsPanicToError(t *testing.T) {
+	ds, err := guardedScopePass("materialization", func() diag.Diagnostics {
+		panic("boom")
+	})
+	if err == nil || !strings.Contains(err.Error(), "command scope materialization panicked: boom") {
+		t.Fatalf("guardedScopePass error = %v", err)
+	}
+	if ds != nil {
+		t.Fatalf("guardedScopePass diagnostics = %v, want nil", ds)
+	}
+}
+
 func runFixture(t *testing.T, fixture string) {
 	data, err := os.ReadFile(fixture) // #nosec G304 -- reads a test-selected fixture path
 	if err != nil {

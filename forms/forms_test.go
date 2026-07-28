@@ -131,6 +131,44 @@ func TestBind_Query(t *testing.T) {
 	}
 }
 
+func TestBind_RejectsNonStructRootTypes(t *testing.T) {
+	type input struct {
+		Name string
+	}
+	cases := []struct {
+		name string
+		bind func(*http.Request) error
+	}{
+		{
+			name: "scalar",
+			bind: func(r *http.Request) error {
+				_, err := forms.Bind[string](r)
+				return err
+			},
+		},
+		{
+			name: "pointer",
+			bind: func(r *http.Request) error {
+				_, err := forms.Bind[*input](r)
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{not json"))
+			r.Header.Set("Content-Type", "application/json")
+			err := tc.bind(r)
+			if err == nil || !strings.Contains(err.Error(), "forms: Bind[T]: T must be a struct") {
+				t.Fatalf("Bind error = %v, want unsupported root type", err)
+			}
+			if strings.Contains(err.Error(), "decode json") {
+				t.Fatalf("request was parsed before root validation: %v", err)
+			}
+		})
+	}
+}
+
 func TestBind_JSON(t *testing.T) {
 	type loginInput struct {
 		Email    string `json:"email"`
@@ -268,7 +306,7 @@ func TestBind_NamedElementSlice(t *testing.T) {
 	}
 }
 
-func TestBind_PointerToUnsupportedStaysNil(t *testing.T) {
+func TestBind_PointerToUnsupportedReportsSubmittedValue(t *testing.T) {
 	type inner struct{ X int }
 	type outer struct {
 		Name  string
@@ -279,8 +317,26 @@ func TestBind_PointerToUnsupportedStaysNil(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !form.Errors.Has("inner") || !strings.Contains(form.Error("inner"), "unsupported form field type") {
+		t.Fatalf("pointer to unsupported kind errors = %v", form.Errors)
+	}
 	if form.Data.Inner != nil {
 		t.Errorf("pointer to unsupported kind should stay nil, got %+v", form.Data.Inner)
+	}
+}
+
+func TestBind_AbsentAndIgnoredUnsupportedFieldsRemainValid(t *testing.T) {
+	type input struct {
+		Meta    map[string]string
+		Ignored map[string]string `form:"-"`
+	}
+	r := postForm(url.Values{"ignored": {"submitted"}})
+	form, err := forms.Bind[input](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !form.Valid() {
+		t.Fatalf("absent and ignored unsupported fields produced errors: %v", form.Errors)
 	}
 }
 
@@ -327,6 +383,11 @@ func TestBind_UnsupportedFieldsNoPanic(t *testing.T) {
 	form, err := forms.Bind[input](r)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, field := range []string{"codes", "meta", "nested"} {
+		if !form.Errors.Has(field) || !strings.Contains(form.Error(field), "unsupported form field type") {
+			t.Errorf("%s error = %q, want unsupported-type error", field, form.Error(field))
+		}
 	}
 	if form.Data.Name != "prod" {
 		t.Errorf("supported field should still bind, got %q", form.Data.Name)

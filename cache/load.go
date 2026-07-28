@@ -63,14 +63,14 @@ func (g *loadGroup) invalidate(ctx context.Context, key string) error {
 // invalidation. Panics propagate to every caller.
 func (g *loadGroup) Do(ctx context.Context, key string, fn func(publish func(write func()) bool) (any, error)) (any, error) {
 	for {
-		v, err, retry := g.once(ctx, key, fn)
+		v, retry, err := g.once(ctx, key, fn)
 		if !retry {
 			return v, err
 		}
 	}
 }
 
-func (g *loadGroup) once(ctx context.Context, key string, fn func(publish func(write func()) bool) (any, error)) (v any, err error, retry bool) {
+func (g *loadGroup) once(ctx context.Context, key string, fn func(publish func(write func()) bool) (any, error)) (v any, retry bool, err error) {
 	g.mu.Lock()
 	if c, ok := g.calls[key]; ok {
 		g.mu.Unlock()
@@ -82,14 +82,14 @@ func (g *loadGroup) once(ctx context.Context, key string, fn func(publish func(w
 			// The caller's own cancellation wins even when completion
 			// is also ready.
 			if err := ctx.Err(); err != nil {
-				return nil, err, false
+				return nil, false, err
 			}
 			if retryable(c.err, c.runnerCtx, nil) {
-				return nil, nil, true
+				return nil, true, nil
 			}
-			return c.val, c.err, false
+			return c.val, false, c.err
 		case <-ctx.Done():
-			return nil, ctx.Err(), false
+			return nil, false, ctx.Err()
 		}
 	}
 	c := &activeLoad{done: make(chan struct{}), pubSem: make(chan struct{}, 1)}
@@ -110,7 +110,7 @@ func (g *loadGroup) once(ctx context.Context, key string, fn func(publish func(w
 		}
 	}()
 	c.val, c.err = fn(c.publish)
-	return c.val, c.err, false
+	return c.val, false, c.err
 }
 
 // publish makes write admission atomic with invalidation.

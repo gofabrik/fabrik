@@ -38,7 +38,7 @@ func NewLocal(dir string) (*Local, error) {
 func (s *Local) Close() error { return s.root.Close() }
 
 func (s *Local) Put(ctx context.Context, key string, r io.Reader) error {
-	if err := opCheck("put", key, ctx); err != nil {
+	if err := opCheck(ctx, "put", key); err != nil {
 		return err
 	}
 	if dir := path.Dir(key); dir != "." {
@@ -64,18 +64,14 @@ func (s *Local) Put(ctx context.Context, key string, r io.Reader) error {
 		return fail(err)
 	}
 	if err := copyChunks(ctx, f, r); err != nil {
-		f.Close()
-		s.root.Remove(tmp)
-		return fail(err)
+		return fail(errors.Join(err, f.Close(), s.root.Remove(tmp)))
 	}
 	if err := f.Close(); err != nil {
-		s.root.Remove(tmp)
-		return fail(err)
+		return fail(errors.Join(err, s.root.Remove(tmp)))
 	}
 	// The final read can cancel ctx and return EOF.
 	if err := ctx.Err(); err != nil {
-		s.root.Remove(tmp)
-		return fail(err)
+		return fail(errors.Join(err, s.root.Remove(tmp)))
 	}
 	// Hold the read lock across MkdirAll and Rename so pruning cannot remove the parent.
 	s.mu.RLock()
@@ -90,8 +86,7 @@ func (s *Local) Put(ctx context.Context, key string, r io.Reader) error {
 	if renameErr == nil {
 		return nil
 	}
-	s.root.Remove(tmp)
-	return fail(renameErr)
+	return fail(errors.Join(renameErr, s.root.Remove(tmp)))
 }
 
 // pruneParents removes empty parent directories without deleting blobs or
@@ -111,7 +106,7 @@ func (s *Local) pruneParents(key string) {
 }
 
 func (s *Local) Open(ctx context.Context, key string) (io.ReadCloser, error) {
-	if err := opCheck("open", key, ctx); err != nil {
+	if err := opCheck(ctx, "open", key); err != nil {
 		return nil, err
 	}
 	fi, err := s.root.Stat(key)
@@ -130,7 +125,7 @@ func (s *Local) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 }
 
 func (s *Local) Stat(ctx context.Context, key string) (Info, error) {
-	if err := opCheck("stat", key, ctx); err != nil {
+	if err := opCheck(ctx, "stat", key); err != nil {
 		return Info{}, err
 	}
 	fi, err := s.root.Stat(key)
@@ -144,7 +139,7 @@ func (s *Local) Stat(ctx context.Context, key string) (Info, error) {
 }
 
 func (s *Local) Delete(ctx context.Context, key string) error {
-	if err := opCheck("delete", key, ctx); err != nil {
+	if err := opCheck(ctx, "delete", key); err != nil {
 		return err
 	}
 	fi, err := s.root.Lstat(key)

@@ -30,6 +30,9 @@ func (m *core) Middleware(next http.Handler) http.Handler {
 			commitFn: func(rw http.ResponseWriter) error {
 				return m.commit(commitCtx, st, rw)
 			},
+			commitError: func(err error) {
+				m.cfg.Logger.ErrorContext(commitCtx, "session commit failed", "error", err)
+			},
 		}
 		next.ServeHTTP(wrapWriter(cw), r.WithContext(ctx))
 
@@ -45,6 +48,7 @@ func (m *core) Middleware(next http.Handler) http.Handler {
 type committingWriter struct {
 	http.ResponseWriter
 	commitFn      func(http.ResponseWriter) error
+	commitError   func(error)
 	headerWritten bool
 	committed     bool
 	failed        bool
@@ -82,7 +86,10 @@ func (cw *committingWriter) runCommit() {
 	}
 	cw.committed = true
 	if err := cw.commitFn(cw.ResponseWriter); err != nil {
-		http.Error(cw.ResponseWriter, "session commit failed: "+err.Error(), http.StatusInternalServerError)
+		if cw.commitError != nil {
+			cw.commitError(err)
+		}
+		http.Error(cw.ResponseWriter, "session commit failed", http.StatusInternalServerError)
 		cw.headerWritten = true
 		cw.failed = true
 	}

@@ -2,9 +2,11 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -727,7 +729,12 @@ func TestDestroyThenPromoteVisibility(t *testing.T) {
 func TestCommitFailureDiscardsHandlerBody(t *testing.T) {
 	mem := NewMemoryStore()
 	store := &hookStore{inner: mem}
-	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = -1 })
+	var logs bytes.Buffer
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.MaxRetries = -1
+		c.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
 	h := m.app
 
 	store.beforeSave = func(Record) error { return errors.New("store down") }
@@ -747,8 +754,14 @@ func TestCommitFailureDiscardsHandlerBody(t *testing.T) {
 	if !strings.Contains(body, "session commit failed") {
 		t.Fatalf("500 body: %q", body)
 	}
+	if strings.Contains(body, "store down") {
+		t.Fatalf("500 body exposed store error: %q", body)
+	}
 	if strings.Contains(body, "SHOULD-NOT-APPEAR") {
 		t.Fatalf("handler body leaked into the failure response: %q", body)
+	}
+	if !strings.Contains(logs.String(), "store down") {
+		t.Fatalf("commit error was not logged: %q", logs.String())
 	}
 }
 

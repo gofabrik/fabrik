@@ -78,11 +78,11 @@ func (s *SQLiteStore) SetIfAbsent(ctx context.Context, key string, value int64, 
 	return n == 1, nil
 }
 
-func (s *SQLiteStore) CompareAndSwap(ctx context.Context, key string, old, new int64, now, expiresAt time.Time) (bool, error) {
+func (s *SQLiteStore) CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE ratelimit SET value = ?, expires_at = ?
 		 WHERE key = ? AND value = ? AND expires_at > ?`,
-		new, expiresAt.UnixNano(), key, old, now.UnixNano())
+		newValue, expiresAt.UnixNano(), key, old, now.UnixNano())
 	if err != nil {
 		return false, fmt.Errorf("ratelimit: swap %q: %w", key, err)
 	}

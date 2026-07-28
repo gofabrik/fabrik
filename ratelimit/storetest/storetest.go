@@ -131,7 +131,7 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 		if ok, err := s.CompareAndSwap(ctx, "k", 0, 1, base, base.Add(time.Minute)); err != nil || ok {
 			t.Fatalf("CAS on a missing key must refuse without error: ok=%v err=%v", ok, err)
 		}
-		setLive(t, ctx, s, "k", 1, base, base.Add(time.Minute))
+		setLive(ctx, t, s, "k", 1, base, base.Add(time.Minute))
 		if ok, err := s.CompareAndSwap(ctx, "k", 2, 3, base, base.Add(time.Minute)); err != nil || ok {
 			t.Fatalf("CAS with a stale value must refuse without error: ok=%v err=%v", ok, err)
 		}
@@ -154,7 +154,7 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 
 	t.Run("ConcurrentCASOneWinner", func(t *testing.T) {
 		s := factory(t)
-		setLive(t, ctx, s, "k", 10, base, base.Add(time.Minute))
+		setLive(ctx, t, s, "k", 10, base, base.Add(time.Minute))
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wins := 0
@@ -181,7 +181,7 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 	})
 }
 
-func setLive(t *testing.T, ctx context.Context, s ratelimit.Store, key string, v int64, now, exp time.Time) {
+func setLive(ctx context.Context, t *testing.T, s ratelimit.Store, key string, v int64, now, exp time.Time) {
 	t.Helper()
 	if ok, err := s.SetIfAbsent(ctx, key, v, now, exp); err != nil || !ok {
 		t.Fatalf("seed %s: ok=%v err=%v", key, ok, err)

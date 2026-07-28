@@ -11,9 +11,12 @@ import (
 	"github.com/gofabrik/fabrik/ratelimit"
 )
 
-func okHandler() http.Handler {
+func okHandler(t *testing.T) http.Handler {
+	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	})
 }
 
@@ -27,7 +30,7 @@ func request(h http.Handler, remote string) *httptest.ResponseRecorder {
 
 func TestMiddleware_DenialCarriesQuotaHeaders(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerMinute(60).WithBurst(2))
-	h := ratelimit.Middleware(lim)(okHandler())
+	h := ratelimit.Middleware(lim)(okHandler(t))
 
 	for i := 0; i < 2; i++ {
 		rec := request(h, "203.0.113.7:1234")
@@ -53,7 +56,7 @@ func TestMiddleware_DenialCarriesQuotaHeaders(t *testing.T) {
 func TestMiddleware_RetryAfterRoundsUp(t *testing.T) {
 	// A 1.5-second delay must be exposed as 2 seconds, never 1.
 	lim := newLimiter(t, ratelimit.Limit{Rate: 2, Period: 3 * time.Second, Burst: 1})
-	h := ratelimit.Middleware(lim)(okHandler())
+	h := ratelimit.Middleware(lim)(okHandler(t))
 	request(h, "203.0.113.7:1234")
 	rec := request(h, "203.0.113.7:1234")
 	if rec.Code != http.StatusTooManyRequests {
@@ -66,7 +69,7 @@ func TestMiddleware_RetryAfterRoundsUp(t *testing.T) {
 
 func TestMiddleware_KeysAreIndependent(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerMinute(60).WithBurst(1))
-	h := ratelimit.Middleware(lim)(okHandler())
+	h := ratelimit.Middleware(lim)(okHandler(t))
 	if rec := request(h, "203.0.113.7:1"); rec.Code != http.StatusOK {
 		t.Fatal("first client denied")
 	}
@@ -83,8 +86,10 @@ func TestMiddleware_LimitedHandlerOverride(t *testing.T) {
 	h := ratelimit.Middleware(lim, ratelimit.WithLimitedHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTeapot)
-		w.Write([]byte(`{"error":"slow down"}`))
-	})))(okHandler())
+		if _, err := w.Write([]byte(`{"error":"slow down"}`)); err != nil {
+			t.Errorf("write limited response: %v", err)
+		}
+	})))(okHandler(t))
 	request(h, "203.0.113.7:1")
 	rec := request(h, "203.0.113.7:1")
 	if rec.Code != http.StatusTooManyRequests {
@@ -98,8 +103,10 @@ func TestMiddleware_LimitedHandlerOverride(t *testing.T) {
 func TestMiddleware_LimitedHandlerBodyOnly(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerMinute(60).WithBurst(1))
 	h := ratelimit.Middleware(lim, ratelimit.WithLimitedHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("try later"))
-	})))(okHandler())
+		if _, err := w.Write([]byte("try later")); err != nil {
+			t.Errorf("write limited response: %v", err)
+		}
+	})))(okHandler(t))
 	request(h, "203.0.113.7:1")
 	rec := request(h, "203.0.113.7:1")
 	if rec.Code != http.StatusTooManyRequests {
@@ -112,7 +119,7 @@ func TestMiddleware_LimitedHandlerBodyOnly(t *testing.T) {
 
 func TestMiddleware_LimitedHandlerWritesNothing(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerMinute(60).WithBurst(1))
-	h := ratelimit.Middleware(lim, ratelimit.WithLimitedHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))(okHandler())
+	h := ratelimit.Middleware(lim, ratelimit.WithLimitedHandler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))(okHandler(t))
 	request(h, "203.0.113.7:1")
 	if rec := request(h, "203.0.113.7:1"); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("silent handler must still answer 429: got %d", rec.Code)
@@ -123,14 +130,14 @@ func TestMiddleware_EmptyKeyPolicy(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerMinute(60).WithBurst(1))
 	emptyKey := ratelimit.WithKeyFunc(func(*http.Request) string { return "" })
 
-	open := ratelimit.Middleware(lim, emptyKey)(okHandler())
+	open := ratelimit.Middleware(lim, emptyKey)(okHandler(t))
 	for i := 0; i < 3; i++ {
 		if rec := request(open, "203.0.113.7:1"); rec.Code != http.StatusOK {
 			t.Fatal("fail-open must pass degraded requests")
 		}
 	}
 
-	closed := ratelimit.Middleware(lim, emptyKey, ratelimit.WithFailClosed())(okHandler())
+	closed := ratelimit.Middleware(lim, emptyKey, ratelimit.WithFailClosed())(okHandler(t))
 	rec := request(closed, "203.0.113.7:1")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("fail-closed degraded request: %d, want 503 (not a quota denial)", rec.Code)
@@ -156,11 +163,11 @@ func TestMiddleware_StoreErrorPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	open := ratelimit.Middleware(lim)(okHandler())
+	open := ratelimit.Middleware(lim)(okHandler(t))
 	if rec := request(open, "203.0.113.7:1"); rec.Code != http.StatusOK {
 		t.Fatalf("fail-open on store error: %d", rec.Code)
 	}
-	closed := ratelimit.Middleware(lim, ratelimit.WithFailClosed())(okHandler())
+	closed := ratelimit.Middleware(lim, ratelimit.WithFailClosed())(okHandler(t))
 	rec := request(closed, "203.0.113.7:1")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("fail-closed on store error: %d, want 503", rec.Code)

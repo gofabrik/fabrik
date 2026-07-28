@@ -148,6 +148,69 @@ func TestNew_LenientWhenManifestURLPrefixEmpty(t *testing.T) {
 	}
 }
 
+func TestNew_SnapshotsManifest(t *testing.T) {
+	manifest := &assetmapper.Manifest{
+		URLPrefix: "/assets/",
+		Entries: map[string]string{
+			"app.js": "app-original.js",
+		},
+	}
+	m := mustMapper(t, assetmapper.Config{
+		Roots:    []assetmapper.Root{{FS: fstest.MapFS{}}},
+		Manifest: manifest,
+	})
+
+	manifest.URLPrefix = "/changed/"
+	manifest.Entries["app.js"] = "app-changed.js"
+	manifest.Entries["late.js"] = "late.js"
+	delete(manifest.Entries, "app.js")
+
+	if got, err := m.Asset("app.js"); err != nil || got != "/assets/app-original.js" {
+		t.Fatalf("Asset(app.js) after caller mutation = %q, %v; want frozen original", got, err)
+	}
+	if _, err := m.Asset("late.js"); !errors.Is(err, assetmapper.ErrAssetNotFound) {
+		t.Fatalf("Asset(late.js) after caller mutation: err = %v, want ErrAssetNotFound", err)
+	}
+}
+
+func TestNew_RejectsMalformedManifestPaths(t *testing.T) {
+	tests := []struct {
+		name    string
+		logical string
+		output  string
+	}{
+		{name: "empty logical", logical: "", output: "app-hash.js"},
+		{name: "absolute logical", logical: "/app.js", output: "app-hash.js"},
+		{name: "logical traversal", logical: "src/../app.js", output: "app-hash.js"},
+		{name: "logical dot segment", logical: "src/./app.js", output: "app-hash.js"},
+		{name: "logical empty segment", logical: "src//app.js", output: "app-hash.js"},
+		{name: "logical backslash", logical: `src\app.js`, output: "app-hash.js"},
+		{name: "empty output", logical: "app.js", output: ""},
+		{name: "absolute output", logical: "app.js", output: "/app-hash.js"},
+		{name: "output traversal", logical: "app.js", output: "dist/../app-hash.js"},
+		{name: "output dot segment", logical: "app.js", output: "dist/./app-hash.js"},
+		{name: "output empty segment", logical: "app.js", output: "dist//app-hash.js"},
+		{name: "output backslash", logical: "app.js", output: `dist\app-hash.js`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := assetmapper.New(assetmapper.Config{
+				Roots: []assetmapper.Root{{FS: fstest.MapFS{}}},
+				Manifest: &assetmapper.Manifest{Entries: map[string]string{
+					tt.logical: tt.output,
+				}},
+			})
+			if err == nil {
+				t.Fatalf("New accepted manifest entry %q -> %q", tt.logical, tt.output)
+			}
+			if !strings.Contains(err.Error(), "manifest") {
+				t.Fatalf("error does not identify the manifest: %v", err)
+			}
+		})
+	}
+}
+
 func TestCompile_PersistsURLPrefixInManifest(t *testing.T) {
 	src := fstest.MapFS{"app.js": {Data: []byte("x")}}
 	dir := t.TempDir()
@@ -308,8 +371,16 @@ func TestAsset_RejectsTraversal(t *testing.T) {
 	m := mustMapper(t, assetmapper.Config{
 		Roots: []assetmapper.Root{{FS: fstest.MapFS{"app.js": {Data: []byte("x")}}}},
 	})
-	if _, err := m.Asset("../etc/passwd"); !errors.Is(err, assetmapper.ErrAssetNotFound) {
-		t.Errorf("err = %v, want ErrAssetNotFound for traversal", err)
+	for _, logical := range []string{
+		"../etc/passwd",
+		"a/../app.js",
+		"a/./app.js",
+		"./app.js",
+		"app.js/..",
+	} {
+		if _, err := m.Asset(logical); !errors.Is(err, assetmapper.ErrAssetNotFound) {
+			t.Errorf("Asset(%q): err = %v, want ErrAssetNotFound for dot segment", logical, err)
+		}
 	}
 }
 
@@ -413,11 +484,43 @@ func TestHandler_StaleHashStillServesContent(t *testing.T) {
 	fs := fstest.MapFS{"app.js": {Data: []byte("x")}}
 	m := mustMapper(t, assetmapper.Config{Roots: []assetmapper.Root{{FS: fs}}})
 
-	stale := "/assets/app-00000000.js"
+	stale := "/assets/app-00000000000000000000.js"
 	rec := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, stale, nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("stale hash status = %d, want 200 (hash is cache-buster only)", rec.Code)
+	}
+}
+
+func TestHandler_PrefersExactHashShapedLogicalPath(t *testing.T) {
+	hashShaped := "foo-" + strings.Repeat("a", assetmapper.HashLength) + ".js"
+	for name, files := range map[string]fstest.MapFS{
+		"exact only": {
+			hashShaped: {Data: []byte("exact")},
+		},
+		"hashed fallback only": {
+			"foo.js": {Data: []byte("fallback")},
+		},
+		"ambiguous exact wins": {
+			hashShaped: {Data: []byte("exact")},
+			"foo.js":   {Data: []byte("fallback")},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := mustMapper(t, assetmapper.Config{Roots: []assetmapper.Root{{FS: files}}})
+			rec := httptest.NewRecorder()
+			m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/"+hashShaped, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			want := "exact"
+			if name == "hashed fallback only" {
+				want = "fallback"
+			}
+			if got := rec.Body.String(); got != want {
+				t.Fatalf("body = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

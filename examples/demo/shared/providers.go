@@ -153,7 +153,7 @@ func (c MailerConfig) smtp() *mail.SMTP {
 
 //fabrik:provider
 func NewEmailTemplates() (*mailtemplates.Renderer, error) {
-	return mailtemplates.Load(Templates, "templates/mail")
+	return mailtemplates.Load(MailTemplates, "mail")
 }
 
 //fabrik:provider
@@ -165,7 +165,7 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func() error) {
 		for {
 			select {
 			case <-ticker.C:
-				store.Sweep(context.Background(), time.Now())
+				_ = store.Sweep(context.Background(), time.Now())
 			case <-done:
 				return
 			}
@@ -180,7 +180,7 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func() error) {
 
 //fabrik:provider
 func NewStorage(cfg *StorageConfig) (storage.Storage, func() error, error) {
-	if err := os.MkdirAll(cfg.Path, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Path, 0o755); err != nil { // #nosec G301 -- demo storage uses conventional owner-writable directory permissions
 		return nil, nil, err
 	}
 	local, err := storage.NewLocal(cfg.Path)

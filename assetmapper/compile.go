@@ -166,10 +166,10 @@ func Compile(srcRoots []Root, publicDir string, opts ...BuildOption) (*Manifest,
 // checkCollision rejects output names that cannot be served unambiguously.
 //
 //  1. Two distinct logical paths producing the same compiled
-//     filename (8-char SHA-256 collision or adversarial naming).
+//     filename (truncated SHA-256 collision or adversarial naming).
 //  2. The compiled filename equals the literal source path of
-//     another asset (e.g. foo.js hashes to 12345678 and a source
-//     file foo-12345678.js also exists). Indistinguishable at the
+//     another asset (e.g. foo.js compiles to foo-<hash>.js and a
+//     source file with that name also exists). Indistinguishable at the
 //     URL level and confusing in publicDir.
 func checkCollision(context, logical, hashed string, assets map[string]*collectedAsset, outputOwner map[string]string) error {
 	if other, dup := outputOwner[hashed]; dup {

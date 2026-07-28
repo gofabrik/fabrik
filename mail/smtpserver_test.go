@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -52,7 +53,11 @@ func newTestServer(t *testing.T, mutate func(*testServer)) *testServer {
 	if mutate != nil {
 		mutate(s)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close SMTP listener: %v", err)
+		}
+	})
 	go s.serve(t)
 	return s
 }
@@ -87,7 +92,9 @@ func (s *testServer) serve(t *testing.T) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 	if s.implicitTLS {
 		tc := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{testCert}, MinVersion: tls.VersionTLS12})
 		conn = tc
@@ -96,7 +103,9 @@ func (s *testServer) serve(t *testing.T) {
 		s.stall(conn)
 		return
 	}
-	fmt.Fprintf(conn, "220 fake ESMTP\r\n")
+	if !writeResponse(conn, "220 fake ESMTP\r\n") {
+		return
+	}
 	r := bufio.NewReader(conn)
 	secured := false
 	for {
@@ -125,10 +134,14 @@ func (s *testServer) serve(t *testing.T) {
 				if i == len(lines)-1 {
 					sep = " "
 				}
-				fmt.Fprintf(conn, "250%s%s\r\n", sep, l)
+				if !writeResponse(conn, "250%s%s\r\n", sep, l) {
+					return
+				}
 			}
 		case cmd == "STARTTLS":
-			fmt.Fprintf(conn, "220 go ahead\r\n")
+			if !writeResponse(conn, "220 go ahead\r\n") {
+				return
+			}
 			tc := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{testCert}, MinVersion: tls.VersionTLS12})
 			conn = tc
 			r = bufio.NewReader(conn)
@@ -141,18 +154,26 @@ func (s *testServer) serve(t *testing.T) {
 				s.mu.Lock()
 				s.authOK = true
 				s.mu.Unlock()
-				fmt.Fprintf(conn, "235 ok\r\n")
+				if !writeResponse(conn, "235 ok\r\n") {
+					return
+				}
 			} else {
-				fmt.Fprintf(conn, "535 bad credentials\r\n")
+				if !writeResponse(conn, "535 bad credentials\r\n") {
+					return
+				}
 			}
 		case strings.HasPrefix(cmd, "MAIL"), strings.HasPrefix(cmd, "RCPT"):
-			fmt.Fprintf(conn, "250 ok\r\n")
+			if !writeResponse(conn, "250 ok\r\n") {
+				return
+			}
 		case cmd == "DATA":
 			if s.stallAt == "data" {
 				s.stall(conn)
 				return
 			}
-			fmt.Fprintf(conn, "354 go\r\n")
+			if !writeResponse(conn, "354 go\r\n") {
+				return
+			}
 			var data strings.Builder
 			for {
 				l, err := r.ReadString('\n')
@@ -167,22 +188,35 @@ func (s *testServer) serve(t *testing.T) {
 			s.mu.Lock()
 			s.data = data.String()
 			s.mu.Unlock()
-			fmt.Fprintf(conn, "250 accepted\r\n")
+			if !writeResponse(conn, "250 accepted\r\n") {
+				return
+			}
 		case cmd == "QUIT":
 			close(s.accepted)
 			if s.quitDelay > 0 {
 				time.Sleep(s.quitDelay)
 			}
 			if s.failQuit {
-				fmt.Fprintf(conn, "421 shutting down\r\n")
+				if !writeResponse(conn, "421 shutting down\r\n") {
+					return
+				}
 			} else {
-				fmt.Fprintf(conn, "221 bye\r\n")
+				if !writeResponse(conn, "221 bye\r\n") {
+					return
+				}
 			}
 			return
 		default:
-			fmt.Fprintf(conn, "250 ok\r\n")
+			if !writeResponse(conn, "250 ok\r\n") {
+				return
+			}
 		}
 	}
+}
+
+func writeResponse(conn net.Conn, format string, args ...any) bool {
+	_, err := fmt.Fprintf(conn, format, args...)
+	return err == nil
 }
 
 // testCertPool trusts the self-signed testCert for 127.0.0.1.

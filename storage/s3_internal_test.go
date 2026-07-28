@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,12 @@ func testS3(t *testing.T, region string, handler http.HandlerFunc) *S3 {
 func TestCreateBucketSendsLocationConstraint(t *testing.T) {
 	var gotBody string
 	s := testS3(t, "eu-central-1", func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read create-bucket body: %v", err)
+			http.Error(w, "read body", http.StatusInternalServerError)
+			return
+		}
 		gotBody = string(b)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -43,14 +49,18 @@ func TestCreateBucketSendsLocationConstraint(t *testing.T) {
 func TestCreateBucketConflictSemantics(t *testing.T) {
 	owned := testS3(t, "us-east-1", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		io.WriteString(w, `<Error><Code>BucketAlreadyOwnedByYou</Code></Error>`)
+		if _, err := io.WriteString(w, `<Error><Code>BucketAlreadyOwnedByYou</Code></Error>`); err != nil {
+			t.Errorf("write owned-bucket response: %v", err)
+		}
 	})
 	if err := owned.CreateBucket(context.Background()); err != nil {
 		t.Fatalf("owned bucket must succeed: %v", err)
 	}
 	taken := testS3(t, "us-east-1", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		io.WriteString(w, `<Error><Code>BucketAlreadyExists</Code></Error>`)
+		if _, err := io.WriteString(w, `<Error><Code>BucketAlreadyExists</Code></Error>`); err != nil {
+			t.Errorf("write existing-bucket response: %v", err)
+		}
 	})
 	if err := taken.CreateBucket(context.Background()); err == nil {
 		t.Fatal("foreign-owned bucket conflict must error")
@@ -84,16 +94,22 @@ func TestPutSendsKnownContentLength(t *testing.T) {
 	s := testS3(t, "us-east-1", func(w http.ResponseWriter, r *http.Request) {
 		got = r.ContentLength
 		chunked = r.TransferEncoding
-		io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("drain upload body: %v", err)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	pr, pw := io.Pipe()
+	writeDone := make(chan error, 1)
 	go func() {
-		pw.Write([]byte("stream me"))
-		pw.Close()
+		_, writeErr := pw.Write([]byte("stream me"))
+		writeDone <- errors.Join(writeErr, pw.Close())
 	}()
 	if err := s.Put(context.Background(), "k", pr); err != nil {
 		t.Fatal(err)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write pipe upload: %v", err)
 	}
 	if got != int64(len("stream me")) || len(chunked) != 0 {
 		t.Fatalf("pipe upload: Content-Length=%d TransferEncoding=%v (AWS needs a known length)", got, chunked)
@@ -112,9 +128,17 @@ func TestPutSendsEmptyObjectLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer past.Close()
-	past.WriteString("abc")
-	past.Seek(100, io.SeekStart)
+	t.Cleanup(func() {
+		if err := past.Close(); err != nil {
+			t.Errorf("close past-EOF fixture: %v", err)
+		}
+	})
+	if _, err := past.WriteString("abc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := past.Seek(100, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
 	// Zero-byte sources must use Content-Length: 0, not unknown-length framing.
 	for name, r := range map[string]io.Reader{
 		"sized":    strings.NewReader(""),
@@ -133,16 +157,26 @@ func TestPutSendsEmptyObjectLength(t *testing.T) {
 
 func TestPutDoesNotCloseCallerFile(t *testing.T) {
 	s := testS3(t, "us-east-1", func(w http.ResponseWriter, r *http.Request) {
-		io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("drain upload body: %v", err)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	f, err := os.CreateTemp(t.TempDir(), "body")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	f.WriteString("file body")
-	f.Seek(0, io.SeekStart)
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close upload fixture: %v", err)
+		}
+	})
+	if _, err := f.WriteString("file body"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Put(context.Background(), "k", f); err != nil {
 		t.Fatal(err)
 	}

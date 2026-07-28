@@ -8,7 +8,7 @@ import (
 )
 
 // HashLength is the number of SHA-256 hex characters embedded in compiled filenames.
-const HashLength = 8
+const HashLength = 20
 
 // hashContent returns the truncated digest used in public filenames.
 func hashContent(b []byte) string {

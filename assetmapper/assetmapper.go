@@ -120,9 +120,13 @@ func New(cfg Config) (*Mapper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("assetmapper.New: %w", err)
 	}
+	manifest, err := snapshotManifest(cfg.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("assetmapper.New: %w", err)
+	}
 	// A manifest and runtime mapper must agree on the URL prefix.
-	if cfg.Manifest != nil && cfg.Manifest.URLPrefix != "" {
-		manifestPrefix, err := normalizeURLPrefix(cfg.Manifest.URLPrefix)
+	if manifest != nil && manifest.URLPrefix != "" {
+		manifestPrefix, err := normalizeURLPrefix(manifest.URLPrefix)
 		if err != nil {
 			return nil, fmt.Errorf("assetmapper.New: manifest URLPrefix invalid: %w", err)
 		}
@@ -133,7 +137,7 @@ func New(cfg Config) (*Mapper, error) {
 	return &Mapper{
 		roots:     roots,
 		urlPrefix: prefix,
-		manifest:  cfg.Manifest,
+		manifest:  manifest,
 	}, nil
 }
 
@@ -192,6 +196,11 @@ func cleanLogical(p string) string {
 		return ""
 	}
 	p = strings.TrimPrefix(p, "/")
+	for _, segment := range strings.Split(p, "/") {
+		if segment == "." || segment == ".." {
+			return ""
+		}
+	}
 	cleaned := path.Clean(p)
 	if cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
 		return ""

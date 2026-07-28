@@ -277,10 +277,11 @@ func applyFlagToken(tok, next string, haveNext bool, flags []AnyFlag, vs values)
 			return 0, fmt.Errorf("bare '-' is not a valid flag: %w", ErrUsage)
 		}
 		// Combined short flags are ambiguous when a member accepts a value.
-		r := []rune(name)[0]
-		if len([]rune(name)) > 1 && !hasInline {
+		runes := []rune(name)
+		if len(runes) > 1 {
 			return 0, fmt.Errorf("unknown flag -%s (combined short flags not supported): %w", name, ErrUsage)
 		}
+		r := runes[0]
 		f = findFlagShort(flags, r)
 		if f == nil {
 			return 0, fmt.Errorf("unknown flag -%s: %w", string(r), ErrUsage)

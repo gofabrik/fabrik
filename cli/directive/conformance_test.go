@@ -67,6 +67,14 @@ func TestConformance_DuplicateShortFlags(t *testing.T) {
 	}, "short")
 }
 
+func TestGroupRejectsEmptyName(t *testing.T) {
+	for _, args := range []string{"name=", `name="   "`} {
+		t.Run(args, func(t *testing.T) {
+			wantDiag(t, wireDiags(t, &Group{fam: newFamily()}, args), "name= needs at least one segment")
+		})
+	}
+}
+
 func TestConformance_ReservedHelpFlag(t *testing.T) {
 	flag := &Input{fam: newFamily(), kind: kindFlag}
 	wantDiag(t, wireDiags(t, flag, "name=help type=bool"), "reserved by the cli library")
@@ -211,6 +219,32 @@ func TestConformance_SiblingAliasCollision(t *testing.T) {
 			{Name: "beta", Run: func(cli.Context) error { return nil }},
 		},
 	}, "duplicate")
+}
+
+func TestSiblingTokensReserveRootCompletionAliases(t *testing.T) {
+	for _, alias := range []string{"completion", "__complete"} {
+		t.Run("command/"+alias, func(t *testing.T) {
+			fam := newFamily()
+			fam.commands = append(fam.commands, cmdReg{path: []string{"scripts"}, aliases: []string{alias}})
+			wantDiag(t, fam.validateSiblingTokens(), "reserved for CLI completion")
+		})
+		t.Run("group/"+alias, func(t *testing.T) {
+			fam := newFamily()
+			fam.groups = append(fam.groups, &groupNode{path: []string{"scripts"}, aliases: []string{alias}})
+			wantDiag(t, fam.validateSiblingTokens(), "reserved for CLI completion")
+		})
+	}
+}
+
+func TestSiblingTokensAllowCompletionCanonicalAndNestedAlias(t *testing.T) {
+	fam := newFamily()
+	fam.commands = append(fam.commands,
+		cmdReg{path: []string{"completion"}},
+		cmdReg{path: []string{"admin", "scripts"}, aliases: []string{"__complete"}},
+	)
+	if ds := fam.validateSiblingTokens(); ds.HasFatal() {
+		t.Fatalf("valid completion tokens rejected: %v", ds)
+	}
 }
 
 // fakeNode distinguishes synthetic declaration keys in family maps.

@@ -56,6 +56,7 @@ type Source struct {
 //
 // Every section resolves its layout and partials through [DefaultSection].
 // A section with templates must resolve a [LayoutFile].
+// Every page must define the "content" template rendered by its layout.
 //
 // funcMaps are merged after [DefaultFuncs] in call order. Later maps override
 // earlier maps, and nil maps are ignored.
@@ -136,6 +137,13 @@ func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
 		}
 
 		for _, tp := range sec.templates {
+			page, err := parseHTML(merged, []fileRef{tp})
+			if err != nil {
+				return nil, fmt.Errorf("templates.Load: parse %s: %w", tp.path, err)
+			}
+			if page.Lookup("content") == nil {
+				return nil, fmt.Errorf("templates.Load: page %s must define %q", tp.path, "content")
+			}
 			files := append([]fileRef{layout}, partials...)
 			files = append(files, tp)
 			t, err := parseHTML(merged, files)

@@ -44,11 +44,8 @@ func StringFlag(name string) *Flag[string] {
 // IntFlag declares an int-valued flag.
 func IntFlag(name string) *Flag[int] {
 	return &Flag[int]{
-		name: name,
-		parse: func(s string) (int, error) {
-			v, err := strconv.ParseInt(s, 10, 64)
-			return int(v), err
-		},
+		name:  name,
+		parse: strconv.Atoi,
 	}
 }
 
@@ -109,10 +106,7 @@ func StringSliceFlag(name string) *Flag[[]string] {
 
 // IntSliceFlag declares a repeatable int flag.
 func IntSliceFlag(name string) *Flag[[]int] {
-	parseOne := func(s string) (int, error) {
-		v, err := strconv.ParseInt(s, 10, 64)
-		return int(v), err
-	}
+	parseOne := strconv.Atoi
 	return &Flag[[]int]{
 		name:    name,
 		isSlice: true,

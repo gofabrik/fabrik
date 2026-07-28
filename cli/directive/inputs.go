@@ -139,6 +139,16 @@ type cmdReg struct {
 	pos     token.Position
 }
 
+func (f *family) commandFunctionCount(fn string) int {
+	count := 0
+	for _, cmd := range f.commands {
+		if cmd.fn == fn {
+			count++
+		}
+	}
+	return count
+}
+
 // state isolates handle allocation between validation and rendering passes.
 func (f *family) state(g *gen.Gen) *genState {
 	st, ok := f.perGen[g]
@@ -265,7 +275,7 @@ func (i *Input) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	}
 	if v, ok := args.Attr["short"]; ok {
 		r := []rune(v.Text)
-		if len(r) != 1 || !(r[0] >= 'a' && r[0] <= 'z' || r[0] >= '0' && r[0] <= '9') {
+		if len(r) != 1 || (r[0] < 'a' || r[0] > 'z') && (r[0] < '0' || r[0] > '9') {
 			ds.Error(a.ArgPos(v.Col), fmt.Sprintf("short= wants exactly one [a-z0-9] rune (got %q)", v.Text), "")
 			return nil, ds
 		}
@@ -417,8 +427,12 @@ func durationLiteral(d time.Duration, timePkg string) string {
 		name string
 		d    time.Duration
 	}{
-		{"Hour", time.Hour}, {"Minute", time.Minute}, {"Second", time.Second},
-		{"Millisecond", time.Millisecond}, {"Microsecond", time.Microsecond}, {"Nanosecond", time.Nanosecond},
+		{"Hour", time.Hour},
+		{"Minute", time.Minute},
+		{"Second", time.Second},
+		{"Millisecond", time.Millisecond},
+		{"Microsecond", time.Microsecond},
+		{"Nanosecond", time.Nanosecond},
 	}
 	if d == math.MinInt64 {
 		// -d overflows; the literal is still expressible in nanoseconds.

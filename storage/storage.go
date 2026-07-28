@@ -61,7 +61,7 @@ func checkPrefix(prefix string) error {
 	return CheckKey(strings.TrimSuffix(prefix, "/"))
 }
 
-func opCheck(op, key string, ctx context.Context) error {
+func opCheck(ctx context.Context, op, key string) error {
 	if err := CheckKey(key); err != nil {
 		return fmt.Errorf("storage: %s %q: %w", op, key, err)
 	}

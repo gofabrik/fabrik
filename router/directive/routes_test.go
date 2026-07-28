@@ -280,6 +280,52 @@ func TestBundleFinishFallbackEmitsWithoutDemand(t *testing.T) {
 	}
 }
 
+func TestDirectRouterFieldReplaysBundleAfterCommandRoot(t *testing.T) {
+	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
+	g := gen.New()
+
+	routerPkg := types.NewPackage(routerPath, "router")
+	routerObj := types.NewTypeName(token.NoPos, routerPkg, "Router", nil)
+	routerNamed := types.NewNamed(routerObj, types.NewStruct(nil, nil), nil)
+	routerPtr := types.NewPointer(routerNamed)
+
+	webPkg := types.NewPackage("example.com/web", "web")
+	field := types.NewField(token.NoPos, webPkg, "Router", routerPtr, false)
+	handlerObj := types.NewTypeName(token.NoPos, webPkg, "Handler", nil)
+	handlerNamed := types.NewNamed(handlerObj, types.NewStruct([]*types.Var{field}, []string{""}), nil)
+	handlerPtr := types.NewPointer(handlerNamed)
+
+	h.prepareReceiver(g, handlerPtr, token.NewFileSet())
+	if ds := h.EmitHandle(g, "/direct", pos(1), func() (string, diag.Diagnostics) {
+		expr, ds, ok := g.Instance(handlerPtr, "")
+		if !ok {
+			return "nil", ds
+		}
+		return expr + ".Index", ds
+	}); ds.HasFatal() {
+		t.Fatalf("EmitHandle: %v", ds)
+	}
+	g.AddScope("buildInspect", pos(2), handlerPtr)
+
+	if ds := g.RunValidationPass(); ds.HasFatal() {
+		t.Fatalf("RunValidationPass: %v", ds)
+	}
+	if ds := g.MaterializeScopes(); ds.HasFatal() {
+		t.Fatalf("MaterializeScopes: %v", ds)
+	}
+	src, err := g.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	text := string(src)
+	if got := strings.Count(text, `"/direct"`); got != 1 {
+		t.Fatalf("direct router route emitted %d times, want 1:\n%s", got, text)
+	}
+	if !strings.Contains(text, "Router: r") || !strings.Contains(text, ".Index") {
+		t.Fatalf("direct router scope missing injected router or handler registration:\n%s", text)
+	}
+}
+
 func TestBundleReplaysInRecordOrder(t *testing.T) {
 	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
 	g := gen.New()

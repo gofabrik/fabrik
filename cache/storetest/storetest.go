@@ -10,6 +10,7 @@ package storetest
 import (
 	"context"
 	"math"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -239,7 +240,7 @@ func Run(t *testing.T, factory func(t *testing.T) cache.Store) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				k := string(rune('a' + i))
+				k := strconv.Itoa(i)
 				if err := s.Set(ctx, k, cache.Entry{Value: []byte(k)}); err != nil {
 					errs <- err
 				}
@@ -251,7 +252,7 @@ func Run(t *testing.T, factory func(t *testing.T) cache.Store) {
 			t.Fatal(err)
 		}
 		for i := 0; i < 20; i++ {
-			k := string(rune('a' + i))
+			k := strconv.Itoa(i)
 			e, ok, err := s.Get(ctx, k, now)
 			if err != nil || !ok || string(e.Value) != k {
 				t.Fatalf("key %s = %q %v %v", k, e.Value, ok, err)

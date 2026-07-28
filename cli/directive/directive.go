@@ -348,7 +348,8 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	if ds.HasFatal() {
 		return ds
 	}
-	scope := g.AddScope("build"+nd.fn, nd.pos, depTypes...)
+	pkgAlias := g.ImportPkg(nd.pkg)
+	scope := g.AddScope(commandScopeName(pkgAlias, nd.fn, c.fam.commandFunctionCount(nd.fn) > 1), nd.pos, depTypes...)
 	g.AddCommandFunc(gen.CommandFunc{
 		Name:       nd.name,
 		Path:       nd.path,
@@ -358,7 +359,7 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		Aliases:    nd.aliases,
 		Hidden:     nd.hidden,
 		Use:        use,
-		Fn:         g.ImportPkg(nd.pkg) + "." + nd.fn,
+		Fn:         pkgAlias + "." + nd.fn,
 		Inputs:     inputs,
 		ValueExprs: valueExprs,
 		Examples:   examples,
@@ -481,6 +482,15 @@ func lowerFirst(s string) string {
 	r := []rune(s)
 	r[0] = unicode.ToLower(r[0])
 	return string(r)
+}
+
+func commandScopeName(pkgAlias, fn string, qualify bool) string {
+	if !qualify {
+		return "build" + fn
+	}
+	r := []rune(pkgAlias)
+	r[0] = unicode.ToUpper(r[0])
+	return "build" + string(r) + fn
 }
 
 func lowerCamelToken(tok string) string {

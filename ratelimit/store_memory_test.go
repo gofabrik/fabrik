@@ -17,8 +17,12 @@ func TestMemoryStore_Sweep(t *testing.T) {
 	s := ratelimit.NewMemoryStore()
 	ctx := context.Background()
 	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
-	s.SetIfAbsent(ctx, "old", 1, now, now.Add(time.Second))
-	s.SetIfAbsent(ctx, "live", 2, now, now.Add(time.Hour))
+	if ok, err := s.SetIfAbsent(ctx, "old", 1, now, now.Add(time.Second)); err != nil || !ok {
+		t.Fatalf("seed old: ok=%v err=%v", ok, err)
+	}
+	if ok, err := s.SetIfAbsent(ctx, "live", 2, now, now.Add(time.Hour)); err != nil || !ok {
+		t.Fatalf("seed live: ok=%v err=%v", ok, err)
+	}
 	removed := s.Sweep(ctx, now.Add(time.Minute))
 	if removed != 1 {
 		t.Fatalf("Sweep removed %d, want 1", removed)

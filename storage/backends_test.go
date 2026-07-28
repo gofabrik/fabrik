@@ -20,7 +20,11 @@ func TestLocalConformance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { s.Close() })
+		t.Cleanup(func() {
+			if err := s.Close(); err != nil {
+				t.Errorf("close local storage: %v", err)
+			}
+		})
 		return s
 	})
 }

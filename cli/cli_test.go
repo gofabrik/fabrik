@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,23 @@ func TestFlag_LongAndShort(t *testing.T) {
 				t.Errorf("stdout: want %q, got %q", tc.want, stdout)
 			}
 		})
+	}
+}
+
+func TestFlag_RejectsMultiCharacterShortWithInlineValue(t *testing.T) {
+	verbose := BoolFlag("verbose").Short('v')
+	root := &Command{
+		Name:  "myapp",
+		Flags: Flags(verbose),
+		Run:   func(Context) error { t.Fatal("invalid flag reached Run"); return nil },
+	}
+
+	code, _, stderr := exec(t, root, []string{"-verbose=true"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "combined short flags not supported") {
+		t.Fatalf("stderr = %q, want combined-short diagnostic", stderr)
 	}
 }
 
@@ -177,6 +195,48 @@ func TestFlag_Slice(t *testing.T) {
 	_, stdout, _ := exec(t, root, []string{"--item", "a", "--item", "b", "--item=c"})
 	if strings.TrimSpace(stdout) != "a,b,c" {
 		t.Errorf("slice flag accumulation: %q", stdout)
+	}
+}
+
+func TestIntInputsUseNativeWidth(t *testing.T) {
+	max := strconv.FormatUint(uint64(^uint(0)>>1), 10)
+	overflow := strconv.FormatUint(uint64(^uint(0)>>1)+1, 10)
+	cases := []struct {
+		name string
+		root func() *Command
+		args func(string) []string
+	}{
+		{
+			name: "flag",
+			root: func() *Command {
+				return &Command{Name: "app", Flags: Flags(IntFlag("n")), Run: func(Context) error { return nil }}
+			},
+			args: func(value string) []string { return []string{"--n", value} },
+		},
+		{
+			name: "argument",
+			root: func() *Command {
+				return &Command{Name: "app", Args: Args(IntArg("n")), Run: func(Context) error { return nil }}
+			},
+			args: func(value string) []string { return []string{value} },
+		},
+		{
+			name: "slice flag",
+			root: func() *Command {
+				return &Command{Name: "app", Flags: Flags(IntSliceFlag("n")), Run: func(Context) error { return nil }}
+			},
+			args: func(value string) []string { return []string{"--n", value} },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.root().Parse(tc.args(max)); err != nil {
+				t.Fatalf("native int max rejected: %v", err)
+			}
+			if _, err := tc.root().Parse(tc.args(overflow)); err == nil {
+				t.Fatalf("value above native int max %s accepted", max)
+			}
+		})
 	}
 }
 

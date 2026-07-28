@@ -13,3 +13,6 @@ var Migrations embed.FS
 //fabrik:templates
 //go:embed all:templates
 var Templates embed.FS
+
+//go:embed all:mail
+var MailTemplates embed.FS

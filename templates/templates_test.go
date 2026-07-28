@@ -230,6 +230,47 @@ func TestLoad_SectionWithoutLayoutAndNoFallback_Errors(t *testing.T) {
 	}
 }
 
+func TestLoad_PageMustDefineContent(t *testing.T) {
+	for name, page := range map[string]string{
+		"raw HTML":          `<p>discarded</p>`,
+		"misspelled define": `{{ define "contents" }}discarded{{ end }}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fsys := fstest.MapFS{
+				"tpl/_default/_layout.html": &fstest.MapFile{Data: []byte(`{{ block "content" . }}fallback{{ end }}`)},
+				"tpl/public/page.html":      &fstest.MapFile{Data: []byte(page)},
+			}
+			_, err := templates.Load(fsys, "tpl")
+			if err == nil {
+				t.Fatal("Load accepted a page without a content definition")
+			}
+			for _, want := range []string{"tpl/public/page.html", `define "content"`} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Load error %q missing %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoad_ContentDefinitionWorksWithFallbackLayout(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/_default/_layout.html": &fstest.MapFile{Data: []byte(`{{ block "content" . }}fallback{{ end }}`)},
+		"tpl/public/page.html":      &fstest.MapFile{Data: []byte(`{{ define "content" }}page{{ end }}`)},
+	}
+	set, err := templates.Load(fsys, "tpl")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var out strings.Builder
+	if err := set.Render(&out, "public/page", nil); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if got := out.String(); got != "page" {
+		t.Fatalf("Render = %q, want page", got)
+	}
+}
+
 func TestLoad_MissingDir_Errors(t *testing.T) {
 	fsys := fstest.MapFS{}
 	if _, err := templates.Load(fsys, "nope", nil); err == nil {

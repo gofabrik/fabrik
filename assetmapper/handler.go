@@ -36,13 +36,19 @@ func (h *devHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := strings.TrimPrefix(r.URL.Path, h.mapper.urlPrefix)
-	logical := stripHashSegment(rel)
-	if logical == "" {
+	if rel == "" {
 		http.NotFound(w, r)
 		return
 	}
 
+	logical := rel
 	c, err := h.mapper.loadDev(logical)
+	if errors.Is(err, ErrAssetNotFound) {
+		if stripped := stripHashSegment(rel); stripped != rel {
+			logical = stripped
+			c, err = h.mapper.loadDev(logical)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, ErrAssetNotFound) {
 			http.NotFound(w, r)

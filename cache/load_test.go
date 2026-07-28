@@ -107,14 +107,16 @@ func TestLoadSelfCanceledFuncPropagates(t *testing.T) {
 	g := newLoadGroup()
 	in := make(chan struct{})
 	release := make(chan struct{})
+	runnerDone := make(chan error, 1)
 	var runs atomic.Int32
 	go func() {
-		g.Do(context.Background(), "k", func(func(func()) bool) (any, error) { //nolint:errcheck
+		_, err := g.Do(context.Background(), "k", func(func(func()) bool) (any, error) {
 			runs.Add(1)
 			close(in)
 			<-release
 			return nil, context.Canceled
 		})
+		runnerDone <- err
 	}()
 	<-in
 	res := make(chan error, 1)
@@ -129,6 +131,9 @@ func TestLoadSelfCanceledFuncPropagates(t *testing.T) {
 	close(release)
 	if err := <-res; !errors.Is(err, context.Canceled) {
 		t.Fatalf("waiting caller err = %v, want the function's Canceled", err)
+	}
+	if err := <-runnerDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("running caller err = %v, want the function's Canceled", err)
 	}
 	if runs.Load() != 1 {
 		t.Fatalf("runs = %d: a function-returned Canceled with a live runner must not trigger takeover", runs.Load())
@@ -149,11 +154,18 @@ func TestLoadDeadlineExpiredRunnerTakeover(t *testing.T) {
 		}
 		return "took over", nil
 	}
-	go g.Do(runnerCtx, "k", fn) //nolint:errcheck
+	runnerDone := make(chan error, 1)
+	go func() {
+		_, err := g.Do(runnerCtx, "k", fn)
+		runnerDone <- err
+	}()
 	<-in
 	v, err := g.Do(context.Background(), "k", fn)
 	if err != nil || v != "took over" || runs.Load() != 2 {
 		t.Fatalf("takeover = %v %v runs=%d", v, err, runs.Load())
+	}
+	if err := <-runnerDone; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("running caller err = %v, want deadline exceeded", err)
 	}
 }
 
@@ -163,7 +175,7 @@ func TestLoadPanicPropagates(t *testing.T) {
 	saw := make(chan any, 2)
 	go func() {
 		defer func() { saw <- recover() }()
-		g.Do(context.Background(), "k", func(func(func()) bool) (any, error) { //nolint:errcheck
+		_, _ = g.Do(context.Background(), "k", func(func(func()) bool) (any, error) {
 			close(in)
 			time.Sleep(5 * time.Millisecond)
 			panic("boom")
@@ -172,7 +184,7 @@ func TestLoadPanicPropagates(t *testing.T) {
 	<-in
 	func() {
 		defer func() { saw <- recover() }()
-		g.Do(context.Background(), "k", func(func(func()) bool) (any, error) { return nil, nil }) //nolint:errcheck
+		_, _ = g.Do(context.Background(), "k", func(func(func()) bool) (any, error) { return nil, nil })
 	}()
 	if a, b := <-saw, <-saw; a != "boom" || b != "boom" {
 		t.Fatalf("panic propagation: %v %v", a, b)
@@ -208,11 +220,13 @@ func TestLoadCanceledCallerNeverGetsResult(t *testing.T) {
 		g := newLoadGroup()
 		started := make(chan struct{})
 		release := make(chan struct{})
-		go g.Do(context.Background(), "k", func(func(func()) bool) (any, error) { //nolint:errcheck
-			close(started)
-			<-release
-			return "v", nil
-		})
+		go func() {
+			_, _ = g.Do(context.Background(), "k", func(func(func()) bool) (any, error) {
+				close(started)
+				<-release
+				return "v", nil
+			})
+		}()
 		<-started
 		ctx, cancel := context.WithCancel(context.Background())
 		caller := make(chan error, 1)

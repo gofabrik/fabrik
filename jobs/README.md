@@ -51,7 +51,8 @@ At-least-once. A worker can crash mid-run and the job runs again, so wrap
 non-idempotent side effects behind your own idempotency key.
 
 - **Retries** with exponential backoff and jitter; `ErrPermanent`
-  short-circuits to failed; a bounded `MaxAttempts` (default 25).
+  short-circuits to failed. `MaxAttempts` counts total executions, including
+  the first run; zero selects the manager default of 25.
 - **Per-attempt timeout** with a `TimeoutRetry`, `TimeoutFail`, or
   `TimeoutDiscard` policy. Timeout and cancellation are cooperative: the
   deadline cancels the context but cannot terminate the goroutine. Timeout
