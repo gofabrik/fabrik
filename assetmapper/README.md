@@ -1,6 +1,6 @@
 # assetmapper
 
-Frontend assets for Go without Node or a bundler: content-hashed URLs
+Frontend assets for Go without Node or a bundler: hash-addressed URLs
 for immutable caching, ES modules with importmaps, JS / CSS reference
 rewriting, and vendoring from jspm.io. Stdlib only.
 
@@ -8,12 +8,16 @@ rewriting, and vendoring from jspm.io. Stdlib only.
 
 Assets are plain files in a directory - CSS, ES modules, images,
 fonts. The library maps each logical path (`app.css`) to a
-content-hashed public URL (`/assets/app-4c9d02ef7129e84f21d3.css`), rewriting the
+hash-addressed public URL (`/assets/app-4c9d02ef7129e84f21d3.css`), rewriting the
 references inside JS and CSS (`import "./nav.js"`, `url("bg.png")`,
 `@import`) so the whole graph is hash-addressed and cacheable forever.
 JavaScript stays standard ES modules the browser runs directly; bare
 specifiers like `import htmx from "htmx"` resolve through an
 importmap rendered into the page.
+
+Circular module and stylesheet graphs are supported. Every member of a
+strongly connected component receives one shared graph digest, so changing any
+member invalidates the complete cycle and every importer downstream from it.
 
 ## Usage
 
@@ -59,7 +63,9 @@ URL, ETag, and length have been fixed.
 `Handler` owns its prefix stripping - no `http.StripPrefix`. It
 serves GET and HEAD (405 otherwise), answers `If-None-Match` with
 304, and sets `Cache-Control: public, max-age=31536000, immutable`,
-which is safe because every served name embeds its content hash.
+which is safe because every served name is derived from its final content or,
+for a cycle, from the complete component graph. Strong ETags still identify
+each member's exact served bytes.
 
 `Check(roots, im, opts...)` runs the same pipeline and reports the
 error `Build` would, without keeping the result - wire it into CI so
@@ -178,11 +184,10 @@ entries by hand would bypass provenance recording.
 
 ## Errors
 
-`Build`, `Check`, and `Compile` fail loudly and completely: an invalid root, a
-dependency cycle among modules, two assets compiling to the same
-output name, a malformed `importmap.json`, or an importmap entry
-naming a missing asset all abort with a message naming the culprit. Missing
-relative JS and CSS imports are also rejected during planning, before any
-output is served or published.
+`Build`, `Check`, and `Compile` fail loudly and completely: an invalid root,
+two assets compiling to the same output name, a malformed `importmap.json`, or
+an importmap entry naming a missing asset all abort with a message naming the
+culprit. Missing relative JS and CSS imports are also rejected during
+planning, before any output is served or published.
 `ErrAssetNotFound` reports unknown logical paths at lookup time;
 template helpers return errors that surface as execution errors.

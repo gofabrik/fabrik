@@ -86,7 +86,7 @@ func (*Assets) Meta() gen.Meta {
 		Synopsis: "Asset pipeline from an embedded tree: [dir=assets]",
 		Doc: "**`//fabrik:assets [dir=assets]`**\n\n" +
 			"Declared on an exported `embed.FS` variable: the sources compile " +
-			"in memory at startup - content-hashed URLs, JS / CSS references " +
+			"in memory at startup - hash-addressed URLs, JS / CSS references " +
 			"rewritten to hashed names, importmap rendering - and serve under " +
 			"`/assets/`. Template sets gain the `asset` and `importmap` " +
 			"helpers automatically. `dir=` names the subdirectory inside the " +

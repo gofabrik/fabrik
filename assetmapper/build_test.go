@@ -317,15 +317,42 @@ func TestRootDirValidationAndMount(t *testing.T) {
 	}
 }
 
-func TestBuildCycleError(t *testing.T) {
+func TestBuildSupportsCycle(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a.js": {Data: []byte(`import "./b.js";`)},
 		"b.js": {Data: []byte(`import "./a.js";`)},
 	}
-	_, err := assetmapper.Build([]assetmapper.Root{{FS: fsys}}, nil)
-	var ce *assetmapper.CycleError
-	if !errors.As(err, &ce) {
-		t.Fatalf("Build err = %v, want *CycleError", err)
+	compiled, err := assetmapper.Build([]assetmapper.Root{{FS: fsys}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for logical, dependency := range map[string]string{"a.js": "b.js", "b.js": "a.js"} {
+		url, err := compiled.Asset(logical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dependencyURL, err := compiled.Asset(dependency)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body := get(t, compiled.Handler(), url).Body.String(); !strings.Contains(body, dependencyURL) {
+			t.Fatalf("%s does not reference %s:\n%s", logical, dependencyURL, body)
+		}
+	}
+	aURL, _ := compiled.Asset("a.js")
+	bURL, _ := compiled.Asset("b.js")
+	aResponse := get(t, compiled.Handler(), aURL)
+	bResponse := get(t, compiled.Handler(), bURL)
+	aETag := aResponse.Header().Get("ETag")
+	if aETag == bResponse.Header().Get("ETag") {
+		t.Fatalf("different cycle member bodies share strong ETag %q", aETag)
+	}
+	conditional := httptest.NewRequest(http.MethodGet, bURL, nil)
+	conditional.Header.Set("If-None-Match", aETag)
+	response := httptest.NewRecorder()
+	compiled.Handler().ServeHTTP(response, conditional)
+	if response.Code != http.StatusOK {
+		t.Fatalf("cycle member request with another member's ETag = %d, want 200", response.Code)
 	}
 }
 
@@ -352,13 +379,14 @@ func TestCheckMirrorsBuild(t *testing.T) {
 		t.Fatal("Check with invalid prefix option: want error")
 	}
 
-	cyclic := []assetmapper.Root{{FS: fstest.MapFS{
-		"a.js": {Data: []byte(`import "./b.js";`)},
-		"b.js": {Data: []byte(`import "./a.js";`)},
+	invalid := []assetmapper.Root{{FS: fstest.MapFS{
+		"a.js": {Data: []byte(`import "./missing.js";`)},
 	}}}
-	cerr := assetmapper.Check(cyclic, nil)
-	_, berr := assetmapper.Build(cyclic, nil)
-	if cerr == nil || berr == nil || cerr.Error() != berr.Error() {
+	cerr := assetmapper.Check(invalid, nil)
+	_, berr := assetmapper.Build(invalid, nil)
+	checkDetail := strings.TrimPrefix(fmt.Sprint(cerr), "assetmapper.Check:")
+	buildDetail := strings.TrimPrefix(fmt.Sprint(berr), "assetmapper.Build:")
+	if cerr == nil || berr == nil || checkDetail != buildDetail {
 		t.Fatalf("Check and Build disagree:\n  Check: %v\n  Build: %v", cerr, berr)
 	}
 }

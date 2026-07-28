@@ -49,7 +49,7 @@ func Build(roots []Root, im *Importmap, opts ...BuildOption) (*Compiled, error) 
 		asset := plan.assets[logical]
 		entry := serveEntry{
 			logical: asset.logical,
-			hash:    asset.hash,
+			hash:    asset.etagHash,
 			size:    asset.size,
 		}
 		if asset.kind == kindJS || asset.kind == kindCSS {
@@ -59,7 +59,7 @@ func Build(roots []Root, im *Importmap, opts ...BuildOption) (*Compiled, error) 
 			if err != nil {
 				return nil, fmt.Errorf("assetmapper.Build: snapshot %s: %w", logical, err)
 			}
-			if int64(len(content)) != asset.size || hashContent(content) != asset.hash {
+			if int64(len(content)) != asset.size || hashContent(content) != asset.outputHash {
 				return nil, fmt.Errorf("assetmapper.Build: source %s changed while snapshotting", logical)
 			}
 			entry.content = content

@@ -2,6 +2,7 @@ package assetmapper
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -23,14 +24,15 @@ type buildPlan struct {
 }
 
 type plannedAsset struct {
-	logical string
-	root    Root
-	subPath string
-	kind    assetKind
-	hash    string
-	output  string
-	size    int64
-	content []byte
+	logical    string
+	root       Root
+	subPath    string
+	kind       assetKind
+	outputHash string
+	etagHash   string
+	output     string
+	size       int64
+	content    []byte
 }
 
 func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) (*buildPlan, error) {
@@ -97,13 +99,14 @@ func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) 
 		outputOwner[output] = logical
 		hashedNames[logical] = output
 		plan.assets[logical] = &plannedAsset{
-			logical: logical,
-			root:    asset.root,
-			subPath: asset.subPath,
-			kind:    asset.kind,
-			hash:    hash,
-			output:  output,
-			size:    size,
+			logical:    logical,
+			root:       asset.root,
+			subPath:    asset.subPath,
+			kind:       asset.kind,
+			outputHash: hash,
+			etagHash:   hash,
+			output:     output,
+			size:       size,
 		}
 		plan.order = append(plan.order, logical)
 	}
@@ -139,40 +142,42 @@ func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) 
 		plan.manifest.Dependencies[logical] = plannedDependencies(refs, im, collected)
 	}
 
-	order, err := topoSort(deps)
-	if err != nil {
-		return nil, err
-	}
-	for _, logical := range order {
-		asset := collected[logical]
-		content := asset.content
-		if refs := refsByAsset[logical]; len(refs) > 0 {
-			content = rewriteRefs(asset.content, refs, func(ref ref) string {
-				target, ok := hashedNames[ref.resolved]
-				if !ok {
-					return ref.spec
-				}
-				return prefix + target + ref.suffix
-			})
+	for _, component := range dependencyComponents(deps) {
+		if !component.cyclic {
+			logical := component.nodes[0]
+			asset := collected[logical]
+			content := rewritePlannedContent(asset.content, refsByAsset[logical], prefix, hashedNames)
+			hash := hashContent(content)
+			output := hashedName(logical, hash)
+			if err := checkCollision(context, logical, output, collected, outputOwner); err != nil {
+				return nil, err
+			}
+			outputOwner[output] = logical
+			hashedNames[logical] = output
+			plan.assets[logical] = plannedRewriteAsset(logical, asset, hash, output, content)
+			plan.order = append(plan.order, logical)
+			continue
 		}
-		hash := hashContent(content)
-		output := hashedName(logical, hash)
-		if err := checkCollision(context, logical, output, collected, outputOwner); err != nil {
-			return nil, err
+
+		members := make(map[string]struct{}, len(component.nodes))
+		for _, logical := range component.nodes {
+			members[logical] = struct{}{}
 		}
-		outputOwner[output] = logical
-		hashedNames[logical] = output
-		plan.assets[logical] = &plannedAsset{
-			logical: logical,
-			root:    asset.root,
-			subPath: asset.subPath,
-			kind:    asset.kind,
-			hash:    hash,
-			output:  output,
-			size:    int64(len(content)),
-			content: content,
+		hash := cyclicComponentHash(component.nodes, collected, refsByAsset, members, prefix, hashedNames)
+		for _, logical := range component.nodes {
+			output := hashedName(logical, hash)
+			if err := checkCollision(context, logical, output, collected, outputOwner); err != nil {
+				return nil, err
+			}
+			outputOwner[output] = logical
+			hashedNames[logical] = output
 		}
-		plan.order = append(plan.order, logical)
+		for _, logical := range component.nodes {
+			asset := collected[logical]
+			content := rewritePlannedContent(asset.content, refsByAsset[logical], prefix, hashedNames)
+			plan.assets[logical] = plannedRewriteAsset(logical, asset, hash, hashedNames[logical], content)
+			plan.order = append(plan.order, logical)
+		}
 	}
 
 	for logical, output := range hashedNames {
@@ -184,6 +189,78 @@ func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) 
 		return nil, fmt.Errorf("%s: %w", context, err)
 	}
 	return plan, nil
+}
+
+func rewritePlannedContent(content []byte, refs []ref, prefix string, hashedNames map[string]string) []byte {
+	if len(refs) == 0 {
+		return content
+	}
+	return rewriteRefs(content, refs, func(ref ref) string {
+		target, ok := hashedNames[ref.resolved]
+		if !ok {
+			return ref.spec
+		}
+		return prefix + target + ref.suffix
+	})
+}
+
+func plannedRewriteAsset(
+	logical string,
+	asset *collectedAsset,
+	hash, output string,
+	content []byte,
+) *plannedAsset {
+	return &plannedAsset{
+		logical:    logical,
+		root:       asset.root,
+		subPath:    asset.subPath,
+		kind:       asset.kind,
+		outputHash: hash,
+		etagHash:   hashContent(content),
+		output:     output,
+		size:       int64(len(content)),
+		content:    content,
+	}
+}
+
+// cyclicComponentHash gives every member of a cycle one shared identity. Its
+// canonical form includes member paths and source bytes, replaces internal
+// references with stable logical markers, and uses finalized names for
+// dependencies outside the component.
+func cyclicComponentHash(
+	nodes []string,
+	assets map[string]*collectedAsset,
+	refsByAsset map[string][]ref,
+	members map[string]struct{},
+	prefix string,
+	hashedNames map[string]string,
+) string {
+	hasher := sha256.New()
+	writeHashField(hasher, []byte("assetmapper-scc-v1"))
+	writeHashField(hasher, []byte(prefix))
+	for _, logical := range nodes {
+		writeHashField(hasher, []byte(logical))
+		writeHashField(hasher, assets[logical].content)
+		content := rewriteRefs(assets[logical].content, refsByAsset[logical], func(ref ref) string {
+			if _, internal := members[ref.resolved]; internal {
+				return "\x00assetmapper-scc:" + ref.resolved + ref.suffix
+			}
+			target, ok := hashedNames[ref.resolved]
+			if !ok {
+				return ref.spec
+			}
+			return prefix + target + ref.suffix
+		})
+		writeHashField(hasher, content)
+	}
+	return hex.EncodeToString(hasher.Sum(nil))[:HashLength]
+}
+
+func writeHashField(hasher interface{ Write([]byte) (int, error) }, value []byte) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+	_, _ = hasher.Write(length[:])
+	_, _ = hasher.Write(value)
 }
 
 func validatePlannedReference(

@@ -1,7 +1,6 @@
 package assetmapper_test
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -517,21 +516,161 @@ func TestCompile_TransitiveHashChangeOnDepUpdate(t *testing.T) {
 	}
 }
 
-// --- Cycle detection ---
+// --- Circular dependency graphs ---
 
-func TestCompile_DetectsImportCycle(t *testing.T) {
+func TestCompile_SupportsImportCycle(t *testing.T) {
 	src := fstest.MapFS{
 		"a.js": {Data: []byte(`import b from "./b.js"; export default b;`)},
 		"b.js": {Data: []byte(`import a from "./a.js"; export default a;`)},
 	}
-	_, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, t.TempDir())
-	var cycle *assetmapper.CycleError
-	if !errors.As(err, &cycle) {
-		t.Fatalf("err = %v, want *CycleError", err)
+	dir := t.TempDir()
+	manifest, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(cycle.Nodes) != 2 {
-		t.Errorf("CycleError.Nodes = %v, want both a.js and b.js", cycle.Nodes)
+	if outputDigest(manifest.Entries["a.js"]) != outputDigest(manifest.Entries["b.js"]) {
+		t.Fatalf("cycle members do not share a digest: %v", manifest.Entries)
 	}
+	for logical, dependency := range map[string]string{"a.js": "b.js", "b.js": "a.js"} {
+		if got := manifest.Dependencies[logical]; len(got) != 1 || got[0] != dependency {
+			t.Errorf("persisted %s dependencies = %v, want [%s]", logical, got, dependency)
+		}
+		content, err := os.ReadFile(filepath.Join(dir, manifest.Entries[logical]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "/assets/" + manifest.Entries[dependency]; !strings.Contains(string(content), want) {
+			t.Fatalf("%s does not reference cyclic dependency %q:\n%s", logical, want, content)
+		}
+	}
+	repeated, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, logical := range []string{"a.js", "b.js"} {
+		if manifest.Entries[logical] != repeated.Entries[logical] {
+			t.Errorf("%s cycle output is nondeterministic: %q != %q",
+				logical, manifest.Entries[logical], repeated.Entries[logical])
+		}
+	}
+}
+
+func TestCompile_CycleChangeInvalidatesComponentAndImporters(t *testing.T) {
+	version := func(bValue string) fstest.MapFS {
+		return fstest.MapFS{
+			"entry.js": {Data: []byte(`import "./a.js";`)},
+			"a.js":     {Data: []byte(`import "./b.js"; export const a = 1;`)},
+			"b.js":     {Data: []byte(`import "./a.js"; export const b = ` + bValue + `;`)},
+		}
+	}
+	first, err := assetmapper.Compile([]assetmapper.Root{{FS: version("1")}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := assetmapper.Compile([]assetmapper.Root{{FS: version("2")}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, logical := range []string{"a.js", "b.js", "entry.js"} {
+		if first.Entries[logical] == second.Entries[logical] {
+			t.Errorf("%s was not invalidated by a cyclic dependency change", logical)
+		}
+	}
+}
+
+func TestCompile_ExternalDependencyInvalidatesCycle(t *testing.T) {
+	version := func(value string) fstest.MapFS {
+		return fstest.MapFS{
+			"a.js":    {Data: []byte(`import "./b.js"; import "./util.js";`)},
+			"b.js":    {Data: []byte(`import "./a.js";`)},
+			"util.js": {Data: []byte(`export const value = ` + value + `;`)},
+		}
+	}
+	first, err := assetmapper.Compile([]assetmapper.Root{{FS: version("1")}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := assetmapper.Compile([]assetmapper.Root{{FS: version("2")}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, logical := range []string{"a.js", "b.js", "util.js"} {
+		if first.Entries[logical] == second.Entries[logical] {
+			t.Errorf("%s was not invalidated by the external dependency change", logical)
+		}
+	}
+}
+
+func TestCompile_CycleDigestIncludesURLPrefix(t *testing.T) {
+	src := fstest.MapFS{
+		"a.js": {Data: []byte(`import "./b.js";`)},
+		"b.js": {Data: []byte(`import "./a.js";`)},
+	}
+	defaultManifest, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	customDir := t.TempDir()
+	customManifest, err := assetmapper.Compile(
+		[]assetmapper.Root{{FS: src}},
+		customDir,
+		assetmapper.WithURLPrefix("/static/"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, logical := range []string{"a.js", "b.js"} {
+		if defaultManifest.Entries[logical] == customManifest.Entries[logical] {
+			t.Errorf("%s digest did not include the rewritten URL prefix", logical)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(customDir, customManifest.Entries["a.js"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/static/" + customManifest.Entries["b.js"]; !strings.Contains(string(content), want) {
+		t.Fatalf("custom prefix missing from cyclic rewrite %q:\n%s", want, content)
+	}
+}
+
+func TestCompile_SupportsSelfImport(t *testing.T) {
+	src := fstest.MapFS{
+		"self.js": {Data: []byte(`import "./self.js";`)},
+	}
+	out, manifest := compileAndRead(t, src, "self.js")
+	if want := "/assets/" + manifest.Entries["self.js"]; !strings.Contains(out, want) {
+		t.Fatalf("self import was not rewritten to %q:\n%s", want, out)
+	}
+}
+
+func TestCompile_SupportsStylesheetCycle(t *testing.T) {
+	src := fstest.MapFS{
+		"a.css": {Data: []byte(`@import "./b.css";`)},
+		"b.css": {Data: []byte(`@import "./a.css";`)},
+	}
+	dir := t.TempDir()
+	manifest, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outputDigest(manifest.Entries["a.css"]) != outputDigest(manifest.Entries["b.css"]) {
+		t.Fatalf("stylesheet cycle members do not share a digest: %v", manifest.Entries)
+	}
+	for logical, dependency := range map[string]string{"a.css": "b.css", "b.css": "a.css"} {
+		content, err := os.ReadFile(filepath.Join(dir, manifest.Entries[logical]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "/assets/" + manifest.Entries[dependency]; !strings.Contains(string(content), want) {
+			t.Fatalf("%s does not reference cyclic stylesheet %q:\n%s", logical, want, content)
+		}
+	}
+}
+
+func outputDigest(output string) string {
+	extension := filepath.Ext(output)
+	stem := strings.TrimSuffix(output, extension)
+	return stem[strings.LastIndexByte(stem, '-')+1:]
 }
 
 // --- URL prefix options ---

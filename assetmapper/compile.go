@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// Compile writes a content-hashed asset tree and manifest to publicDir.
+// Compile writes a hash-addressed asset tree and manifest to publicDir.
 //
 // Resolution semantics match [Mapper.Asset]: roots are walked in
 // order; a logical path discovered in an earlier root shadows the
@@ -64,7 +64,7 @@ func Compile(srcRoots []Root, publicDir string, opts ...BuildOption) (*Manifest,
 		if err != nil {
 			return nil, fmt.Errorf("assetmapper.Compile: stream %s: %w", logical, err)
 		}
-		if hash != asset.hash {
+		if hash != asset.outputHash {
 			return nil, fmt.Errorf("assetmapper.Compile: source %s changed while compiling", logical)
 		}
 	}

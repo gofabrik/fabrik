@@ -1,4 +1,4 @@
-// Package assetmapper maps logical asset paths to content-hashed public URLs.
+// Package assetmapper maps logical asset paths to hash-addressed public URLs.
 //
 // Surface:
 //

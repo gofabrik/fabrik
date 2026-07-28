@@ -187,60 +187,10 @@ func rewriteRefs(content []byte, refs []ref, replacement func(r ref) string) []b
 	return out
 }
 
-// topoSort orders dependencies before dependents with deterministic tie-breaking.
-func topoSort(deps map[string][]string) ([]string, error) {
-	dependents := map[string][]string{}
-	indegree := map[string]int{}
-	for node, ds := range deps {
-		if _, ok := indegree[node]; !ok {
-			indegree[node] = 0
-		}
-		for _, dep := range ds {
-			dependents[dep] = append(dependents[dep], node)
-			indegree[node]++
-		}
-	}
-
-	var ready []string
-	for node := range deps {
-		if indegree[node] == 0 {
-			ready = append(ready, node)
-		}
-	}
-	sort.Strings(ready)
-
-	order := make([]string, 0, len(deps))
-	for len(ready) > 0 {
-		n := ready[0]
-		ready = ready[1:]
-		order = append(order, n)
-		var newly []string
-		for _, dep := range dependents[n] {
-			indegree[dep]--
-			if indegree[dep] == 0 {
-				newly = append(newly, dep)
-			}
-		}
-		if len(newly) > 0 {
-			ready = append(ready, newly...)
-			sort.Strings(ready)
-		}
-	}
-
-	if len(order) != len(deps) {
-		var inCycle []string
-		for node, deg := range indegree {
-			if deg > 0 {
-				inCycle = append(inCycle, node)
-			}
-		}
-		sort.Strings(inCycle)
-		return nil, &CycleError{Nodes: inCycle}
-	}
-	return order, nil
-}
-
 // CycleError reports assets involved in a dependency cycle.
+//
+// Deprecated: Build, Check, and Compile support circular dependency graphs.
+// The type remains available for source compatibility with older callers.
 type CycleError struct {
 	Nodes []string
 }
