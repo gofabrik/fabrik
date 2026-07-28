@@ -14,5 +14,5 @@ var Migrations embed.FS
 //go:embed all:templates
 var Templates embed.FS
 
-//go:embed all:mailtemplates
+//go:embed all:mail
 var MailTemplates embed.FS
