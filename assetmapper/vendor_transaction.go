@@ -70,8 +70,14 @@ func (v *Vendor) recoverTransaction() error {
 	if transaction.Version != 1 || transaction.Lock == nil || transaction.Entries == nil {
 		return fmt.Errorf("assetmapper.Vendor: invalid transaction journal")
 	}
-	if transaction.Lock.Version != vendorLockVersion {
+	if transaction.Lock.Version != 1 && transaction.Lock.Version != vendorLockVersion {
 		return fmt.Errorf("assetmapper.Vendor: transaction journal has unsupported lock version %d", transaction.Lock.Version)
+	}
+	if transaction.Lock.Version == 1 {
+		migrateVendorLockV1(transaction.Lock)
+	}
+	if transaction.Lock.Packages == nil {
+		transaction.Lock.Packages = map[string]LockedPackage{}
 	}
 	for specifier, pkg := range transaction.Lock.Packages {
 		if _, err := vendorRelPath(specifier, pkg.Type); err != nil {
@@ -80,6 +86,9 @@ func (v *Vendor) recoverTransaction() error {
 		if err := validateLockedPackage(specifier, pkg); err != nil {
 			return fmt.Errorf("assetmapper.Vendor: invalid transaction journal: %w", err)
 		}
+	}
+	if err := validateVendorGraph(transaction.Lock); err != nil {
+		return fmt.Errorf("assetmapper.Vendor: invalid transaction journal: %w", err)
 	}
 	if err := transaction.Lock.Verify(v.VendorDir); err != nil {
 		return fmt.Errorf("assetmapper.Vendor: recover transaction: %w", err)

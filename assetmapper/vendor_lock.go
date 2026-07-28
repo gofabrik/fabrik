@@ -9,36 +9,42 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 )
 
 // VendorLockFilename is the provenance record written beside VendorDir.
 const VendorLockFilename = "vendor.lock.json"
 
-const vendorLockVersion = 1
+const vendorLockVersion = 2
 
 // VendorLock records the exact source and published bytes of vendored files.
 type VendorLock struct {
-	Version  int                      `json:"version"`
-	Packages map[string]LockedPackage `json:"packages"`
+	Version            int                      `json:"version"`
+	DirectRequirements map[string]string        `json:"direct_requirements"`
+	Packages           map[string]LockedPackage `json:"packages"`
 }
 
 // LockedPackage records one published vendored artifact.
 type LockedPackage struct {
-	Version      string `json:"version"`
-	Type         string `json:"type"`
-	Path         string `json:"path,omitempty"`
-	SourceURL    string `json:"source_url"`
-	SourceSize   int64  `json:"source_size"`
-	SourceSHA256 string `json:"source_sha256"`
-	Size         int64  `json:"size"`
-	SHA256       string `json:"sha256"`
+	Version      string   `json:"version"`
+	Type         string   `json:"type"`
+	Path         string   `json:"path,omitempty"`
+	SourceURL    string   `json:"source_url"`
+	SourceSize   int64    `json:"source_size"`
+	SourceSHA256 string   `json:"source_sha256"`
+	Size         int64    `json:"size"`
+	SHA256       string   `json:"sha256"`
+	Dependencies []string `json:"dependencies,omitempty"`
+	Owners       []string `json:"owners,omitempty"`
 }
 
 func newVendorLock() *VendorLock {
 	return &VendorLock{
-		Version:  vendorLockVersion,
-		Packages: map[string]LockedPackage{},
+		Version:            vendorLockVersion,
+		DirectRequirements: map[string]string{},
+		Packages:           map[string]LockedPackage{},
 	}
 }
 
@@ -62,8 +68,11 @@ func LoadVendorLock(path string) (*VendorLock, error) {
 		}
 		return nil, fmt.Errorf("assetmapper.LoadVendorLock: decode %s: %w", path, err)
 	}
-	if lock.Version != vendorLockVersion {
+	if lock.Version != 1 && lock.Version != vendorLockVersion {
 		return nil, fmt.Errorf("assetmapper.LoadVendorLock: unsupported version %d", lock.Version)
+	}
+	if lock.Version == 1 {
+		migrateVendorLockV1(&lock)
 	}
 	if lock.Packages == nil {
 		lock.Packages = map[string]LockedPackage{}
@@ -75,6 +84,9 @@ func LoadVendorLock(path string) (*VendorLock, error) {
 		if err := validateLockedPackage(specifier, pkg); err != nil {
 			return nil, fmt.Errorf("assetmapper.LoadVendorLock: %w", err)
 		}
+	}
+	if err := validateVendorGraph(&lock); err != nil {
+		return nil, fmt.Errorf("assetmapper.LoadVendorLock: %w", err)
 	}
 	return &lock, nil
 }
@@ -95,6 +107,9 @@ func (l *VendorLock) Save(path string) error {
 			return fmt.Errorf("assetmapper.VendorLock.Save: %w", err)
 		}
 	}
+	if err := validateVendorGraph(l); err != nil {
+		return fmt.Errorf("assetmapper.VendorLock.Save: %w", err)
+	}
 	data, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
 		return fmt.Errorf("assetmapper.VendorLock.Save: %w", err)
@@ -106,8 +121,120 @@ func (l *VendorLock) Save(path string) error {
 	return nil
 }
 
+func validateVendorGraph(lock *VendorLock) error {
+	if lock.DirectRequirements == nil {
+		return fmt.Errorf("nil direct requirements")
+	}
+	for specifier, version := range lock.DirectRequirements {
+		if version == "" {
+			return fmt.Errorf("direct requirement %q has no exact version", specifier)
+		}
+		if _, err := vendorRelPath(specifier, "js"); err != nil {
+			return fmt.Errorf("invalid direct requirement: %w", err)
+		}
+		if _, ok := lock.Packages[specifier]; !ok {
+			return fmt.Errorf("direct requirement %q is absent from the resolved closure", specifier)
+		}
+		if lock.Packages[specifier].Version != version {
+			return fmt.Errorf("direct requirement %q version %s does not match resolved version %s",
+				specifier, version, lock.Packages[specifier].Version)
+		}
+	}
+	for specifier, pkg := range lock.Packages {
+		for _, dependency := range pkg.Dependencies {
+			if _, ok := lock.Packages[dependency]; !ok {
+				return fmt.Errorf("package %q depends on missing package %q", specifier, dependency)
+			}
+		}
+		for _, owner := range pkg.Owners {
+			if _, ok := lock.DirectRequirements[owner]; !ok {
+				return fmt.Errorf("package %q has unknown owner %q", specifier, owner)
+			}
+		}
+		if !sort.StringsAreSorted(pkg.Dependencies) || hasDuplicateStrings(pkg.Dependencies) {
+			return fmt.Errorf("package %q dependencies are not sorted and unique", specifier)
+		}
+		if !sort.StringsAreSorted(pkg.Owners) || hasDuplicateStrings(pkg.Owners) {
+			return fmt.Errorf("package %q owners are not sorted and unique", specifier)
+		}
+	}
+	if len(lock.DirectRequirements) == 0 && len(lock.Packages) != 0 {
+		return fmt.Errorf("resolved closure is non-empty but has no direct requirements")
+	}
+	expectedOwners := make(map[string]map[string]struct{}, len(lock.Packages))
+	for root := range lock.DirectRequirements {
+		seen := map[string]struct{}{}
+		var visit func(string)
+		visit = func(specifier string) {
+			if _, ok := seen[specifier]; ok {
+				return
+			}
+			seen[specifier] = struct{}{}
+			if expectedOwners[specifier] == nil {
+				expectedOwners[specifier] = map[string]struct{}{}
+			}
+			expectedOwners[specifier][root] = struct{}{}
+			for _, dependency := range lock.Packages[specifier].Dependencies {
+				visit(dependency)
+			}
+		}
+		visit(root)
+	}
+	for specifier, pkg := range lock.Packages {
+		var expected []string
+		for owner := range expectedOwners[specifier] {
+			expected = append(expected, owner)
+		}
+		sort.Strings(expected)
+		if len(expected) == 0 {
+			return fmt.Errorf("package %q is not owned by any direct requirement", specifier)
+		}
+		if !slices.Equal(pkg.Owners, expected) {
+			return fmt.Errorf("package %q owners %v do not match graph owners %v", specifier, pkg.Owners, expected)
+		}
+	}
+	return nil
+}
+
+func migrateVendorLockV1(lock *VendorLock) {
+	lock.Version = vendorLockVersion
+	lock.DirectRequirements = make(map[string]string, len(lock.Packages))
+	for specifier, pkg := range lock.Packages {
+		lock.DirectRequirements[specifier] = pkg.Version
+		pkg.Dependencies = nil
+		pkg.Owners = []string{specifier}
+		lock.Packages[specifier] = pkg
+	}
+}
+
+func hasDuplicateStrings(values []string) bool {
+	for i := 1; i < len(values); i++ {
+		if values[i] == values[i-1] {
+			return true
+		}
+	}
+	return false
+}
+
 // Verify checks every locked artifact against its recorded size and digest.
 func (l *VendorLock) Verify(vendorDir string) error {
+	if l == nil {
+		return fmt.Errorf("assetmapper.VendorLock.Verify: nil lock")
+	}
+	if l.Version != vendorLockVersion {
+		return fmt.Errorf("assetmapper.VendorLock.Verify: unsupported version %d", l.Version)
+	}
+	for specifier, pkg := range l.Packages {
+		if _, err := vendorRelPath(specifier, pkg.Type); err != nil {
+			return fmt.Errorf("assetmapper.VendorLock.Verify: %w", err)
+		}
+		if err := validateLockedPackage(specifier, pkg); err != nil {
+			return fmt.Errorf("assetmapper.VendorLock.Verify: %w", err)
+		}
+	}
+	if err := validateVendorGraph(l); err != nil {
+		return fmt.Errorf("assetmapper.VendorLock.Verify: %w", err)
+	}
 	for specifier, pkg := range l.Packages {
 		rel := pkg.Path
 		if rel == "" {

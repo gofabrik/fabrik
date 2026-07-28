@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -33,9 +34,14 @@ type ResolvedPackage struct {
 	Version   string
 	Type      string // "js" (default) or "css"
 	URL       string
+	// Dependencies lists bare specifiers required by this artifact. Vendor
+	// also discovers dependencies from rewritten upstream URLs.
+	Dependencies []string
 }
 
 // Resolution contains the full transitive package set needed by the browser.
+// PackageResolver implementations should populate dependency edges when they
+// cannot be discovered from rewritten source URLs.
 type Resolution struct {
 	Packages []ResolvedPackage
 }
@@ -100,57 +106,71 @@ func (v *Vendor) RequirePackages(ctx context.Context, requests []PackageRequest)
 	if len(requests) == 0 {
 		return nil
 	}
+	direct, err := v.directRequirements()
+	if err != nil {
+		return err
+	}
 	for _, request := range requests {
 		if request.Name == "" {
 			return fmt.Errorf("assetmapper.Vendor.RequirePackages: empty package name")
 		}
+		if _, err := vendorRelPath(request.Name, "js"); err != nil {
+			return fmt.Errorf("assetmapper.Vendor.RequirePackages: %w", err)
+		}
+		direct[request.Name] = request.Version
 	}
-	res, err := v.Resolver.Resolve(ctx, requests)
-	if err != nil {
-		return fmt.Errorf("assetmapper.Vendor.RequirePackages: resolve: %w", err)
-	}
-	return v.applyResolution(ctx, res)
+	return v.resolveAndReplace(ctx, direct)
 }
 
 // Remove unregisters one vendored package. Its immutable artifact remains until
 // Prune, so metadata publication never creates a missing-file window.
 func (v *Vendor) Remove(specifier string) error {
-	return v.RemovePackages([]string{specifier})
+	return v.RemoveContext(context.Background(), specifier)
+}
+
+// RemoveContext unregisters one direct requirement with cancellation.
+func (v *Vendor) RemoveContext(ctx context.Context, specifier string) error {
+	return v.RemovePackagesContext(ctx, []string{specifier})
 }
 
 // RemovePackages unregisters a package batch as one metadata transaction.
 func (v *Vendor) RemovePackages(specifiers []string) error {
+	return v.RemovePackagesContext(context.Background(), specifiers)
+}
+
+// RemovePackagesContext unregisters a package batch as one cancellable
+// metadata transaction.
+func (v *Vendor) RemovePackagesContext(ctx context.Context, specifiers []string) error {
 	if err := v.validate(); err != nil {
 		return err
 	}
 	if err := v.recoverTransaction(); err != nil {
 		return err
 	}
+	if len(specifiers) == 0 {
+		return nil
+	}
 	for _, specifier := range specifiers {
 		if _, err := v.ValidateRemove(specifier); err != nil {
 			return err
 		}
 	}
-	lock, exists, err := v.loadLock()
+	direct, err := v.directRequirements()
 	if err != nil {
 		return err
 	}
-	if !exists {
-		lock = newVendorLock()
-	}
-	next := snapshotImportmap(v.Importmap)
 	for _, specifier := range specifiers {
-		delete(lock.Packages, specifier)
-		delete(next.Entries, specifier)
+		if _, ok := direct[specifier]; !ok {
+			return fmt.Errorf("assetmapper.Vendor.Remove: %q is transitive, not a direct requirement", specifier)
+		}
+		delete(direct, specifier)
 	}
-	if err := v.publishMetadata(lock, next); err != nil {
-		return err
-	}
-	v.Importmap.Entries = next.Entries
-	return nil
+	return v.resolveAndReplace(ctx, direct)
 }
 
-// ValidateRemove returns the file [Vendor.Remove] would delete without mutating state.
+// ValidateRemove validates that a specifier is a removable vendored entry and
+// returns its current immutable artifact path. Remove retains that artifact
+// until [Vendor.Prune].
 func (v *Vendor) ValidateRemove(specifier string) (string, error) {
 	if err := v.validate(); err != nil {
 		return "", err
@@ -161,6 +181,13 @@ func (v *Vendor) ValidateRemove(specifier string) (string, error) {
 	}
 	if entry.Version == "" {
 		return "", fmt.Errorf("assetmapper.Vendor.Remove: %q is a local entry (no version) — edit importmap.json directly", specifier)
+	}
+	if lock, exists, err := v.loadLock(); err != nil {
+		return "", err
+	} else if exists {
+		if _, direct := lock.DirectRequirements[specifier]; !direct {
+			return "", fmt.Errorf("assetmapper.Vendor.Remove: %q is transitive, not a direct requirement", specifier)
+		}
 	}
 	if entry.Path != "" {
 		prefix := VendorDir + "/"
@@ -401,14 +428,72 @@ func resolvedPlacementPath(path string) (string, error) {
 	}
 }
 
-// applyResolution publishes immutable artifacts before atomically switching
-// metadata to reference them.
-func (v *Vendor) applyResolution(ctx context.Context, res *Resolution) error {
-	if res == nil {
+func (v *Vendor) directRequirements() (map[string]string, error) {
+	lock, exists, err := v.loadLock()
+	if err != nil {
+		return nil, err
+	}
+	direct := map[string]string{}
+	if exists {
+		if err := lock.Verify(v.VendorDir); err != nil {
+			return nil, err
+		}
+		for specifier, version := range lock.DirectRequirements {
+			direct[specifier] = version
+		}
+	}
+	if len(direct) == 0 {
+		// Conservative migration: preserve every legacy vendored entry as a
+		// direct pin until the caller explicitly removes it.
+		for specifier, entry := range v.Importmap.Entries {
+			if entry.Version != "" {
+				direct[specifier] = entry.Version
+			}
+		}
+	}
+	return direct, nil
+}
+
+func (v *Vendor) resolveAndReplace(ctx context.Context, direct map[string]string) error {
+	requests := make([]PackageRequest, 0, len(direct))
+	for specifier, version := range direct {
+		requests = append(requests, PackageRequest{Name: specifier, Version: version})
+	}
+	sort.Slice(requests, func(i, j int) bool { return requests[i].Name < requests[j].Name })
+	resolution := &Resolution{}
+	var err error
+	if len(requests) > 0 {
+		resolution, err = v.Resolver.Resolve(ctx, requests)
+		if err != nil {
+			return fmt.Errorf("assetmapper.Vendor: resolve complete requirement set: %w", err)
+		}
+	}
+	if resolution == nil {
 		return fmt.Errorf("assetmapper.Vendor: resolver returned nil resolution")
 	}
-	if len(res.Packages) == 0 {
-		return nil
+	resolved := make(map[string]ResolvedPackage, len(resolution.Packages))
+	for _, pkg := range resolution.Packages {
+		resolved[pkg.Specifier] = pkg
+	}
+	exactDirect := make(map[string]string, len(direct))
+	for specifier, requested := range direct {
+		pkg, ok := resolved[specifier]
+		if !ok {
+			return fmt.Errorf("assetmapper.Vendor: direct requirement %q is absent from resolved closure", specifier)
+		}
+		if requested != "" && pkg.Version != requested {
+			return fmt.Errorf("assetmapper.Vendor: direct requirement %q resolved to %s, want %s", specifier, pkg.Version, requested)
+		}
+		exactDirect[specifier] = pkg.Version
+	}
+	return v.applyResolution(ctx, resolution, exactDirect)
+}
+
+// applyResolution publishes immutable artifacts before atomically switching
+// metadata to the complete resolved closure.
+func (v *Vendor) applyResolution(ctx context.Context, res *Resolution, direct map[string]string) error {
+	if res == nil {
+		return fmt.Errorf("assetmapper.Vendor: resolver returned nil resolution")
 	}
 	limits := v.Limits.normalized()
 	if len(res.Packages) > limits.MaxPackages {
@@ -449,57 +534,28 @@ func (v *Vendor) applyResolution(ctx context.Context, res *Resolution) error {
 		urlToSpec[p.URL] = p.Specifier
 	}
 
-	lock, exists, err := v.loadLock()
-	if err != nil {
-		return err
-	}
-	if exists {
-		if err := lock.Verify(v.VendorDir); err != nil {
-			return err
-		}
-	} else {
-		lock = newVendorLock()
-	}
-	for specifier, entry := range v.Importmap.Entries {
-		if entry.Version == "" {
-			continue
-		}
-		locked, hasLock := lock.Packages[specifier]
-		if hasLock {
-			entryType := entry.Type
-			if entryType == "" {
-				entryType = "js"
-			}
-			if _, resolved := seen[specifier]; !resolved &&
-				(locked.Version != entry.Version || locked.Type != entryType ||
-					(locked.Path != "" && entry.Path != VendorDir+"/"+locked.Path)) {
-				return fmt.Errorf(
-					"assetmapper.Vendor: provenance for existing package %q does not match importmap version and type",
-					specifier,
-				)
-			}
-			continue
-		}
-		if _, resolved := seen[specifier]; !resolved {
-			return fmt.Errorf(
-				"assetmapper.Vendor: existing vendored package %q has no provenance; re-resolve the complete vendored set before adding packages",
-				specifier,
-			)
-		}
-	}
-
 	// Fetch everything in memory before mutating disk or importmap state.
 	staged, err := v.fetchAll(ctx, packages, rels, urlToSpec, limits)
 	if err != nil {
 		return err
 	}
+	lock := newVendorLock()
+	lock.DirectRequirements = direct
 	for _, item := range staged {
 		if err := validateLockedPackage(item.pkg.Specifier, item.locked); err != nil {
 			return fmt.Errorf("assetmapper.Vendor: %w", err)
 		}
 		lock.Packages[item.pkg.Specifier] = item.locked
 	}
-	next := snapshotImportmap(v.Importmap)
+	if err := assignVendorOwners(lock); err != nil {
+		return err
+	}
+	next := NewImportmap()
+	for specifier, entry := range v.Importmap.Entries {
+		if entry.Version == "" {
+			next.Entries[specifier] = entry
+		}
+	}
 	for _, item := range staged {
 		next.Entries[item.pkg.Specifier] = ImportmapEntry{
 			Path:    VendorDir + "/" + item.locked.Path,
@@ -557,6 +613,10 @@ func (v *Vendor) fetchAll(
 	limits DownloadLimits,
 ) ([]stagedPackage, error) {
 	staged := make([]stagedPackage, len(pkgs))
+	knownSpecifiers := make(map[string]struct{}, len(pkgs))
+	for _, pkg := range pkgs {
+		knownSpecifiers[pkg.Specifier] = struct{}{}
+	}
 
 	derived, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -660,6 +720,13 @@ dispatch:
 					return urlToSpec[r.spec]
 				})
 			}
+			dependencies := append([]string(nil), p.Dependencies...)
+			dependencies = append(dependencies,
+				discoverVendorDependencies(fetched.Content, p.Type, urlToSpec, knownSpecifiers)...)
+			dependencies = slices.DeleteFunc(dependencies, func(dependency string) bool {
+				return dependency == p.Specifier
+			})
+			dependencies = sortedUniqueStrings(dependencies)
 			sum := sha256.Sum256(content)
 			publishedRel, err := immutableVendorRelPath(p.Specifier, p.Type, hex.EncodeToString(sum[:]))
 			if err != nil {
@@ -684,6 +751,7 @@ dispatch:
 					SourceSHA256: hex.EncodeToString(sourceSum[:]),
 					Size:         publishedSize,
 					SHA256:       hex.EncodeToString(sum[:]),
+					Dependencies: dependencies,
 				},
 			}
 		}(i, p)
@@ -693,6 +761,100 @@ dispatch:
 		return nil, firstErr
 	}
 	return staged, nil
+}
+
+func discoverVendorDependencies(
+	content []byte,
+	typ string,
+	urlToSpec map[string]string,
+	knownSpecifiers map[string]struct{},
+) []string {
+	var literals []string
+	add := func(literal string) {
+		if dependency := urlToSpec[literal]; dependency != "" {
+			literals = append(literals, dependency)
+			return
+		}
+		if _, ok := knownSpecifiers[literal]; ok {
+			literals = append(literals, literal)
+		}
+	}
+	if typ == "css" {
+		for _, match := range cssImportRE.FindAllSubmatchIndex(content, -1) {
+			add(string(content[match[2]:match[3]]))
+		}
+		for _, match := range cssURLRE.FindAllSubmatchIndex(content, -1) {
+			start, end := pickAlternation(match, 2, 4, 6)
+			if start >= 0 {
+				add(string(content[start:end]))
+			}
+		}
+	} else {
+		for _, match := range jsImportRE.FindAllSubmatchIndex(content, -1) {
+			add(string(content[match[2]:match[3]]))
+		}
+	}
+	return sortedUniqueStrings(literals)
+}
+
+func assignVendorOwners(lock *VendorLock) error {
+	owners := make(map[string]map[string]struct{}, len(lock.Packages))
+	roots := make([]string, 0, len(lock.DirectRequirements))
+	for root := range lock.DirectRequirements {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	for _, root := range roots {
+		seen := map[string]struct{}{}
+		var visit func(string) error
+		visit = func(specifier string) error {
+			if _, ok := seen[specifier]; ok {
+				return nil
+			}
+			seen[specifier] = struct{}{}
+			pkg, ok := lock.Packages[specifier]
+			if !ok {
+				return fmt.Errorf("assetmapper.Vendor: package %q depends on missing package %q", root, specifier)
+			}
+			if owners[specifier] == nil {
+				owners[specifier] = map[string]struct{}{}
+			}
+			owners[specifier][root] = struct{}{}
+			for _, dependency := range pkg.Dependencies {
+				if err := visit(dependency); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if err := visit(root); err != nil {
+			return err
+		}
+	}
+	for specifier, pkg := range lock.Packages {
+		if len(owners[specifier]) == 0 {
+			return fmt.Errorf("assetmapper.Vendor: resolved package %q is not owned by any direct requirement", specifier)
+		}
+		pkg.Owners = make([]string, 0, len(owners[specifier]))
+		for owner := range owners[specifier] {
+			pkg.Owners = append(pkg.Owners, owner)
+		}
+		sort.Strings(pkg.Owners)
+		lock.Packages[specifier] = pkg
+	}
+	return validateVendorGraph(lock)
+}
+
+func sortedUniqueStrings(values []string) []string {
+	sort.Strings(values)
+	out := values[:0]
+	for _, value := range values {
+		if value == "" || len(out) > 0 && out[len(out)-1] == value {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func immutableVendorRelPath(specifier, typ, digest string) (string, error) {

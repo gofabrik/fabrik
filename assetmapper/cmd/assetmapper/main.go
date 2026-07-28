@@ -95,7 +95,9 @@ func run(args []string, out io.Writer) error {
 				return err
 			}
 		}
-		if err := v.RemovePackages(fs.Args()); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		if err := v.RemovePackagesContext(ctx, fs.Args()); err != nil {
 			return err
 		}
 		for _, spec := range fs.Args() {

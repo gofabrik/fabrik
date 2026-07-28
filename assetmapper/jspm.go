@@ -169,7 +169,7 @@ func (j *JSPMResolver) Resolve(ctx context.Context, reqs []PackageRequest) (*Res
 	if err := json.Unmarshal(body, &gen); err != nil {
 		return nil, fmt.Errorf("jspm.io: decode response: %w", err)
 	}
-	resolution, err := jspmFlatten(&gen)
+	resolution, err := jspmFlatten(&gen, reqs)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +393,7 @@ type jspmGenerateResponse struct {
 }
 
 // jspmFlatten turns imports and scopes into a deterministic flat resolution.
-func jspmFlatten(g *jspmGenerateResponse) (*Resolution, error) {
+func jspmFlatten(g *jspmGenerateResponse, requests []PackageRequest) (*Resolution, error) {
 	byspec := map[string]string{}
 	var pkgs []ResolvedPackage
 	add := func(spec, u string) error {
@@ -426,6 +426,55 @@ func jspmFlatten(g *jspmGenerateResponse) (*Resolution, error) {
 			if err := add(spec, scope[spec]); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// Scope maps describe dependencies available to packages under the scope.
+	// Attach them to the matching resolved package. Relative/global scopes have
+	// no unique owner, so conservatively attach them to each top-level import.
+	index := make(map[string]int, len(pkgs))
+	for i, pkg := range pkgs {
+		index[pkg.Specifier] = i
+	}
+	var roots []string
+	rootSet := make(map[string]struct{}, len(requests))
+	for _, request := range requests {
+		if _, ok := index[request.Name]; ok {
+			roots = append(roots, request.Name)
+			rootSet[request.Name] = struct{}{}
+		}
+	}
+	sort.Strings(roots)
+	// A non-requested top-level import is a hoisted dependency. Generator
+	// metadata does not retain its unique owner, so conservatively associate it
+	// with every requested root; source scanning later adds more precise edges.
+	for _, specifier := range sortedKeys(g.Map.Imports) {
+		if _, direct := rootSet[specifier]; direct {
+			continue
+		}
+		for _, root := range roots {
+			i := index[root]
+			pkgs[i].Dependencies = append(pkgs[i].Dependencies, specifier)
+		}
+	}
+	for _, scopeKey := range sortedKeys(g.Map.Scopes) {
+		dependencies := sortedKeys(g.Map.Scopes[scopeKey])
+		var owners []string
+		if strings.HasPrefix(scopeKey, "http://") || strings.HasPrefix(scopeKey, "https://") {
+			for _, pkg := range pkgs {
+				if strings.HasPrefix(pkg.URL, scopeKey) {
+					owners = append(owners, pkg.Specifier)
+				}
+			}
+		}
+		if len(owners) == 0 {
+			owners = roots
+		}
+		for _, owner := range owners {
+			i, ok := index[owner]
+			if !ok {
+				continue
+			}
+			pkgs[i].Dependencies = sortedUniqueStrings(append(pkgs[i].Dependencies, dependencies...))
 		}
 	}
 	return &Resolution{Packages: pkgs}, nil

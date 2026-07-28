@@ -2,11 +2,14 @@ package assetmapper_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +27,18 @@ type stubResolver struct {
 
 	mu    sync.Mutex
 	calls []string // urls fetched, for ordering / counting
+	reqs  [][]assetmapper.PackageRequest
+}
+
+type contextResolver struct{}
+
+func (contextResolver) Resolve(ctx context.Context, _ []assetmapper.PackageRequest) (*assetmapper.Resolution, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (contextResolver) Fetch(context.Context, string) ([]byte, error) {
+	return nil, errors.New("unexpected fetch")
 }
 
 func localJSPMResolver(server *httptest.Server) *assetmapper.JSPMResolver {
@@ -34,6 +49,9 @@ func localJSPMResolver(server *httptest.Server) *assetmapper.JSPMResolver {
 }
 
 func (s *stubResolver) Resolve(ctx context.Context, reqs []assetmapper.PackageRequest) (*assetmapper.Resolution, error) {
+	s.mu.Lock()
+	s.reqs = append(s.reqs, append([]assetmapper.PackageRequest(nil), reqs...))
+	s.mu.Unlock()
 	return s.resolution, nil
 }
 
@@ -139,7 +157,7 @@ func TestVendor_RecoversInterruptedMetadataCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolver.resolution = &assetmapper.Resolution{}
-	if err := vendor.Require(context.Background(), "ignored", "1.0.0"); err != nil {
+	if err := vendor.RequirePackages(context.Background(), nil); err != nil {
 		t.Fatalf("recovery: %v", err)
 	}
 	if importmap.Entries["pkg"].Version != "1.0.0" {
@@ -176,8 +194,12 @@ func TestVendor_RejectsTraversalSpecifiers(t *testing.T) {
 		im := assetmapper.NewImportmap()
 		v := &assetmapper.Vendor{Resolver: stub, VendorDir: vendorDir, Importmap: im}
 
-		err := v.Require(context.Background(), "pkg", "")
-		if err == nil || !strings.Contains(err.Error(), "safe path") {
+		err := v.Require(context.Background(), spec, "")
+		want := "safe path"
+		if spec == "" {
+			want = "empty package name"
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("Require with specifier %q: err = %v, want safe-path rejection", spec, err)
 		}
 		if len(im.Entries) != 0 {
@@ -457,8 +479,8 @@ func TestVendor_RejectsPartialProvenanceLock(t *testing.T) {
 	}
 
 	err := vendor.Require(context.Background(), "new", "1.0.0")
-	if err == nil || !strings.Contains(err.Error(), `existing vendored package "existing" has no provenance`) {
-		t.Fatalf("Require error = %v, want incomplete-provenance rejection", err)
+	if err == nil || !strings.Contains(err.Error(), `direct requirement "existing" is absent from resolved closure`) {
+		t.Fatalf("Require error = %v, want complete-closure rejection", err)
 	}
 	if len(resolver.calls) != 0 {
 		t.Fatalf("fetch calls = %d, want 0", len(resolver.calls))
@@ -471,7 +493,7 @@ func TestVendor_RejectsPartialProvenanceLock(t *testing.T) {
 	}
 }
 
-func TestVendor_RejectsProvenanceThatDisagreesWithImportmap(t *testing.T) {
+func TestVendor_RejectsResolverThatDropsExistingDirectRequirement(t *testing.T) {
 	vendorDir := filepath.Join(t.TempDir(), "assets", "vendor")
 	existingURL := "https://example.com/existing.js"
 	resolver := &stubResolver{
@@ -498,8 +520,8 @@ func TestVendor_RejectsProvenanceThatDisagreesWithImportmap(t *testing.T) {
 	resolver.calls = nil
 
 	err := vendor.Require(context.Background(), "new", "1.0.0")
-	if err == nil || !strings.Contains(err.Error(), `provenance for existing package "existing" does not match`) {
-		t.Fatalf("Require error = %v, want provenance mismatch", err)
+	if err == nil || !strings.Contains(err.Error(), `direct requirement "existing" is absent from resolved closure`) {
+		t.Fatalf("Require error = %v, want complete-closure rejection", err)
 	}
 	if len(resolver.calls) != 0 {
 		t.Fatalf("fetch calls = %d, want 0", len(resolver.calls))
@@ -542,6 +564,131 @@ func TestVendor_RequireDownloadsTransitiveDeps(t *testing.T) {
 		if _, ok := im.Entries[spec]; !ok {
 			t.Errorf("missing importmap entry %q", spec)
 		}
+	}
+}
+
+func TestVendor_ReplacesCompleteGraphAndTracksOwnership(t *testing.T) {
+	root := t.TempDir()
+	vendorDir := filepath.Join(root, "assets", "vendor")
+	aURL := "https://example.com/a.js"
+	bURL := "https://example.com/b.js"
+	sharedV1URL := "https://example.com/shared-v1.js"
+	sharedV2URL := "https://example.com/shared-v2.js"
+	resolver := &stubResolver{
+		resolution: &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+			{Specifier: "a", Version: "1.0.0", Type: "js", URL: aURL},
+			{Specifier: "shared", Version: "1.0.0", Type: "js", URL: sharedV1URL},
+		}},
+		fetched: map[string][]byte{
+			aURL:        []byte(`import "` + sharedV1URL + `"`),
+			sharedV1URL: []byte(`export {}`),
+		},
+	}
+	importmap := assetmapper.NewImportmap()
+	vendor := &assetmapper.Vendor{Resolver: resolver, VendorDir: vendorDir, Importmap: importmap}
+	if err := vendor.Require(context.Background(), "a", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(filepath.Dir(vendorDir), assetmapper.VendorLockFilename)
+	lock, err := assetmapper.LoadVendorLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock.DirectRequirements["a"] != "1.0.0" ||
+		!slices.Equal(lock.Packages["a"].Dependencies, []string{"shared"}) ||
+		!slices.Equal(lock.Packages["shared"].Owners, []string{"a"}) {
+		t.Fatalf("initial graph lock = %+v", lock)
+	}
+	invalid := *lock
+	invalid.DirectRequirements = map[string]string{}
+	if err := invalid.Save(filepath.Join(root, "invalid.lock.json")); err == nil {
+		t.Fatal("lock accepted a non-empty closure with no direct requirements")
+	}
+	legacy := *lock
+	legacy.Version = 1
+	legacy.DirectRequirements = nil
+	legacy.Packages = maps.Clone(lock.Packages)
+	for specifier, pkg := range legacy.Packages {
+		pkg.Dependencies = nil
+		pkg.Owners = nil
+		legacy.Packages[specifier] = pkg
+	}
+	legacyBytes, err := json.Marshal(&legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(root, "legacy.lock.json")
+	if err := os.WriteFile(legacyPath, legacyBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := assetmapper.LoadVendorLock(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.Version != 2 || len(migrated.DirectRequirements) != len(migrated.Packages) {
+		t.Fatalf("migrated v1 lock = %+v", migrated)
+	}
+
+	resolver.resolution = &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+		{Specifier: "a", Version: "1.0.0", Type: "js", URL: aURL},
+		{Specifier: "b", Version: "1.0.0", Type: "js", URL: bURL},
+		{Specifier: "shared", Version: "2.0.0", Type: "js", URL: sharedV2URL},
+	}}
+	resolver.fetched = map[string][]byte{
+		aURL:        []byte(`import "` + sharedV2URL + `"`),
+		bURL:        []byte(`import "shared"`),
+		sharedV2URL: []byte(`export {}`),
+	}
+	if err := vendor.Require(context.Background(), "b", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	lastRequests := resolver.reqs[len(resolver.reqs)-1]
+	if !slices.Equal(lastRequests, []assetmapper.PackageRequest{
+		{Name: "a", Version: "1.0.0"},
+		{Name: "b", Version: "1.0.0"},
+	}) {
+		t.Fatalf("second resolve requests = %+v", lastRequests)
+	}
+	lock, err = assetmapper.LoadVendorLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock.Packages["shared"].Version != "2.0.0" ||
+		!slices.Equal(lock.Packages["shared"].Owners, []string{"a", "b"}) {
+		t.Fatalf("updated shared lock = %+v", lock.Packages["shared"])
+	}
+
+	resolver.resolution = &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+		{Specifier: "b", Version: "1.0.0", Type: "js", URL: bURL},
+		{Specifier: "shared", Version: "2.0.0", Type: "js", URL: sharedV2URL},
+	}}
+	if err := vendor.Remove("a"); err != nil {
+		t.Fatal(err)
+	}
+	lock, err = assetmapper.LoadVendorLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lock.Packages["a"]; ok {
+		t.Fatal("removed direct package remains in complete closure")
+	}
+	if !slices.Equal(lock.Packages["shared"].Owners, []string{"b"}) {
+		t.Fatalf("shared owners after remove = %v", lock.Packages["shared"].Owners)
+	}
+	if _, ok := importmap.Entries["a"]; ok {
+		t.Fatal("removed direct package remains in importmap")
+	}
+
+	resolver.resolution = &assetmapper.Resolution{}
+	if err := vendor.Remove("b"); err != nil {
+		t.Fatal(err)
+	}
+	lock, err = assetmapper.LoadVendorLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.DirectRequirements) != 0 || len(lock.Packages) != 0 {
+		t.Fatalf("empty graph lock = %+v", lock)
 	}
 }
 
@@ -699,6 +846,44 @@ func TestVendor_RemoveUnregistersFileUntilPrune(t *testing.T) {
 	}
 	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
 		t.Errorf("file survived Prune: %v", err)
+	}
+}
+
+func TestVendor_RemoveContextCancelsFullResolution(t *testing.T) {
+	root := t.TempDir()
+	vendorDir := filepath.Join(root, "assets", "vendor")
+	url := "https://example.com/pkg.js"
+	otherURL := "https://example.com/other.js"
+	importmap := assetmapper.NewImportmap()
+	vendor := &assetmapper.Vendor{
+		Resolver: &stubResolver{
+			resolution: &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+				{Specifier: "pkg", Version: "1.0.0", Type: "js", URL: url},
+				{Specifier: "other", Version: "1.0.0", Type: "js", URL: otherURL},
+			}},
+			fetched: map[string][]byte{
+				url:      []byte("export {}"),
+				otherURL: []byte("export {}"),
+			},
+		},
+		VendorDir: vendorDir,
+		Importmap: importmap,
+	}
+	if err := vendor.RequirePackages(context.Background(), []assetmapper.PackageRequest{
+		{Name: "pkg", Version: "1.0.0"},
+		{Name: "other", Version: "1.0.0"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	vendor.Resolver = contextResolver{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := vendor.RemoveContext(ctx, "pkg")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RemoveContext error = %v, want context cancellation", err)
+	}
+	if _, ok := importmap.Entries["pkg"]; !ok {
+		t.Fatal("cancelled removal mutated importmap")
 	}
 }
 

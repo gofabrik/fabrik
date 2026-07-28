@@ -133,6 +133,14 @@ published size and SHA-256 so committed files can be verified with
 `VendorLock.Verify`. There is no install step on other machines: the files and
 provenance lock live in the repository.
 
+The lock also distinguishes direct requirements from the resolved closure and
+records dependency edges and direct owners. Every `require` or `remove`
+re-resolves all direct pins together and atomically replaces the complete
+lock/importmap graph. This prevents a later install from silently changing a
+shared transitive dependency without checking its other owners. Only direct
+requirements can be removed; orphaned transitives disappear from the active
+graph automatically.
+
 The CLI commits the lock and importmap through a recovery journal. If a process
 is interrupted between those two atomic metadata writes, the next vendoring
 command completes the recorded commit before doing new work. Removed versions
