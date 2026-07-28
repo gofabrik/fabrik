@@ -141,8 +141,8 @@ func first(ss []string) string {
 	return ss[0]
 }
 
-// snakeCase matches the query package's field-to-column mapping so one struct
-// binds and persists under the same names. Non-ASCII runes pass through unchanged.
+// snakeCase converts a Go field name to its default form field name.
+// Non-ASCII runes pass through unchanged.
 func snakeCase(name string) string {
 	if name == "" {
 		return ""

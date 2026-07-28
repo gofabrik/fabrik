@@ -1,6 +1,6 @@
 # forms
 
-HTTP request binding for Go. Decode a request into a typed struct, validate it with [`validation`](../validation), and re-render failed forms with field errors and raw input intact.
+HTTP request binding for Go. Decode a request into a typed struct and re-render failed forms with field errors and raw input intact.
 
 ## Features
 
@@ -10,7 +10,7 @@ HTTP request binding for Go. Decode a request into a typed struct, validate it w
 | Field-keyed errors | Conversion and validation errors keyed by field, for one message per input. |
 | Repopulation | `Value(field)` returns the **raw** submission, so a bad `"abc"` in an int field redraws as `"abc"`, not `0`. |
 | Two-level errors | An `error` for request-level failures (malformed 400, oversized 413, or the status-less `ErrFormConsumed` ordering bug); `Form.Errors` for user-input problems (re-render). |
-| Validation built in | If `T` implements `validation.Validatable`, `Bind` runs it and merges the result. |
+| Validation built in | If `T` implements the supported validation method, `Bind` runs it and merges the result. |
 
 ## Install
 
@@ -24,12 +24,6 @@ go get github.com/gofabrik/fabrik/forms
 type LoginInput struct {
     Email    string
     Password string
-}
-func (in LoginInput) Validate() validation.Errors {
-    return validation.Check(
-        validation.Field("email",    in.Email,    validation.Required(), validation.Email()),
-        validation.Field("password", in.Password, validation.Required(), validation.MinLen(8)),
-    )
 }
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +56,7 @@ In the template:
 ## Binding rules
 
 - **Sources**: `GET`/`HEAD` use the query string; form-encoded and multipart `POST` use the body; `application/json` uses the body.
-- **Field names**: a `form:"name"` tag, else snake_case of the field. The mapping matches the `query` package's column mapping, so one struct can be used for binding and persistence. `form:"-"` skips a field; unknown submitted fields such as `csrf_token` are ignored.
+- **Field names**: a `form:"name"` tag, else snake_case of the field. `form:"-"` skips a field; unknown submitted fields such as `csrf_token` are ignored.
 - **Types**: `string`, int/uint/float kinds, `bool`, `[]string`, and pointers to scalars. A `bool` binds `on`/`true`/`1`/`yes` as true, and a missing checkbox as false. A pointer field is nil when input is absent or blank, and set otherwise. Unsupported kinds such as nested structs, maps, and `time.Time` stay zero in v1.
 - **Conversion errors** (e.g. `"abc"` into an `int`) become field errors and the raw value is kept for repopulation; the typed field stays zero.
 
@@ -76,7 +70,7 @@ form, err := forms.Bind[T](r)
 // !form.Valid() means form.Errors has field errors, re-render.
 ```
 
-`form.Errors` is a `validation.Errors`. Decode (type) errors take precedence over a validation error on the same field.
+`form.Errors` contains field-keyed errors. Decode (type) errors take precedence over a validation error on the same field.
 
 ## Options
 

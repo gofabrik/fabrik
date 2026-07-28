@@ -65,12 +65,4 @@ store error passes through by default, or returns a headerless 503 with
 `WithFailClosed`. Session- or user-keyed limiters must handle anonymous
 clients with an IP fallback or fail-closed policy.
 
-A bare fabrik middleware declaration also wraps unmatched routes, so
-declare rate limiting as named middleware and attach it per route:
-
-```go
-//fabrik:http:middleware name=ratelimit
-func RateLimited(l *ratelimit.Limiter) func(http.Handler) http.Handler {
-	return ratelimit.Middleware(l)
-}
-```
+Attach rate limiting only to the routes that should share its policy.

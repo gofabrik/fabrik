@@ -86,8 +86,8 @@ func WithMaxBytes(n int64) Option { return func(c *config) { c.maxBytes = n } }
 // parts spill to disk (default 10 MiB).
 func WithMaxMemory(n int64) Option { return func(c *config) { c.maxMemory = n } }
 
-// Bind decodes r into a Form[T], validating T if it implements
-// [validation.Validatable].
+// Bind decodes r into a Form[T] and runs its supported validation method,
+// when present.
 func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
 	typ := reflect.TypeFor[T]()
 	if typ.Kind() != reflect.Struct {
