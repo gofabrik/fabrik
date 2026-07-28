@@ -182,6 +182,10 @@ func (v *Vendor) ValidateRemove(specifier string) (string, error) {
 	if entry.Version == "" {
 		return "", fmt.Errorf("assetmapper.Vendor.Remove: %q is a local entry (no version) — edit importmap.json directly", specifier)
 	}
+	rel, err := vendorRelPath(specifier, entry.Type)
+	if err != nil {
+		return "", fmt.Errorf("assetmapper.Vendor.Remove: %w", err)
+	}
 	if lock, exists, err := v.loadLock(); err != nil {
 		return "", err
 	} else if exists {
@@ -199,10 +203,6 @@ func (v *Vendor) ValidateRemove(specifier string) (string, error) {
 			return "", fmt.Errorf("assetmapper.Vendor.Remove: %q has invalid vendored path %q", specifier, entry.Path)
 		}
 		return filepath.Join(v.VendorDir, filepath.FromSlash(rel)), nil
-	}
-	rel, err := vendorRelPath(specifier, entry.Type)
-	if err != nil {
-		return "", fmt.Errorf("assetmapper.Vendor.Remove: %w", err)
 	}
 	return filepath.Join(v.VendorDir, filepath.FromSlash(rel)), nil
 }

@@ -219,6 +219,34 @@ func TestVendor_RejectsTraversalSpecifiers(t *testing.T) {
 	}
 }
 
+func TestVendor_RemoveRejectsUnsafeSpecifierBeforeLockOwnership(t *testing.T) {
+	root := t.TempDir()
+	vendorDir := filepath.Join(root, "assets", "vendor")
+	sourceURL := "https://example.com/pkg.js"
+	resolver := &stubResolver{
+		resolution: &assetmapper.Resolution{
+			Packages: []assetmapper.ResolvedPackage{
+				{Specifier: "pkg", Version: "1.0.0", Type: "js", URL: sourceURL},
+			},
+		},
+		fetched: map[string][]byte{sourceURL: []byte("export {}")},
+	}
+	importmap := assetmapper.NewImportmap()
+	vendor := &assetmapper.Vendor{
+		Resolver: resolver, VendorDir: vendorDir, Importmap: importmap,
+	}
+	if err := vendor.Require(context.Background(), "pkg", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A hand-edited key is absent from the lock's direct requirements. Path
+	// safety must still be reported before package ownership.
+	importmap.Entries["../evil"] = assetmapper.ImportmapEntry{Version: "1.0.0"}
+	if err := vendor.Remove("../evil"); err == nil || !strings.Contains(err.Error(), "safe path") {
+		t.Fatalf("Remove with traversal key: err = %v, want safe-path rejection", err)
+	}
+}
+
 func TestVendor_PruneRejectsMalformedVendoredPathBeforeDeleting(t *testing.T) {
 	for _, test := range []struct {
 		name  string
@@ -1125,16 +1153,19 @@ func TestVendor_EndToEnd_WithJSPMResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Both vendored files written.
-	for _, name := range []string{"react.js", "scheduler.js"} {
-		if _, err := os.Stat(filepath.Join(vendorDir, name)); err != nil {
-			t.Errorf("missing %s: %v", name, err)
+	// Both immutable files referenced by the importmap were written.
+	for _, specifier := range []string{"react", "scheduler"} {
+		if _, err := os.Stat(vendoredPath(t, vendorDir, im, specifier)); err != nil {
+			t.Fatalf("missing %s: %v", specifier, err)
 		}
 	}
 	// React's content has the upstream URL rewritten to a bare specifier.
-	reactOut, _ := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
+	reactOut, err := os.ReadFile(vendoredPath(t, vendorDir, im, "react")) // #nosec G304 -- reads an app-selected asset path
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(reactOut), `"scheduler"`) {
-		t.Errorf("react.js not rewritten; got:\n%s", reactOut)
+		t.Errorf("react not rewritten; got:\n%s", reactOut)
 	}
 }
 
