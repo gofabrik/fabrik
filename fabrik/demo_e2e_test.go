@@ -493,7 +493,7 @@ func developmentFlow(t *testing.T, src, bin, tmp string) {
 		t.Fatalf("development session cookie should be set and not Secure: %q", sc)
 	}
 
-	appJS := regexp.MustCompile(`/assets/app-[0-9a-f]{8}\.js`).FindString(page)
+	appJS := hashedAssetPattern("app", "js").FindString(page)
 	if appJS == "" {
 		t.Fatalf("page carries no hashed app.js URL:\n%s", page)
 	}
@@ -508,7 +508,7 @@ func developmentFlow(t *testing.T, src, bin, tmp string) {
 		t.Fatal(err)
 	}
 	pageAfter := getBody(t, base+"/")
-	appJSAfter := regexp.MustCompile(`/assets/app-[0-9a-f]{8}\.js`).FindString(pageAfter)
+	appJSAfter := hashedAssetPattern("app", "js").FindString(pageAfter)
 	if appJSAfter == "" || appJSAfter == appJS {
 		t.Fatalf("asset URL did not follow the disk edit: %q -> %q", appJS, appJSAfter)
 	}

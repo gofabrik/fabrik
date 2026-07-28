@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/gofabrik/fabrik/assetmapper"
 )
 
 // TestEndToEnd verifies scaffold, wire, build, and serve.
@@ -198,7 +200,7 @@ func checkFabrikRun(t *testing.T, dir string) {
 // the immutable cache header.
 func checkAsset(t *testing.T, port, page string) {
 	t.Helper()
-	m := regexp.MustCompile(`/assets/style-[0-9a-f]{8}\.css`).FindString(page)
+	m := hashedAssetPattern("style", "css").FindString(page)
 	if m == "" {
 		t.Fatalf("page carries no hashed asset URL:\n%s", page)
 	}
@@ -213,6 +215,23 @@ func checkAsset(t *testing.T, port, page string) {
 	}
 	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Fatalf("GET %s: Cache-Control = %q", m, got)
+	}
+}
+
+func hashedAssetPattern(stem, ext string) *regexp.Regexp {
+	return regexp.MustCompile(fmt.Sprintf(
+		`/assets/%s-[0-9a-f]{%d}\.%s`,
+		regexp.QuoteMeta(stem),
+		assetmapper.HashLength,
+		regexp.QuoteMeta(ext),
+	))
+}
+
+func TestHashedAssetPattern(t *testing.T) {
+	want := "/assets/style-" + strings.Repeat("a", assetmapper.HashLength) + ".css"
+	page := `<link rel="stylesheet" href="` + want + `">`
+	if got := hashedAssetPattern("style", "css").FindString(page); got != want {
+		t.Fatalf("matched URL = %q, want %q", got, want)
 	}
 }
 
