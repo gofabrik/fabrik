@@ -386,6 +386,45 @@ func TestCompile_StaleTempCleanupIsNarrow(t *testing.T) {
 	}
 }
 
+func TestCompile_PublishFailureKeepsPreviousManifest(t *testing.T) {
+	dir := t.TempDir()
+	oldSource := fstest.MapFS{"app.js": {Data: []byte("old")}}
+	oldManifest, err := assetmapper.Compile([]assetmapper.Root{{FS: oldSource}}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldManifestBytes, err := os.ReadFile(filepath.Join(dir, assetmapper.ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newSource := fstest.MapFS{"app.js": {Data: []byte("new")}}
+	probeDir := t.TempDir()
+	newManifest, err := assetmapper.Compile([]assetmapper.Root{{FS: newSource}}, probeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedOutput := filepath.Join(dir, filepath.FromSlash(newManifest.Entries["app.js"]))
+	if err := os.MkdirAll(blockedOutput, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := assetmapper.Compile([]assetmapper.Root{{FS: newSource}}, dir); err == nil {
+		t.Fatal("Compile succeeded despite an invalid destination")
+	}
+	gotManifestBytes, err := os.ReadFile(filepath.Join(dir, assetmapper.ManifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotManifestBytes) != string(oldManifestBytes) {
+		t.Fatal("failed Compile replaced the previous manifest")
+	}
+	oldOutput := filepath.Join(dir, filepath.FromSlash(oldManifest.Entries["app.js"]))
+	if got, err := os.ReadFile(oldOutput); err != nil || string(got) != "old" {
+		t.Fatalf("previous compiled asset = %q, %v", got, err)
+	}
+}
+
 func TestCompile_StreamingPathCleansUpTempOnCollision(t *testing.T) {
 	// When the pass-2 collision check fires for a streamed file,
 	// the temp file must be removed; otherwise publicDir

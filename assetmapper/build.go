@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // BuildOption configures [Build], [Check], and [NewSource].
@@ -213,8 +214,8 @@ func validateImportmap(context string, im *Importmap, assets map[string]*collect
 		if e.Path == "" && e.Version == "" {
 			return fmt.Errorf("%s: importmap entry %q has neither \"path\" (local) nor \"version\" (vendored)", context, k)
 		}
-		if e.Path != "" && e.Version != "" {
-			return fmt.Errorf("%s: importmap entry %q has both \"path\" and \"version\"; pick one", context, k)
+		if e.Path != "" && e.Version != "" && !strings.HasPrefix(e.Path, VendorDir+"/") {
+			return fmt.Errorf("%s: importmap entry %q has both \"path\" and \"version\"; vendored paths must be under %s/", context, k, VendorDir)
 		}
 		switch e.Type {
 		case "", "js", "css":

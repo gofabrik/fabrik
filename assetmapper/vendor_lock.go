@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // VendorLockFilename is the provenance record written beside VendorDir.
@@ -25,6 +27,7 @@ type VendorLock struct {
 type LockedPackage struct {
 	Version      string `json:"version"`
 	Type         string `json:"type"`
+	Path         string `json:"path,omitempty"`
 	SourceURL    string `json:"source_url"`
 	SourceSize   int64  `json:"source_size"`
 	SourceSHA256 string `json:"source_sha256"`
@@ -92,22 +95,13 @@ func (l *VendorLock) Save(path string) error {
 			return fmt.Errorf("assetmapper.VendorLock.Save: %w", err)
 		}
 	}
-	file, err := os.Create(path) // #nosec G304 -- writes a caller-selected project lockfile
-	if err != nil {
-		return fmt.Errorf("assetmapper.VendorLock.Save: create %s: %w", path, err)
-	}
 	data, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
-		_ = file.Close()
 		return fmt.Errorf("assetmapper.VendorLock.Save: %w", err)
 	}
 	data = append(data, '\n')
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
+	if err := atomicWriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("assetmapper.VendorLock.Save: write %s: %w", path, err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("assetmapper.VendorLock.Save: close %s: %w", path, err)
 	}
 	return nil
 }
@@ -115,9 +109,13 @@ func (l *VendorLock) Save(path string) error {
 // Verify checks every locked artifact against its recorded size and digest.
 func (l *VendorLock) Verify(vendorDir string) error {
 	for specifier, pkg := range l.Packages {
-		rel, err := vendorRelPath(specifier, pkg.Type)
-		if err != nil {
-			return err
+		rel := pkg.Path
+		if rel == "" {
+			var err error
+			rel, err = vendorRelPath(specifier, pkg.Type)
+			if err != nil {
+				return err
+			}
 		}
 		path := filepath.Join(vendorDir, filepath.FromSlash(rel))
 		file, err := os.Open(path) // #nosec G304 -- path is validated beneath the caller-selected vendor directory
@@ -162,6 +160,18 @@ func validateLockedPackage(specifier string, pkg LockedPackage) error {
 	}
 	if !validSHA256(pkg.SourceSHA256) {
 		return fmt.Errorf("package %q has invalid source SHA-256", specifier)
+	}
+	if pkg.Path != "" {
+		if pkg.Path == "." || !fs.ValidPath(pkg.Path) || strings.ContainsRune(pkg.Path, '\\') {
+			return fmt.Errorf("package %q has invalid published path %q", specifier, pkg.Path)
+		}
+		wantExt := ".js"
+		if pkg.Type == "css" {
+			wantExt = ".css"
+		}
+		if filepath.Ext(pkg.Path) != wantExt {
+			return fmt.Errorf("package %q published path %q does not match type %q", specifier, pkg.Path, pkg.Type)
+		}
 	}
 	return nil
 }

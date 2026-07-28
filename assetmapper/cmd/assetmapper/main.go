@@ -59,9 +59,10 @@ func run(args []string, out io.Writer) error {
 	resolver.AllowPrivateNetwork = *allowPrivate
 	resolver.AllowCrossHostRedirects = *allowCrossHost
 	v := &assetmapper.Vendor{
-		Resolver:  resolver,
-		VendorDir: filepath.Join(*dir, assetmapper.VendorDir),
-		Importmap: im,
+		Resolver:      resolver,
+		VendorDir:     filepath.Join(*dir, assetmapper.VendorDir),
+		Importmap:     im,
+		ImportmapFile: imPath,
 	}
 
 	switch sub {
@@ -71,18 +72,17 @@ func run(args []string, out io.Writer) error {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		// Orphaned files are recoverable; importmap entries for missing files are not.
+		requests := make([]assetmapper.PackageRequest, 0, fs.NArg())
 		for _, arg := range fs.Args() {
 			pkg, version := splitPackageVersion(arg)
-			before := entriesCopy(im)
-			if err := v.Require(ctx, pkg, version); err != nil {
-				return err
-			}
-			if err := im.Save(imPath); err != nil {
-				return err
-			}
-			reportChanged(out, im, before)
+			requests = append(requests, assetmapper.PackageRequest{Name: pkg, Version: version})
 		}
+		before := entriesCopy(im)
+		// Resolve and publish the command's complete request batch once.
+		if err := v.RequirePackages(ctx, requests); err != nil {
+			return err
+		}
+		reportChanged(out, im, before)
 		return nil
 
 	case "remove":
@@ -95,13 +95,10 @@ func run(args []string, out io.Writer) error {
 				return err
 			}
 		}
+		if err := v.RemovePackages(fs.Args()); err != nil {
+			return err
+		}
 		for _, spec := range fs.Args() {
-			if err := v.Remove(spec); err != nil {
-				return err
-			}
-			if err := im.Save(imPath); err != nil {
-				return err
-			}
 			fmt.Fprintf(out, "removed %s\n", spec) //nolint:errcheck // CLI stdout status output is best-effort
 		}
 		fmt.Fprintln(out, "run `assetmapper prune` to delete orphaned transitive files") //nolint:errcheck // CLI stdout status output is best-effort

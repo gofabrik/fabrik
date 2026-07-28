@@ -124,15 +124,14 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 // Save writes publicDir/manifest.json.
 func (m *Manifest) Save(publicDir string) error {
 	path := filepath.Join(publicDir, ManifestFilename)
-	f, err := os.Create(path) // #nosec G304 -- writes to a caller-selected asset path
-	if err != nil {
-		return fmt.Errorf("assetmapper.Manifest.Save: create %s: %w", path, err)
-	}
-	if err := m.Write(f); err != nil {
-		_ = f.Close()
+	var out strings.Builder
+	if err := m.Write(&out); err != nil {
 		return err
 	}
-	return f.Close()
+	if err := atomicWriteFile(path, []byte(out.String()), 0o644); err != nil {
+		return fmt.Errorf("assetmapper.Manifest.Save: write %s: %w", path, err)
+	}
+	return nil
 }
 
 // Write encodes the manifest as deterministic indented JSON.

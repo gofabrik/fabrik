@@ -180,7 +180,8 @@ func (m *Mapper) resolveFile(logicalPath string) (Root, string, error) {
 		}
 		// Top-level importmap and vendoring lock files are configuration,
 		// not public assets.
-		if sub == ImportmapFilename || sub == VendorLockFilename {
+		if sub == ImportmapFilename || sub == VendorLockFilename ||
+			sub == VendorTransactionFilename {
 			continue
 		}
 		if _, err := fs.Stat(r.FS, sub); err == nil {

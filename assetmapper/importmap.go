@@ -23,10 +23,9 @@ const ImportmapFilename = "importmap.json"
 //
 //   - Local: Path set, Version empty. Resolved through [Mapper.Asset]
 //     so it tracks dev/prod hashing automatically.
-//   - Vendored: Version set, Path empty. Resolved against the
-//     convention path vendor/<key>.js (or .css). Vendored files are
-//     downloaded by [Vendor.Require]; they live under the mapper's
-//     asset roots like any other file.
+//   - Vendored: Version set. New vendoring operations also set Path to an
+//     immutable content-addressed file; legacy entries with no Path resolve
+//     against vendor/<key>.js (or .css).
 //
 // Importmap can be loaded from disk, edited by [Vendor], and rendered into HTML.
 type Importmap struct {
@@ -44,8 +43,8 @@ type preloadCacheKey struct {
 
 // ImportmapEntry is one bare-specifier mapping.
 type ImportmapEntry struct {
-	// Path is the logical asset path for local entries. Mutually
-	// exclusive with Version.
+	// Path is the logical asset path. With Version empty it is local; with
+	// Version set it is an immutable vendored artifact.
 	Path string `json:"path,omitempty"`
 	// Version is the package version for vendored entries. Mutually
 	// exclusive with Path.
@@ -98,15 +97,14 @@ func ParseImportmap(r io.Reader) (*Importmap, error) {
 // Save writes the importmap to path with sorted keys and two-space
 // indentation. The directory must already exist.
 func (im *Importmap) Save(path string) error {
-	f, err := os.Create(path) // #nosec G304 -- writes to a caller-selected asset path
-	if err != nil {
-		return fmt.Errorf("assetmapper.Importmap.Save: create %s: %w", path, err)
-	}
-	if err := im.Write(f); err != nil {
-		_ = f.Close()
+	var out strings.Builder
+	if err := im.Write(&out); err != nil {
 		return err
 	}
-	return f.Close()
+	if err := atomicWriteFile(path, []byte(out.String()), 0o644); err != nil {
+		return fmt.Errorf("assetmapper.Importmap.Save: write %s: %w", path, err)
+	}
+	return nil
 }
 
 // Write encodes the importmap as deterministic indented JSON.
@@ -470,8 +468,8 @@ func (im *Importmap) resolveEntry(m *Mapper, key string, entry ImportmapEntry) (
 	if entry.Path == "" && entry.Version == "" {
 		return "", fmt.Errorf("entry has neither \"path\" (local) nor \"version\" (vendored)")
 	}
-	if entry.Path != "" && entry.Version != "" {
-		return "", fmt.Errorf("entry has both \"path\" and \"version\"; pick one")
+	if entry.Path != "" && entry.Version != "" && !strings.HasPrefix(entry.Path, VendorDir+"/") {
+		return "", fmt.Errorf("entry has both \"path\" and \"version\" but is not under %s/", VendorDir)
 	}
 	if entry.Path != "" {
 		return m.Asset(entry.Path)

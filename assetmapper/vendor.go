@@ -1,6 +1,7 @@
 package assetmapper
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -60,7 +61,8 @@ type ProvenancePackageResolver interface {
 //
 // Vendor methods are not safe for concurrent use.
 //
-// After mutating, callers persist the importmap with [Importmap.Save].
+// Mutations publish the provenance lock and persisted importmap as one
+// recoverable transaction.
 type Vendor struct {
 	// Resolver supplies the upstream resolution + download. Required.
 	Resolver PackageResolver
@@ -74,48 +76,77 @@ type Vendor struct {
 	// Lockfile is the vendoring provenance file. Empty uses
 	// VendorLockFilename beside VendorDir.
 	Lockfile string
+	// ImportmapFile is atomically updated with the vendor lock. Empty uses
+	// ImportmapFilename beside VendorDir.
+	ImportmapFile string
 	// Limits bounds package count and downloaded bytes.
 	Limits DownloadLimits
 }
 
 // Require vendors pkg@version and registers its transitive dependencies.
 func (v *Vendor) Require(ctx context.Context, pkg, version string) error {
+	return v.RequirePackages(ctx, []PackageRequest{{Name: pkg, Version: version}})
+}
+
+// RequirePackages resolves and publishes a package batch as one metadata
+// transaction over immutable artifacts. All request names must be non-empty.
+func (v *Vendor) RequirePackages(ctx context.Context, requests []PackageRequest) error {
 	if err := v.validate(); err != nil {
 		return err
 	}
-	if pkg == "" {
-		return fmt.Errorf("assetmapper.Vendor.Require: empty package name")
+	if err := v.recoverTransaction(); err != nil {
+		return err
 	}
-	res, err := v.Resolver.Resolve(ctx, []PackageRequest{{Name: pkg, Version: version}})
+	if len(requests) == 0 {
+		return nil
+	}
+	for _, request := range requests {
+		if request.Name == "" {
+			return fmt.Errorf("assetmapper.Vendor.RequirePackages: empty package name")
+		}
+	}
+	res, err := v.Resolver.Resolve(ctx, requests)
 	if err != nil {
-		return fmt.Errorf("assetmapper.Vendor.Require: resolve %s: %w", pkg, err)
+		return fmt.Errorf("assetmapper.Vendor.RequirePackages: resolve: %w", err)
 	}
 	return v.applyResolution(ctx, res)
 }
 
-// Remove deletes one vendored package entry. It does not remove transitive dependencies.
+// Remove unregisters one vendored package. Its immutable artifact remains until
+// Prune, so metadata publication never creates a missing-file window.
 func (v *Vendor) Remove(specifier string) error {
+	return v.RemovePackages([]string{specifier})
+}
+
+// RemovePackages unregisters a package batch as one metadata transaction.
+func (v *Vendor) RemovePackages(specifiers []string) error {
 	if err := v.validate(); err != nil {
 		return err
 	}
-	dst, err := v.ValidateRemove(specifier)
-	if err != nil {
+	if err := v.recoverTransaction(); err != nil {
 		return err
 	}
-	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("assetmapper.Vendor.Remove: %s: %w", dst, err)
+	for _, specifier := range specifiers {
+		if _, err := v.ValidateRemove(specifier); err != nil {
+			return err
+		}
 	}
 	lock, exists, err := v.loadLock()
 	if err != nil {
 		return err
 	}
-	if exists {
-		delete(lock.Packages, specifier)
-		if err := lock.Save(v.lockPath()); err != nil {
-			return err
-		}
+	if !exists {
+		lock = newVendorLock()
 	}
-	delete(v.Importmap.Entries, specifier)
+	next := snapshotImportmap(v.Importmap)
+	for _, specifier := range specifiers {
+		delete(lock.Packages, specifier)
+		delete(next.Entries, specifier)
+	}
+	if err := v.publishMetadata(lock, next); err != nil {
+		return err
+	}
+	v.Importmap.Entries = next.Entries
 	return nil
 }
 
@@ -130,6 +161,17 @@ func (v *Vendor) ValidateRemove(specifier string) (string, error) {
 	}
 	if entry.Version == "" {
 		return "", fmt.Errorf("assetmapper.Vendor.Remove: %q is a local entry (no version) — edit importmap.json directly", specifier)
+	}
+	if entry.Path != "" {
+		prefix := VendorDir + "/"
+		if !strings.HasPrefix(entry.Path, prefix) {
+			return "", fmt.Errorf("assetmapper.Vendor.Remove: %q has vendored path %q outside %s", specifier, entry.Path, prefix)
+		}
+		rel := strings.TrimPrefix(entry.Path, prefix)
+		if rel == "." || !fs.ValidPath(rel) {
+			return "", fmt.Errorf("assetmapper.Vendor.Remove: %q has invalid vendored path %q", specifier, entry.Path)
+		}
+		return filepath.Join(v.VendorDir, filepath.FromSlash(rel)), nil
 	}
 	rel, err := vendorRelPath(specifier, entry.Type)
 	if err != nil {
@@ -158,6 +200,9 @@ func (v *Vendor) Prune() ([]string, error) {
 	if err := v.validate(); err != nil {
 		return nil, err
 	}
+	if err := v.recoverTransaction(); err != nil {
+		return nil, err
+	}
 
 	expected := make(map[string]struct{}, len(v.Importmap.Entries))
 	expectedSpecs := make(map[string]struct{}, len(v.Importmap.Entries))
@@ -165,17 +210,35 @@ func (v *Vendor) Prune() ([]string, error) {
 		if entry.Version == "" {
 			continue // local entries don't live under VendorDir
 		}
-		ext := ".js"
-		if entry.Type == "css" {
-			ext = ".css"
+		if entry.Path != "" {
+			prefix := VendorDir + "/"
+			if !strings.HasPrefix(entry.Path, prefix) {
+				return nil, fmt.Errorf("assetmapper.Vendor.Prune: %q has vendored path outside %s", spec, prefix)
+			}
+			rel := strings.TrimPrefix(entry.Path, prefix)
+			if rel == "." || !fs.ValidPath(rel) || strings.ContainsRune(rel, '\\') {
+				return nil, fmt.Errorf("assetmapper.Vendor.Prune: %q has invalid vendored path %q", spec, entry.Path)
+			}
+			expected[filepath.FromSlash(rel)] = struct{}{}
+		} else {
+			rel, err := vendorRelPath(spec, entry.Type)
+			if err != nil {
+				return nil, fmt.Errorf("assetmapper.Vendor.Prune: %w", err)
+			}
+			expected[filepath.FromSlash(rel)] = struct{}{}
 		}
-		expected[filepath.FromSlash(spec+ext)] = struct{}{}
 		expectedSpecs[spec] = struct{}{}
+	}
+	// Stop locking orphaned files before deleting them. An interruption can
+	// then leave only harmless unreferenced bytes, never a lock that names a
+	// missing artifact.
+	if err := v.pruneLock(expectedSpecs); err != nil {
+		return nil, err
 	}
 
 	if _, err := os.Stat(v.VendorDir); err != nil {
 		if os.IsNotExist(err) {
-			return nil, v.pruneLock(expectedSpecs)
+			return nil, nil
 		}
 		return nil, fmt.Errorf("assetmapper.Vendor.Prune: stat %s: %w", v.VendorDir, err)
 	}
@@ -207,9 +270,6 @@ func (v *Vendor) Prune() ([]string, error) {
 
 	// Directory cleanup is best-effort; Prune's contract is about files.
 	pruneEmptyDirs(v.VendorDir)
-	if err := v.pruneLock(expectedSpecs); err != nil {
-		return removed, err
-	}
 
 	sort.Strings(removed)
 	return removed, nil
@@ -263,12 +323,86 @@ func (v *Vendor) validate() error {
 	if v.VendorDir == "" {
 		return fmt.Errorf("assetmapper.Vendor: empty VendorDir")
 	}
+	return v.validateMetadataPaths()
+}
+
+func (v *Vendor) validateMetadataPaths() error {
+	lockPath, err := resolvedPlacementPath(v.lockPath())
+	if err != nil {
+		return fmt.Errorf("assetmapper.Vendor: resolve lock path: %w", err)
+	}
+	importmapPath, err := resolvedPlacementPath(v.importmapPath())
+	if err != nil {
+		return fmt.Errorf("assetmapper.Vendor: resolve importmap path: %w", err)
+	}
+	transactionPath, err := resolvedPlacementPath(v.transactionPath())
+	if err != nil {
+		return fmt.Errorf("assetmapper.Vendor: resolve transaction path: %w", err)
+	}
+	paths := []struct {
+		name string
+		path string
+	}{
+		{"lock", lockPath},
+		{"importmap", importmapPath},
+		{"transaction journal", transactionPath},
+	}
+	for i := range paths {
+		for j := i + 1; j < len(paths); j++ {
+			if paths[i].path == paths[j].path {
+				return fmt.Errorf("assetmapper.Vendor: %s and %s paths must differ", paths[i].name, paths[j].name)
+			}
+		}
+	}
+	vendorPath, err := resolvedPlacementPath(v.VendorDir)
+	if err != nil {
+		return fmt.Errorf("assetmapper.Vendor: resolve vendor path: %w", err)
+	}
+	for _, metadata := range paths {
+		rel, err := filepath.Rel(vendorPath, metadata.path)
+		if err != nil {
+			return fmt.Errorf("assetmapper.Vendor: compare %s path: %w", metadata.name, err)
+		}
+		if rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("assetmapper.Vendor: %s path must be outside VendorDir", metadata.name)
+		}
+	}
 	return nil
 }
 
-// applyResolution fetches every package before writing files or importmap entries.
-//
-// Disk failures can leave partial files; importmap entries are committed only after every write succeeds.
+// resolvedPlacementPath resolves every existing symlinked ancestor while
+// preserving a not-yet-created suffix.
+func resolvedPlacementPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	probe := absolute
+	for {
+		resolved, err := filepath.EvalSymlinks(probe)
+		if err == nil {
+			suffix, relErr := filepath.Rel(probe, absolute)
+			if relErr != nil {
+				return "", relErr
+			}
+			if suffix == "." {
+				return filepath.Clean(resolved), nil
+			}
+			return filepath.Clean(filepath.Join(resolved, suffix)), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return "", err
+		}
+		probe = parent
+	}
+}
+
+// applyResolution publishes immutable artifacts before atomically switching
+// metadata to reference them.
 func (v *Vendor) applyResolution(ctx context.Context, res *Resolution) error {
 	if res == nil {
 		return fmt.Errorf("assetmapper.Vendor: resolver returned nil resolution")
@@ -337,7 +471,8 @@ func (v *Vendor) applyResolution(ctx context.Context, res *Resolution) error {
 				entryType = "js"
 			}
 			if _, resolved := seen[specifier]; !resolved &&
-				(locked.Version != entry.Version || locked.Type != entryType) {
+				(locked.Version != entry.Version || locked.Type != entryType ||
+					(locked.Path != "" && entry.Path != VendorDir+"/"+locked.Path)) {
 				return fmt.Errorf(
 					"assetmapper.Vendor: provenance for existing package %q does not match importmap version and type",
 					specifier,
@@ -364,31 +499,45 @@ func (v *Vendor) applyResolution(ctx context.Context, res *Resolution) error {
 		}
 		lock.Packages[item.pkg.Specifier] = item.locked
 	}
-
-	// Write files before importmap entries so missing-file entries cannot persist.
-	if err := os.MkdirAll(v.VendorDir, 0o755); err != nil { // #nosec G301 -- served asset, world-readable by design
-		return fmt.Errorf("assetmapper.Vendor: create %s: %w", v.VendorDir, err)
-	}
-	for _, s := range staged {
-		if err := os.MkdirAll(filepath.Dir(s.dst), 0o755); err != nil { // #nosec G301 -- served asset, world-readable by design
-			return fmt.Errorf("assetmapper.Vendor: mkdir for %s: %w", s.pkg.Specifier, err)
-		}
-		if err := os.WriteFile(s.dst, s.content, 0o644); err != nil { // #nosec G306 -- served asset, world-readable by design
-			return fmt.Errorf("assetmapper.Vendor: write %s: %w", s.dst, err)
+	next := snapshotImportmap(v.Importmap)
+	for _, item := range staged {
+		next.Entries[item.pkg.Specifier] = ImportmapEntry{
+			Path:    VendorDir + "/" + item.locked.Path,
+			Version: item.pkg.Version,
+			Type:    item.pkg.Type,
 		}
 	}
-	if err := lock.Save(v.lockPath()); err != nil {
+	if err := v.publishSnapshot(staged, lock, next); err != nil {
 		return err
 	}
+	v.Importmap.Entries = next.Entries
+	return nil
+}
 
-	// In-process map mutation cannot fail.
-	for _, s := range staged {
-		v.Importmap.Entries[s.pkg.Specifier] = ImportmapEntry{
-			Version: s.pkg.Version,
-			Type:    s.pkg.Type,
+func (v *Vendor) publishSnapshot(staged []stagedPackage, lock *VendorLock, next *Importmap) error {
+	if err := os.MkdirAll(v.VendorDir, 0o755); err != nil { // #nosec G301 -- served assets
+		return fmt.Errorf("assetmapper.Vendor: create vendor directory: %w", err)
+	}
+	for _, item := range staged {
+		if err := os.MkdirAll(filepath.Dir(item.dst), 0o755); err != nil { // #nosec G301 -- served assets
+			return fmt.Errorf("assetmapper.Vendor: create directory for %s: %w", item.pkg.Specifier, err)
+		}
+		if existing, err := os.ReadFile(item.dst); err == nil { // #nosec G304 -- validated immutable vendor path
+			if !bytes.Equal(existing, item.content) {
+				return fmt.Errorf("assetmapper.Vendor: immutable artifact %s has different bytes", item.dst)
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("assetmapper.Vendor: inspect %s: %w", item.dst, err)
+		}
+		if err := atomicWriteFile(item.dst, item.content, 0o644); err != nil {
+			return fmt.Errorf("assetmapper.Vendor: publish %s: %w", item.pkg.Specifier, err)
+		}
+		if err := syncAncestorDirectories(filepath.Dir(item.dst), filepath.Dir(v.VendorDir)); err != nil {
+			return fmt.Errorf("assetmapper.Vendor: sync %s: %w", item.pkg.Specifier, err)
 		}
 	}
-	return nil
+	return v.publishMetadata(lock, next)
 }
 
 // stagedPackage is one fetched package ready to write.
@@ -512,13 +661,24 @@ dispatch:
 				})
 			}
 			sum := sha256.Sum256(content)
+			publishedRel, err := immutableVendorRelPath(p.Specifier, p.Type, hex.EncodeToString(sum[:]))
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("assetmapper.Vendor: %w", err)
+					cancel()
+				}
+				mu.Unlock()
+				return
+			}
 			staged[i] = stagedPackage{
 				pkg:     p,
 				content: content,
-				dst:     filepath.Join(v.VendorDir, filepath.FromSlash(rels[i])),
+				dst:     filepath.Join(v.VendorDir, filepath.FromSlash(publishedRel)),
 				locked: LockedPackage{
 					Version:      p.Version,
 					Type:         p.Type,
+					Path:         publishedRel,
 					SourceURL:    fetched.SourceURL,
 					SourceSize:   size,
 					SourceSHA256: hex.EncodeToString(sourceSum[:]),
@@ -535,11 +695,27 @@ dispatch:
 	return staged, nil
 }
 
+func immutableVendorRelPath(specifier, typ, digest string) (string, error) {
+	rel, err := vendorRelPath(specifier, typ)
+	if err != nil {
+		return "", err
+	}
+	ext := filepath.Ext(rel)
+	return strings.TrimSuffix(rel, ext) + "-" + digest[:HashLength] + ext, nil
+}
+
 func (v *Vendor) lockPath() string {
 	if v.Lockfile != "" {
 		return v.Lockfile
 	}
 	return filepath.Join(filepath.Dir(filepath.Clean(v.VendorDir)), VendorLockFilename)
+}
+
+func (v *Vendor) importmapPath() string {
+	if v.ImportmapFile != "" {
+		return v.ImportmapFile
+	}
+	return filepath.Join(filepath.Dir(filepath.Clean(v.VendorDir)), ImportmapFilename)
 }
 
 func (v *Vendor) loadLock() (*VendorLock, bool, error) {

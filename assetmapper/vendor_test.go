@@ -20,6 +20,7 @@ import (
 type stubResolver struct {
 	resolution *assetmapper.Resolution
 	fetched    map[string][]byte // url -> content
+	onFetch    func()
 
 	mu    sync.Mutex
 	calls []string // urls fetched, for ordering / counting
@@ -37,10 +38,123 @@ func (s *stubResolver) Resolve(ctx context.Context, reqs []assetmapper.PackageRe
 }
 
 func (s *stubResolver) Fetch(ctx context.Context, url string) ([]byte, error) {
+	if s.onFetch != nil {
+		s.onFetch()
+	}
 	s.mu.Lock()
 	s.calls = append(s.calls, url)
 	s.mu.Unlock()
 	return s.fetched[url], nil
+}
+
+func vendoredPath(t *testing.T, vendorDir string, im *assetmapper.Importmap, specifier string) string {
+	t.Helper()
+	entry := im.Entries[specifier]
+	if entry.Path == "" {
+		ext := ".js"
+		if entry.Type == "css" {
+			ext = ".css"
+		}
+		return filepath.Join(vendorDir, filepath.FromSlash(specifier+ext))
+	}
+	const prefix = assetmapper.VendorDir + "/"
+	if !strings.HasPrefix(entry.Path, prefix) {
+		t.Fatalf("vendored path %q is outside %s", entry.Path, prefix)
+	}
+	return filepath.Join(vendorDir, filepath.FromSlash(strings.TrimPrefix(entry.Path, prefix)))
+}
+
+func TestVendor_MetadataFailureLeavesImportmapUnchanged(t *testing.T) {
+	root := t.TempDir()
+	vendorDir := filepath.Join(root, "assets", "vendor")
+	lockTarget := filepath.Join(root, "assets", "blocked-lock")
+	url := "https://example.com/pkg.js"
+	resolver := &stubResolver{
+		resolution: &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+			{Specifier: "pkg", Version: "1.0.0", Type: "js", URL: url},
+		}},
+		fetched: map[string][]byte{url: []byte("new bytes")},
+		onFetch: func() {
+			if err := os.MkdirAll(filepath.Dir(lockTarget), 0o750); err != nil {
+				panic(err)
+			}
+			if err := os.Mkdir(lockTarget, 0o750); err != nil && !os.IsExist(err) {
+				panic(err)
+			}
+		},
+	}
+	importmap := assetmapper.NewImportmap()
+	vendor := &assetmapper.Vendor{
+		Resolver:  resolver,
+		VendorDir: vendorDir,
+		Importmap: importmap,
+		Lockfile:  lockTarget,
+	}
+
+	err := vendor.Require(context.Background(), "pkg", "1.0.0")
+	if err == nil || !strings.Contains(err.Error(), "VendorLock.Save") {
+		t.Fatalf("Require error = %v, want lock metadata failure", err)
+	}
+	if len(importmap.Entries) != 0 {
+		t.Fatalf("failed transaction mutated importmap: %v", importmap.Entries)
+	}
+}
+
+func TestVendor_RecoversInterruptedMetadataCommit(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets")
+	vendorDir := filepath.Join(assetsDir, "vendor")
+	importmapPath := filepath.Join(assetsDir, "importmap.json")
+	if err := os.MkdirAll(importmapPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	url := "https://example.com/pkg.js"
+	resolver := &stubResolver{
+		resolution: &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+			{Specifier: "pkg", Version: "1.0.0", Type: "js", URL: url},
+		}},
+		fetched: map[string][]byte{url: []byte("export {}")},
+	}
+	importmap := assetmapper.NewImportmap()
+	vendor := &assetmapper.Vendor{
+		Resolver:      resolver,
+		VendorDir:     vendorDir,
+		Importmap:     importmap,
+		ImportmapFile: importmapPath,
+	}
+
+	err := vendor.Require(context.Background(), "pkg", "1.0.0")
+	if err == nil {
+		t.Fatal("Require succeeded despite blocked importmap target")
+	}
+	if len(importmap.Entries) != 0 {
+		t.Fatalf("failed commit mutated in-memory map: %v", importmap.Entries)
+	}
+	journal := filepath.Join(assetsDir, assetmapper.VendorTransactionFilename)
+	if _, err := os.Stat(journal); err != nil {
+		t.Fatalf("recovery journal missing: %v", err)
+	}
+
+	if err := os.Remove(importmapPath); err != nil {
+		t.Fatal(err)
+	}
+	resolver.resolution = &assetmapper.Resolution{}
+	if err := vendor.Require(context.Background(), "ignored", "1.0.0"); err != nil {
+		t.Fatalf("recovery: %v", err)
+	}
+	if importmap.Entries["pkg"].Version != "1.0.0" {
+		t.Fatalf("recovered in-memory map = %+v", importmap.Entries)
+	}
+	loaded, err := assetmapper.LoadImportmap(importmapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Entries["pkg"].Path == "" {
+		t.Fatalf("recovered persisted map = %+v", loaded.Entries)
+	}
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("recovery journal survived completed recovery: %v", err)
+	}
 }
 
 // --- Vendor path safety ---
@@ -83,6 +197,90 @@ func TestVendor_RejectsTraversalSpecifiers(t *testing.T) {
 	}
 }
 
+func TestVendor_PruneRejectsMalformedVendoredPathBeforeDeleting(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		entry assetmapper.ImportmapEntry
+	}{
+		{
+			name: "immutable path",
+			key:  "bad",
+			entry: assetmapper.ImportmapEntry{
+				Path: "vendor/../keep.js", Version: "1.0.0", Type: "js",
+			},
+		},
+		{
+			name:  "legacy specifier",
+			key:   "../keep",
+			entry: assetmapper.ImportmapEntry{Version: "1.0.0", Type: "js"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			vendorDir := filepath.Join(root, "assets", "vendor")
+			if err := os.MkdirAll(vendorDir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			keep := filepath.Join(vendorDir, "keep.js")
+			if err := os.WriteFile(keep, []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			importmap := assetmapper.NewImportmap()
+			importmap.Entries[test.key] = test.entry
+			vendor := &assetmapper.Vendor{
+				Resolver:  &stubResolver{},
+				VendorDir: vendorDir,
+				Importmap: importmap,
+			}
+
+			if _, err := vendor.Prune(); err == nil {
+				t.Fatal("Prune accepted malformed vendored path")
+			}
+			if got, err := os.ReadFile(keep); err != nil || string(got) != "keep" {
+				t.Fatalf("Prune touched keep.js: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestVendor_RejectsCollidingOrPublicMetadataPaths(t *testing.T) {
+	root := t.TempDir()
+	vendorDir := filepath.Join(root, "assets", "vendor")
+	importmapPath := filepath.Join(root, "assets", "state.json")
+	for _, vendor := range []*assetmapper.Vendor{
+		{
+			Resolver: &stubResolver{}, VendorDir: vendorDir, Importmap: assetmapper.NewImportmap(),
+			Lockfile: importmapPath, ImportmapFile: importmapPath,
+		},
+		{
+			Resolver: &stubResolver{}, VendorDir: vendorDir, Importmap: assetmapper.NewImportmap(),
+			Lockfile: filepath.Join(vendorDir, "lock.json"),
+		},
+	} {
+		if err := vendor.Require(context.Background(), "pkg", "1.0.0"); err == nil {
+			t.Fatal("Require accepted unsafe metadata paths")
+		}
+	}
+
+	if err := os.MkdirAll(vendorDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(root, "assets", "metadata-link")
+	if err := os.Symlink(vendorDir, symlink); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	vendor := &assetmapper.Vendor{
+		Resolver:  &stubResolver{},
+		VendorDir: vendorDir,
+		Importmap: assetmapper.NewImportmap(),
+		Lockfile:  filepath.Join(symlink, "lock.json"),
+	}
+	if err := vendor.Require(context.Background(), "pkg", "1.0.0"); err == nil {
+		t.Fatal("Require accepted a metadata path symlinked into VendorDir")
+	}
+}
+
 // --- Vendor.Require ---
 
 func TestVendor_RequireWritesFileAndImportmapEntry(t *testing.T) {
@@ -110,7 +308,7 @@ func TestVendor_RequireWritesFileAndImportmapEntry(t *testing.T) {
 	}
 
 	// File on disk at vendor/react.js.
-	data, err := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
+	data, err := os.ReadFile(vendoredPath(t, vendorDir, im, "react")) // #nosec G304 -- reads an app-selected asset path
 	if err != nil {
 		t.Fatalf("vendored file missing: %v", err)
 	}
@@ -126,8 +324,8 @@ func TestVendor_RequireWritesFileAndImportmapEntry(t *testing.T) {
 	if entry.Version != "18.2.0" {
 		t.Errorf("entry Version = %q, want 18.2.0", entry.Version)
 	}
-	if entry.Path != "" {
-		t.Errorf("entry Path = %q, want empty (vendored entry)", entry.Path)
+	if !strings.HasPrefix(entry.Path, "vendor/react-") || !strings.HasSuffix(entry.Path, ".js") {
+		t.Errorf("entry Path = %q, want immutable vendored path", entry.Path)
 	}
 	lock, err := assetmapper.LoadVendorLock(filepath.Join(filepath.Dir(vendorDir), assetmapper.VendorLockFilename))
 	if err != nil {
@@ -142,7 +340,7 @@ func TestVendor_RequireWritesFileAndImportmapEntry(t *testing.T) {
 	if err := lock.Verify(vendorDir); err != nil {
 		t.Fatalf("verify lock: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(vendorDir, "react.js"), []byte("tampered"), 0o600); err != nil {
+	if err := os.WriteFile(vendoredPath(t, vendorDir, im, "react"), []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := lock.Verify(vendorDir); err == nil {
@@ -334,9 +532,9 @@ func TestVendor_RequireDownloadsTransitiveDeps(t *testing.T) {
 	}
 
 	// Both files exist on disk.
-	for _, name := range []string{"react.js", "scheduler.js"} {
-		if _, err := os.Stat(filepath.Join(vendorDir, name)); err != nil {
-			t.Errorf("missing %s: %v", name, err)
+	for _, specifier := range []string{"react", "scheduler"} {
+		if _, err := os.Stat(vendoredPath(t, vendorDir, im, specifier)); err != nil {
+			t.Errorf("missing %s: %v", specifier, err)
 		}
 	}
 	// Both importmap entries exist.
@@ -376,7 +574,7 @@ func TestVendor_RequireRewritesUpstreamURLToBareSpecifier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
+	data, _ := os.ReadFile(vendoredPath(t, vendorDir, im, "react")) // #nosec G304 -- reads an app-selected asset path
 	got := string(data)
 	if !strings.Contains(got, `"scheduler"`) {
 		t.Errorf("upstream URL not rewritten to bare specifier; got:\n%s", got)
@@ -411,7 +609,7 @@ func TestVendor_RequireSupportsCSSPackages(t *testing.T) {
 	}
 
 	// File at vendor/normalize.css (not .js).
-	if _, err := os.Stat(filepath.Join(vendorDir, "normalize.css")); err != nil {
+	if _, err := os.Stat(vendoredPath(t, vendorDir, im, "normalize")); err != nil {
 		t.Errorf("missing CSS file: %v", err)
 	}
 	entry := im.Entries["normalize"]
@@ -452,7 +650,7 @@ func TestVendor_RequireOverwritesExistingEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(filepath.Join(vendorDir, "react.js")) // #nosec G304 -- reads an app-selected asset path
+	data, _ := os.ReadFile(vendoredPath(t, vendorDir, im, "react")) // #nosec G304 -- reads an app-selected asset path
 	if string(data) != "v2" {
 		t.Errorf("file content = %q, want v2 (overwrite)", data)
 	}
@@ -463,7 +661,7 @@ func TestVendor_RequireOverwritesExistingEntry(t *testing.T) {
 
 // --- Vendor.Remove ---
 
-func TestVendor_RemoveDeletesFileAndEntry(t *testing.T) {
+func TestVendor_RemoveUnregistersFileUntilPrune(t *testing.T) {
 	dir := t.TempDir()
 	vendorDir := filepath.Join(dir, "assets", "vendor")
 
@@ -486,14 +684,21 @@ func TestVendor_RemoveDeletesFileAndEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	artifact := vendoredPath(t, vendorDir, im, "react")
 	if err := v.Remove("react"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(vendorDir, "react.js")); !os.IsNotExist(err) {
-		t.Errorf("file still exists after Remove: %v", err)
+	if _, err := os.Stat(artifact); err != nil {
+		t.Errorf("immutable file should remain until Prune: %v", err)
 	}
 	if _, ok := im.Entries["react"]; ok {
 		t.Error("entry still present in importmap after Remove")
+	}
+	if _, err := v.Prune(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+		t.Errorf("file survived Prune: %v", err)
 	}
 }
 
@@ -1082,7 +1287,7 @@ func TestVendor_RequireFetchFailure_LeavesPriorEntriesIntact(t *testing.T) {
 	if _, ok := im.Entries["newpkg"]; ok {
 		t.Error("newpkg entry present despite failed Require")
 	}
-	if _, err := os.Stat(filepath.Join(vendorDir, "react.js")); err != nil {
+	if _, err := os.Stat(vendoredPath(t, vendorDir, im, "react")); err != nil {
 		t.Errorf("react.js was deleted: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(vendorDir, "newpkg.js")); !os.IsNotExist(err) {

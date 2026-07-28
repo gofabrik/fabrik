@@ -124,12 +124,19 @@ Then in any module:
 import htmx from "htmx.org";
 ```
 
-Vendored files are ordinary assets afterwards - committed, embedded,
-hashed, importmap-resolved. `vendor.lock.json` records each artifact's
+Vendored files are immutable, content-addressed assets afterwards - committed,
+embedded, hashed again by the production compiler, and importmap-resolved.
+The importmap switches to a new artifact only after its bytes are durable.
+`vendor.lock.json` records each artifact's
 exact version, type, final source URL, downloaded size and SHA-256, plus the
 published size and SHA-256 so committed files can be verified with
 `VendorLock.Verify`. There is no install step on other machines: the files and
 provenance lock live in the repository.
+
+The CLI commits the lock and importmap through a recovery journal. If a process
+is interrupted between those two atomic metadata writes, the next vendoring
+command completes the recorded commit before doing new work. Removed versions
+remain as harmless unreferenced bytes until `assetmapper prune`.
 
 JSPM resolution requires HTTPS and same-host redirects by default, blocks
 private-network destinations, and limits package count, individual package
