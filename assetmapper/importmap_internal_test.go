@@ -1,6 +1,7 @@
 package assetmapper
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -118,6 +119,47 @@ func TestImportmap_PreloadGraphCacheSeparatePerMapper(t *testing.T) {
 	}
 	if got := preloadCacheSize(im); got != 2 {
 		t.Errorf("cache size = %d, want 2 (one per Mapper instance)", got)
+	}
+}
+
+func TestImportmapRenderer_CacheIsScopedToSnapshot(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js":   {Data: []byte("export {}")},
+		"other.js": {Data: []byte("export {}")},
+	}
+	manifest := NewManifest()
+	manifest.Entries["app.js"] = "app-deadbeef.js"
+	manifest.Entries["other.js"] = "other-cafef00d.js"
+	manifest.Dependencies = map[string][]string{
+		"app.js":   nil,
+		"other.js": nil,
+	}
+	mapper, err := New(Config{
+		Roots:    []Root{{FS: src}},
+		Manifest: manifest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := NewImportmap()
+	im.Entries["entry"] = ImportmapEntry{Path: "app.js", Entrypoint: true}
+	renderer := im.Bind(mapper)
+
+	first, err := renderer.ModulePreloadLinks("entry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := preloadCacheSize(renderer.importmap); got != 1 {
+		t.Fatalf("bound cache size = %d, want 1", got)
+	}
+
+	im.Entries["entry"] = ImportmapEntry{Path: "other.js", Entrypoint: true}
+	second, err := renderer.ModulePreloadLinks("entry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || !strings.Contains(second, "app-deadbeef.js") {
+		t.Fatalf("bound cache changed after builder mutation:\nfirst: %s\nsecond: %s", first, second)
 	}
 }
 

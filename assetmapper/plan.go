@@ -337,17 +337,6 @@ func (p *buildPlan) mapper() *Mapper {
 	return &Mapper{roots: p.roots, urlPrefix: p.urlPrefix, manifest: p.manifest}
 }
 
-func snapshotImportmap(src *Importmap) *Importmap {
-	dst := NewImportmap()
-	if src == nil {
-		return dst
-	}
-	for key, entry := range src.Entries {
-		dst.Entries[key] = entry
-	}
-	return dst
-}
-
 func canonicalizeImportmapPaths(im *Importmap) {
 	for key, entry := range im.Entries {
 		if entry.Path != "" {

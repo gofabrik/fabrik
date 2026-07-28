@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html/template"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -112,6 +113,72 @@ func TestFuncMap_ImportmapUnknownEntrypointPropagatesError(t *testing.T) {
 	_, err := execTemplate(t, `{{ importmap "typo" }}`, m, im)
 	if err == nil {
 		t.Fatal("expected execution error for unknown entrypoint")
+	}
+}
+
+func TestFuncMap_SnapshotsImportmapAtBinding(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js":   {Data: []byte("export {}")},
+		"other.js": {Data: []byte("export {}")},
+	}
+	m := newMapper(t, src)
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+
+	render := assetmapper.FuncMap(m, im)["importmap"].(func(...string) (template.HTML, error))
+	delete(im.Entries, "app")
+	im.Entries["other"] = assetmapper.ImportmapEntry{Path: "other.js", Entrypoint: true}
+
+	out, err := render("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "/assets/app-") || strings.Contains(string(out), "/assets/other-") {
+		t.Fatalf("bound helper changed after builder mutation:\n%s", out)
+	}
+}
+
+func TestFuncMap_BoundSnapshotIsConcurrentWithBuilderMutation(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js":   {Data: []byte("export {}")},
+		"other.js": {Data: []byte("export {}")},
+	}
+	m := newMapper(t, src)
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	render := assetmapper.FuncMap(m, im)["importmap"].(func(...string) (template.HTML, error))
+
+	var wg sync.WaitGroup
+	errs := make(chan string, 8)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 500 {
+			im.Entries["app"] = assetmapper.ImportmapEntry{Path: "other.js", Entrypoint: true}
+			im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+		}
+	}()
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				out, err := render("app")
+				if err != nil {
+					errs <- err.Error()
+					return
+				}
+				if !strings.Contains(string(out), "/assets/app-") {
+					errs <- "bound renderer changed output: " + string(out)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
 	}
 }
 

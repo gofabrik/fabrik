@@ -26,22 +26,32 @@ import "html/template"
 // surfaces as execution errors. Common cases: missing asset, typo'd
 // entrypoint name, entry not marked as entrypoint.
 //
+// FuncMap snapshots im before returning. The helpers are safe for concurrent
+// use and do not observe later mutations to the Importmap builder.
+//
 // [Compiled.FuncMap] returns the same helpers bound to a [Build]
 // result.
 func FuncMap(m *Mapper, im *Importmap) template.FuncMap {
+	return im.Bind(m).FuncMap()
+}
+
+// FuncMap returns template helpers bound to the renderer's immutable importmap
+// snapshot.
+func (r *ImportmapRenderer) FuncMap() template.FuncMap {
+	m := r.mapper
 	return template.FuncMap{
 		"asset": func(logicalPath string) (string, error) {
 			return m.Asset(logicalPath)
 		},
 		"importmap": func(entrypoints ...string) (template.HTML, error) {
-			s, err := im.Render(m, entrypoints...)
+			s, err := r.Render(entrypoints...)
 			if err != nil {
 				return "", err
 			}
 			return template.HTML(s), nil // #nosec G203 -- output produced by the context-escaping importmap renderer
 		},
 		"importmap_nonce": func(nonce string, entrypoints ...string) (template.HTML, error) {
-			s, err := im.RenderWithOptions(m, RenderOptions{
+			s, err := r.RenderWithOptions(RenderOptions{
 				Entrypoints: entrypoints,
 				Nonce:       nonce,
 			})
@@ -51,14 +61,14 @@ func FuncMap(m *Mapper, im *Importmap) template.FuncMap {
 			return template.HTML(s), nil // #nosec G203 -- output produced by the context-escaping importmap renderer
 		},
 		"module_preload_links": func(entrypoints ...string) (template.HTML, error) {
-			s, err := im.ModulePreloadLinks(m, entrypoints...)
+			s, err := r.ModulePreloadLinks(entrypoints...)
 			if err != nil {
 				return "", err
 			}
 			return template.HTML(s), nil // #nosec G203 -- output produced by the context-escaping importmap renderer
 		},
 		"module_preload_links_nonce": func(nonce string, entrypoints ...string) (template.HTML, error) {
-			s, err := im.ModulePreloadLinksWithOptions(m, RenderOptions{
+			s, err := r.ModulePreloadLinksWithOptions(RenderOptions{
 				Entrypoints: entrypoints,
 				Nonce:       nonce,
 			})

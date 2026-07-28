@@ -259,6 +259,34 @@ func TestImportmap_RenderIsKeySorted(t *testing.T) {
 	}
 }
 
+func TestImportmap_BindSnapshotsEntries(t *testing.T) {
+	src := fstest.MapFS{
+		"first.js":  {Data: []byte("export {}")},
+		"second.js": {Data: []byte("export {}")},
+	}
+	mapper := newRenderMapper(t, src)
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "first.js", Entrypoint: true}
+	renderer := im.Bind(mapper)
+
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "second.js", Entrypoint: true}
+	bound, err := renderer.Render("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bound, "/assets/first-") || strings.Contains(bound, "/assets/second-") {
+		t.Fatalf("bound renderer changed after builder mutation:\n%s", bound)
+	}
+
+	fresh, err := im.Render(mapper, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fresh, "/assets/second-") || strings.Contains(fresh, "/assets/first-") {
+		t.Fatalf("direct Render did not take a fresh snapshot:\n%s", fresh)
+	}
+}
+
 func TestImportmap_RejectsNilMapper(t *testing.T) {
 	im := assetmapper.NewImportmap()
 	if _, err := im.Render(nil); err == nil {

@@ -107,6 +107,13 @@ none means empty). Entries map bare specifiers to local assets
 }
 ```
 
+Treat `Importmap` as a mutable setup-time builder. `Bind(mapper)` creates an
+immutable renderer for repeated or concurrent runtime use, and `FuncMap`
+performs that binding automatically when its helpers are created. Later
+builder mutations cannot change a bound renderer or make its preload cache
+stale. Direct `Render` calls take a fresh snapshot each time; do not mutate the
+builder concurrently while a snapshot is being taken.
+
 `{{ importmap "app" }}` emits the `<script type="importmap">` block,
 `<link rel="modulepreload">` tags for the transitive module graph,
 and the entrypoint tag. JS entrypoints load as external module

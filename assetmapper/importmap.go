@@ -27,8 +27,13 @@ const ImportmapFilename = "importmap.json"
 //     immutable content-addressed file; legacy entries with no Path resolve
 //     against vendor/<key>.js (or .css).
 //
-// Importmap can be loaded from disk, edited by [Vendor], and rendered into HTML.
+// Importmap is a mutable builder. It can be loaded from disk, edited by
+// [Vendor], and rendered into HTML. Do not mutate Entries concurrently with
+// other builder operations or while taking a snapshot. [Importmap.Bind]
+// snapshots the entries for stable, concurrent runtime rendering; the direct
+// Render methods take a fresh snapshot for each call.
 type Importmap struct {
+	// Entries is intentionally mutable during application setup.
 	Entries map[string]ImportmapEntry
 
 	// preloadCache is used only in prod mode, where source files do not change at runtime.
@@ -133,6 +138,10 @@ type RenderOptions struct {
 }
 
 // Render renders importmap, preload, stylesheet, and entrypoint tags.
+//
+// Render snapshots the mutable Importmap for this call. Use [Importmap.Bind]
+// when rendering repeatedly or concurrently so one immutable snapshot and its
+// preload cache are reused.
 func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 	return im.RenderWithOptions(m, RenderOptions{Entrypoints: entrypoints})
 }
@@ -157,7 +166,7 @@ func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 //
 // Use [FuncMap] for html/template helpers that return [template.HTML].
 func (im *Importmap) RenderWithOptions(m *Mapper, opts RenderOptions) (string, error) {
-	return im.render("assetmapper.Importmap.Render", m, opts)
+	return im.Bind(m).RenderWithOptions(opts)
 }
 
 func (im *Importmap) render(op string, m *Mapper, opts RenderOptions) (string, error) {
@@ -301,6 +310,10 @@ func (im *Importmap) ModulePreloadLinks(m *Mapper, entrypoints ...string) (strin
 //
 // CSS is excluded because modulepreload applies only to JavaScript modules.
 func (im *Importmap) ModulePreloadLinksWithOptions(m *Mapper, opts RenderOptions) (string, error) {
+	return im.Bind(m).ModulePreloadLinksWithOptions(opts)
+}
+
+func (im *Importmap) modulePreloadLinksWithOptions(m *Mapper, opts RenderOptions) (string, error) {
 	if m == nil {
 		return "", fmt.Errorf("assetmapper.Importmap.ModulePreloadLinks: nil Mapper")
 	}
