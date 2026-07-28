@@ -15,12 +15,20 @@ import (
 type BuildOption func(*buildConfig)
 
 type buildConfig struct {
-	urlPrefix string
+	urlPrefix       string
+	strictAssetURLs bool
 }
 
 // WithURLPrefix sets the URL prefix for hashed asset URLs.
 func WithURLPrefix(prefix string) BuildOption {
 	return func(c *buildConfig) { c.urlPrefix = prefix }
+}
+
+// WithStrictAssetURLs makes unresolved root-relative references and CSS
+// url(...) references build errors. Relative JS imports and CSS imports are
+// always strict; bare JS imports must always exist in the importmap.
+func WithStrictAssetURLs() BuildOption {
+	return func(c *buildConfig) { c.strictAssetURLs = true }
 }
 
 // Build compiles asset sources in memory and returns their runtime surfaces.

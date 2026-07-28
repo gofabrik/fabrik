@@ -64,6 +64,11 @@ which is safe because every served name embeds its content hash.
 `Check(roots, im, opts...)` runs the same pipeline and reports the
 error `Build` would, without keeping the result - wire it into CI so
 a broken reference or importmap fails the build, not the deploy.
+Relative JS imports/exports and CSS imports must resolve to an asset, and bare
+JS specifiers must exist in the importmap. Root-relative references and CSS
+`url()` targets may intentionally be application endpoints, so they remain
+external by default; pass `WithStrictAssetURLs()` to require those targets to
+resolve as assets too.
 
 ## Roots
 
@@ -173,9 +178,11 @@ entries by hand would bypass provenance recording.
 
 ## Errors
 
-`Build` and `Check` fail loudly and completely: an invalid root, a
+`Build`, `Check`, and `Compile` fail loudly and completely: an invalid root, a
 dependency cycle among modules, two assets compiling to the same
 output name, a malformed `importmap.json`, or an importmap entry
-naming a missing asset all abort with a message naming the culprit.
+naming a missing asset all abort with a message naming the culprit. Missing
+relative JS and CSS imports are also rejected during planning, before any
+output is served or published.
 `ErrAssetNotFound` reports unknown logical paths at lookup time;
 template helpers return errors that surface as execution errors.

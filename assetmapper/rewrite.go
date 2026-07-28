@@ -2,7 +2,6 @@ package assetmapper
 
 import (
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -36,72 +35,95 @@ type ref struct {
 	suffix string
 	// start and end bracket the specifier text without surrounding quotes.
 	start, end int
+	kind       referenceKind
 }
 
-// jsImportRE matches static and dynamic import/export specifiers.
-//
-// False positives are left unchanged unless they resolve to a known asset.
-var jsImportRE = regexp.MustCompile(
-	`\b(?:import|export)\b[^'";]*?["']([^"'\n]+)["']`,
+type referenceKind int
+
+const (
+	referenceJSImport referenceKind = iota
+	referenceCSSImport
+	referenceCSSURL
 )
 
-// cssURLRE matches double-quoted, single-quoted, and unquoted url(...) references.
-var cssURLRE = regexp.MustCompile(
-	`url\(\s*(?:"([^"]+)"|'([^']+)'|([^)\s'"]+))\s*\)`,
-)
-
-// cssImportRE matches @import "..." or @import '...' (the bare-string
-// form). @import url("...") is covered by [cssURLRE] already.
-var cssImportRE = regexp.MustCompile(
-	`@import\s+["']([^"'\n]+)["']`,
-)
+type scannedRef struct {
+	start int
+	end   int
+	kind  referenceKind
+	value string
+}
 
 // extractRefs returns rewrite candidates with byte ranges.
 func extractRefs(importerPath string, content []byte, kind assetKind) []ref {
-	var refs []ref
+	var scanned []scannedRef
 	switch kind {
 	case kindJS:
-		for _, m := range jsImportRE.FindAllSubmatchIndex(content, -1) {
-			refs = append(refs, refAt(importerPath, content, m[2], m[3]))
-		}
+		scanned = scanJSImportRefs(content)
 	case kindCSS:
-		for _, m := range cssURLRE.FindAllSubmatchIndex(content, -1) {
-			s, e := pickAlternation(m, 2, 4, 6)
-			if s < 0 {
-				continue
-			}
-			refs = append(refs, refAt(importerPath, content, s, e))
-		}
-		for _, m := range cssImportRE.FindAllSubmatchIndex(content, -1) {
-			refs = append(refs, refAt(importerPath, content, m[2], m[3]))
-		}
+		scanned = scanCSSRefs(content)
+	}
+	refs := make([]ref, 0, len(scanned))
+	for _, candidate := range scanned {
+		refs = append(refs, refAt(
+			importerPath,
+			candidate.start,
+			candidate.end,
+			candidate.kind,
+			candidate.value,
+		))
 	}
 	return refs
 }
 
-func refAt(importer string, content []byte, start, end int) ref {
-	spec := string(content[start:end])
+func refAt(importer string, start, end int, kind referenceKind, spec string) ref {
 	suffix := ""
 	if i := strings.IndexAny(spec, "?#"); i >= 0 {
 		suffix = spec[i:]
 	}
+	resolved := resolveRef(importer, spec)
+	if resolved == "" && kind != referenceJSImport && isLocalReference(spec) {
+		resolved = resolveRef(importer, "./"+spec)
+	}
 	return ref{
 		spec:     spec,
-		resolved: resolveRef(importer, spec),
+		resolved: resolved,
 		suffix:   suffix,
 		start:    start,
 		end:      end,
+		kind:     kind,
 	}
 }
 
-// pickAlternation returns the first present regex submatch range.
-func pickAlternation(indices []int, groupStarts ...int) (int, int) {
-	for _, gs := range groupStarts {
-		if gs < len(indices) && indices[gs] >= 0 {
-			return indices[gs], indices[gs+1]
+func isLocalReference(spec string) bool {
+	if i := strings.IndexAny(spec, "?#"); i >= 0 {
+		spec = spec[:i]
+	}
+	return spec != "" &&
+		!strings.HasPrefix(spec, "#") &&
+		!strings.HasPrefix(spec, "/") &&
+		!strings.HasPrefix(spec, "//") &&
+		!hasURLScheme(spec)
+}
+
+func hasURLScheme(spec string) bool {
+	colon := strings.IndexByte(spec, ':')
+	if colon <= 0 {
+		return false
+	}
+	for i := 0; i < colon; i++ {
+		c := spec[i]
+		if i == 0 && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
+			return false
+		}
+		if i > 0 &&
+			(c < 'A' || c > 'Z') &&
+			(c < 'a' || c > 'z') &&
+			(c < '0' || c > '9') &&
+			c != '+' && c != '-' && c != '.' {
+			return false
 		}
 	}
-	return -1, -1
+	return true
 }
 
 // resolveRef converts a local source reference into a logical asset path.
@@ -118,10 +140,7 @@ func resolveRef(importerPath, spec string) string {
 	if spec == "" {
 		return ""
 	}
-	if strings.HasPrefix(spec, "http://") ||
-		strings.HasPrefix(spec, "https://") ||
-		strings.HasPrefix(spec, "//") ||
-		strings.HasPrefix(spec, "data:") {
+	if strings.HasPrefix(spec, "//") || hasURLScheme(spec) {
 		return ""
 	}
 	if strings.HasPrefix(spec, "/") {

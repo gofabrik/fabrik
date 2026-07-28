@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"sort"
+	"strings"
 )
 
 // buildPlan is the validated, deterministic result shared by every compiled
@@ -109,14 +110,23 @@ func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) 
 
 	deps := make(map[string][]string)
 	refsByAsset := make(map[string][]ref)
+	var rewriteAssets []string
 	for logical, asset := range collected {
 		if asset.kind != kindJS && asset.kind != kindCSS {
 			continue
 		}
+		rewriteAssets = append(rewriteAssets, logical)
+	}
+	sort.Strings(rewriteAssets)
+	for _, logical := range rewriteAssets {
+		asset := collected[logical]
 		deps[logical] = nil
 		refs := extractRefs(logical, asset.content, asset.kind)
 		refsByAsset[logical] = refs
 		for _, ref := range refs {
+			if err := validatePlannedReference(context, logical, ref, im, collected, cfg.strictAssetURLs); err != nil {
+				return nil, err
+			}
 			if ref.resolved == "" {
 				continue
 			}
@@ -174,6 +184,76 @@ func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) 
 		return nil, fmt.Errorf("%s: %w", context, err)
 	}
 	return plan, nil
+}
+
+func validatePlannedReference(
+	context, importer string,
+	ref ref,
+	importmap *Importmap,
+	assets map[string]*collectedAsset,
+	strictAssetURLs bool,
+) error {
+	if ref.resolved != "" {
+		if _, ok := assets[ref.resolved]; ok {
+			return nil
+		}
+		strict := strictAssetURLs
+		switch ref.kind {
+		case referenceJSImport:
+			strict = !strings.HasPrefix(ref.spec, "/") || strictAssetURLs
+		case referenceCSSImport:
+			strict = !strings.HasPrefix(ref.spec, "/") || strictAssetURLs
+		case referenceCSSURL:
+			strict = strictAssetURLs
+		}
+		if strict {
+			return fmt.Errorf("%s: %s references missing asset %q", context, importer, ref.spec)
+		}
+		return nil
+	}
+
+	switch ref.kind {
+	case referenceJSImport:
+		if strings.HasPrefix(ref.spec, "./") || strings.HasPrefix(ref.spec, "../") {
+			return fmt.Errorf("%s: %s references %q outside the asset roots", context, importer, ref.spec)
+		}
+		if strictAssetURLs && isRootRelativeReference(ref.spec) {
+			return fmt.Errorf("%s: %s references invalid root-relative asset %q", context, importer, ref.spec)
+		}
+		if isBareJSImport(ref.spec) {
+			if _, ok := importmap.Entries[ref.spec]; !ok {
+				return fmt.Errorf("%s: %s imports bare specifier %q, which is absent from the importmap", context, importer, ref.spec)
+			}
+		}
+	case referenceCSSImport:
+		if strictAssetURLs && isRootRelativeReference(ref.spec) {
+			return fmt.Errorf("%s: %s imports invalid root-relative asset %q", context, importer, ref.spec)
+		}
+		if isLocalReference(ref.spec) {
+			return fmt.Errorf("%s: %s imports %q outside the asset roots", context, importer, ref.spec)
+		}
+	case referenceCSSURL:
+		if strictAssetURLs && isRootRelativeReference(ref.spec) {
+			return fmt.Errorf("%s: %s references invalid root-relative CSS URL %q", context, importer, ref.spec)
+		}
+		if strictAssetURLs && isLocalReference(ref.spec) {
+			return fmt.Errorf("%s: %s references unresolved CSS URL %q", context, importer, ref.spec)
+		}
+	}
+	return nil
+}
+
+func isBareJSImport(spec string) bool {
+	return spec != "" &&
+		!strings.HasPrefix(spec, "./") &&
+		!strings.HasPrefix(spec, "../") &&
+		!strings.HasPrefix(spec, "/") &&
+		!strings.HasPrefix(spec, "//") &&
+		!hasURLScheme(spec)
+}
+
+func isRootRelativeReference(spec string) bool {
+	return strings.HasPrefix(spec, "/") && !strings.HasPrefix(spec, "//")
 }
 
 func (p *buildPlan) mapper() *Mapper {

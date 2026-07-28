@@ -780,18 +780,12 @@ func discoverVendorDependencies(
 		}
 	}
 	if typ == "css" {
-		for _, match := range cssImportRE.FindAllSubmatchIndex(content, -1) {
-			add(string(content[match[2]:match[3]]))
-		}
-		for _, match := range cssURLRE.FindAllSubmatchIndex(content, -1) {
-			start, end := pickAlternation(match, 2, 4, 6)
-			if start >= 0 {
-				add(string(content[start:end]))
-			}
+		for _, ref := range extractRefs("", content, kindCSS) {
+			add(ref.spec)
 		}
 	} else {
-		for _, match := range jsImportRE.FindAllSubmatchIndex(content, -1) {
-			add(string(content[match[2]:match[3]]))
+		for _, ref := range extractRefs("", content, kindJS) {
+			add(ref.spec)
 		}
 	}
 	return sortedUniqueStrings(literals)
@@ -907,13 +901,13 @@ func rewriteVendoredJS(content []byte, urlToSpec map[string]string) []byte {
 func planVendoredJS(content []byte, urlToSpec map[string]string, limit int64) ([]ref, int64, error) {
 	var refs []ref
 	size := int64(len(content))
-	for _, m := range jsImportRE.FindAllSubmatchIndex(content, -1) {
-		spec := string(content[m[2]:m[3]])
+	for _, candidate := range scanJSImportRefs(content) {
+		spec := candidate.value
 		replacement, ok := urlToSpec[spec]
 		if !ok {
 			continue
 		}
-		delta := int64(len(replacement)) - int64(m[3]-m[2])
+		delta := int64(len(replacement)) - int64(candidate.end-candidate.start)
 		if delta > 0 && size > limit-delta {
 			return nil, 0, fmt.Errorf("published package exceeds %d-byte limit", limit)
 		}
@@ -921,8 +915,9 @@ func planVendoredJS(content []byte, urlToSpec map[string]string, limit int64) ([
 		refs = append(refs, ref{
 			spec:     spec,
 			resolved: spec,
-			start:    m[2],
-			end:      m[3],
+			start:    candidate.start,
+			end:      candidate.end,
+			kind:     referenceJSImport,
 		})
 	}
 	if size > limit {

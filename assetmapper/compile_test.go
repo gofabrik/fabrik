@@ -88,6 +88,25 @@ func TestCompile_PersistsPreloadDependencies(t *testing.T) {
 	}
 }
 
+func TestCompile_PersistsBareImportmapDependencies(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js":         {Data: []byte(`import "dep";`)},
+		"dep.js":         {Data: []byte("export {}")},
+		"importmap.json": {Data: []byte(`{"app":{"path":"app.js","entrypoint":true},"dep":{"path":"dep.js"}}`)},
+	}
+	dir := t.TempDir()
+	if _, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, dir); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := assetmapper.LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifest.Dependencies["app.js"]; len(got) != 1 || got[0] != "dep.js" {
+		t.Fatalf("persisted app.js dependencies = %v, want [dep.js]", got)
+	}
+}
+
 func TestCompile_RejectsNoRoots(t *testing.T) {
 	if _, err := assetmapper.Compile(nil, t.TempDir()); err == nil {
 		t.Fatal("expected error for empty Roots")
