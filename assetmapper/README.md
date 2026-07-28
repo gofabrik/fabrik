@@ -52,8 +52,9 @@ Use the `all:` embed prefix. Plain `//go:embed assets` silently drops
 URLs (transitively - a changed image re-busts the CSS referencing it,
 which re-busts anything importing that CSS), and validates the
 importmap. It is deterministic from content, so URLs are stable
-across replicas. Only content that rewriting changed is held in
-memory; images and fonts serve straight from the embedded source FS.
+across replicas. `Build` snapshots every served byte in memory, so even a
+mutable source filesystem cannot change or remove content after its hashed
+URL, ETag, and length have been fixed.
 
 `Handler` owns its prefix stripping - no `http.StripPrefix`. It
 serves GET and HEAD (405 otherwise), answers `If-None-Match` with

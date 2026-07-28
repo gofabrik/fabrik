@@ -1,7 +1,6 @@
 package assetmapper
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -23,15 +22,14 @@ type buildPlan struct {
 }
 
 type plannedAsset struct {
-	logical   string
-	root      Root
-	subPath   string
-	kind      assetKind
-	hash      string
-	output    string
-	size      int64
-	content   []byte
-	rewritten bool
+	logical string
+	root    Root
+	subPath string
+	kind    assetKind
+	hash    string
+	output  string
+	size    int64
+	content []byte
 }
 
 func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) (*buildPlan, error) {
@@ -155,15 +153,14 @@ func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) 
 		outputOwner[output] = logical
 		hashedNames[logical] = output
 		plan.assets[logical] = &plannedAsset{
-			logical:   logical,
-			root:      asset.root,
-			subPath:   asset.subPath,
-			kind:      asset.kind,
-			hash:      hash,
-			output:    output,
-			size:      int64(len(content)),
-			content:   content,
-			rewritten: !bytes.Equal(content, asset.content),
+			logical: logical,
+			root:    asset.root,
+			subPath: asset.subPath,
+			kind:    asset.kind,
+			hash:    hash,
+			output:  output,
+			size:    int64(len(content)),
+			content: content,
 		}
 		plan.order = append(plan.order, logical)
 	}

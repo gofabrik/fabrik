@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"net/http"
 	"sort"
@@ -30,7 +29,8 @@ func WithURLPrefix(prefix string) BuildOption {
 //
 // Build validates importmap entries before returning.
 //
-// Only rewritten JS and CSS are retained in memory; other files stream from their source FS.
+// Build snapshots every served byte. Source filesystem mutations after Build
+// cannot change content served under an immutable hashed URL.
 func Build(roots []Root, im *Importmap, opts ...BuildOption) (*Compiled, error) {
 	plan, err := planBuild("assetmapper.Build", roots, im, opts)
 	if err != nil {
@@ -44,8 +44,17 @@ func Build(roots []Root, im *Importmap, opts ...BuildOption) (*Compiled, error) 
 			hash:    asset.hash,
 			size:    asset.size,
 		}
-		if asset.rewritten {
-			entry.rewritten = asset.content
+		if asset.kind == kindJS || asset.kind == kindCSS {
+			entry.content = asset.content
+		} else {
+			content, err := fs.ReadFile(asset.root.FS, asset.subPath)
+			if err != nil {
+				return nil, fmt.Errorf("assetmapper.Build: snapshot %s: %w", logical, err)
+			}
+			if int64(len(content)) != asset.size || hashContent(content) != asset.hash {
+				return nil, fmt.Errorf("assetmapper.Build: source %s changed while snapshotting", logical)
+			}
+			entry.content = content
 		}
 		entries[asset.output] = entry
 	}
@@ -65,8 +74,8 @@ func Check(roots []Root, im *Importmap, opts ...BuildOption) error {
 
 // Compiled is the in-memory result of [Build].
 //
-// A Compiled is safe for concurrent use: [Build] fixes importmap rendering,
-// while [Compiled.Handler] serves unchanged files from the source filesystem.
+// A Compiled is safe for concurrent use and independent of its source
+// filesystems: [Build] fixes importmap rendering and snapshots all served bytes.
 type Compiled struct {
 	mapper           *Mapper
 	im               *Importmap
@@ -76,10 +85,10 @@ type Compiled struct {
 
 // serveEntry is one compiled file addressable by hashed path.
 type serveEntry struct {
-	logical   string
-	hash      string
-	size      int64
-	rewritten []byte
+	logical string
+	hash    string
+	size    int64
+	content []byte
 }
 
 // Asset returns the public URL for a logical path.
@@ -152,22 +161,7 @@ func (h *compiledHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if e.rewritten != nil {
-		_, _ = w.Write(e.rewritten)
-		return
-	}
-	root, sub, err := h.c.mapper.resolveFile(e.logical)
-	if err != nil {
-		http.Error(w, "asset error", http.StatusInternalServerError)
-		return
-	}
-	f, err := root.FS.Open(sub)
-	if err != nil {
-		http.Error(w, "asset error", http.StatusInternalServerError)
-		return
-	}
-	defer f.Close() //nolint:errcheck // served asset source close after response copy is cleanup only
-	_, _ = io.Copy(w, f)
+	_, _ = w.Write(e.content)
 }
 
 // discoverImportmap implements the nil-im contract of [Build]: read
