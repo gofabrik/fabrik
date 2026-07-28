@@ -287,6 +287,10 @@ func (f *Files) Upload(req *web.Request) (web.Response, error) {
 //fabrik:http GET /files/{key...}
 func (f *Files) Serve(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
+	if err := storage.CheckKey(key); err != nil {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
 	rc, err := f.Store.Open(r.Context(), key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotExist) {
