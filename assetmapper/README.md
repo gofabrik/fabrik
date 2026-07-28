@@ -125,15 +125,22 @@ import htmx from "htmx.org";
 ```
 
 Vendored files are ordinary assets afterwards - committed, embedded,
-hashed, importmap-resolved. There is no lockfile and no install step
-on other machines: the files themselves are in the repository.
+hashed, importmap-resolved. `vendor.lock.json` records each artifact's
+exact version, type, final source URL, downloaded size and SHA-256, plus the
+published size and SHA-256 so committed files can be verified with
+`VendorLock.Verify`. There is no install step on other machines: the files and
+provenance lock live in the repository.
 
-The same flow works without the CLI. Manually: drop the file at
-`assets/vendor/htmx.org.js` and add `"htmx.org": {"version": "2.0.3"}`
-to `importmap.json` (a `"version"` entry resolves to
-`vendor/<name>.js` by convention). Programmatically: the `Vendor` type
-with a `PackageResolver` (jspm.io shipped, others pluggable) is what
-the CLI calls.
+JSPM resolution requires HTTPS and same-host redirects by default, blocks
+private-network destinations, and limits package count, individual package
+size, total resolution size, and generator response size. Trusted development
+mirrors can opt into HTTP, private-network access, or cross-host redirects on
+`JSPMResolver`.
+
+The same flow works without the CLI: use the `Vendor` type with a
+`PackageResolver` (jspm.io shipped, others pluggable). Keep vendored files,
+`importmap.json`, and `vendor.lock.json` together; creating versioned importmap
+entries by hand would bypass provenance recording.
 
 ## Other modes
 

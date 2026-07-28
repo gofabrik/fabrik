@@ -178,8 +178,9 @@ func (m *Mapper) resolveFile(logicalPath string) (Root, string, error) {
 				continue
 			}
 		}
-		// Top-level importmap.json is configuration, not an asset.
-		if sub == ImportmapFilename {
+		// Top-level importmap and vendoring lock files are configuration,
+		// not public assets.
+		if sub == ImportmapFilename || sub == VendorLockFilename {
 			continue
 		}
 		if _, err := fs.Stat(r.FS, sub); err == nil {

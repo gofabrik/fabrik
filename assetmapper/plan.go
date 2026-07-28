@@ -257,7 +257,7 @@ func collectAssets(roots []Root) (map[string]*collectedAsset, error) {
 			if err != nil {
 				return err
 			}
-			if entry.IsDir() || path == ImportmapFilename {
+			if entry.IsDir() || path == ImportmapFilename || path == VendorLockFilename {
 				return nil
 			}
 			logical := path

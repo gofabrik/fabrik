@@ -219,6 +219,7 @@ func TestDevMapperExcludesImportmap(t *testing.T) {
 	fsys := fstest.MapFS{
 		"app.js":              {Data: []byte("export {}")},
 		"importmap.json":      {Data: []byte(`{"app": {"path": "app.js"}}`)},
+		"vendor.lock.json":    {Data: []byte(`{"version":1,"packages":{}}`)},
 		"deep/importmap.json": {Data: []byte("an ordinary asset, not configuration")},
 	}
 	m, err := assetmapper.New(assetmapper.Config{Roots: []assetmapper.Root{{FS: fsys}}})
@@ -227,6 +228,9 @@ func TestDevMapperExcludesImportmap(t *testing.T) {
 	}
 	if _, err := m.Asset("importmap.json"); !errors.Is(err, assetmapper.ErrAssetNotFound) {
 		t.Fatalf("dev Asset(importmap.json) err = %v, want ErrAssetNotFound", err)
+	}
+	if _, err := m.Asset("vendor.lock.json"); !errors.Is(err, assetmapper.ErrAssetNotFound) {
+		t.Fatalf("dev Asset(vendor.lock.json) err = %v, want ErrAssetNotFound", err)
 	}
 	if _, err := m.Asset("deep/importmap.json"); err != nil {
 		t.Fatalf("nested importmap.json is an ordinary asset: %v", err)

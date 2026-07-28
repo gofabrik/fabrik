@@ -25,6 +25,13 @@ type stubResolver struct {
 	calls []string // urls fetched, for ordering / counting
 }
 
+func localJSPMResolver(server *httptest.Server) *assetmapper.JSPMResolver {
+	resolver := assetmapper.NewJSPMResolver(server.Client())
+	resolver.AllowHTTP = true
+	resolver.AllowPrivateNetwork = true
+	return resolver
+}
+
 func (s *stubResolver) Resolve(ctx context.Context, reqs []assetmapper.PackageRequest) (*assetmapper.Resolution, error) {
 	return s.resolution, nil
 }
@@ -121,6 +128,183 @@ func TestVendor_RequireWritesFileAndImportmapEntry(t *testing.T) {
 	}
 	if entry.Path != "" {
 		t.Errorf("entry Path = %q, want empty (vendored entry)", entry.Path)
+	}
+	lock, err := assetmapper.LoadVendorLock(filepath.Join(filepath.Dir(vendorDir), assetmapper.VendorLockFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := lock.Packages["react"]
+	if locked.Version != "18.2.0" || locked.Type != "js" ||
+		locked.SourceURL != "https://example.com/npm:react@18.2.0/index.js" ||
+		locked.Size != int64(len("export default {}")) || locked.SHA256 == "" {
+		t.Fatalf("locked provenance = %+v", locked)
+	}
+	if err := lock.Verify(vendorDir); err != nil {
+		t.Fatalf("verify lock: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(vendorDir, "react.js"), []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Verify(vendorDir); err == nil {
+		t.Fatal("Verify accepted tampered vendored bytes")
+	}
+}
+
+func TestVendor_EnforcesResolutionLimits(t *testing.T) {
+	tests := []struct {
+		name        string
+		packages    []assetmapper.ResolvedPackage
+		fetched     map[string][]byte
+		limits      assetmapper.DownloadLimits
+		want        string
+		wantFetches int
+	}{
+		{
+			name: "package count",
+			packages: []assetmapper.ResolvedPackage{
+				{Specifier: "a", Version: "1.0.0", Type: "js", URL: "https://example.com/a.js"},
+				{Specifier: "b", Version: "1.0.0", Type: "js", URL: "https://example.com/b.js"},
+			},
+			limits:      assetmapper.DownloadLimits{MaxPackages: 1},
+			want:        "limit is 1",
+			wantFetches: 0,
+		},
+		{
+			name: "package bytes",
+			packages: []assetmapper.ResolvedPackage{
+				{Specifier: "a", Version: "1.0.0", Type: "js", URL: "https://example.com/a.js"},
+			},
+			fetched:     map[string][]byte{"https://example.com/a.js": []byte("too large")},
+			limits:      assetmapper.DownloadLimits{MaxPackageBytes: 4},
+			want:        "4-byte limit",
+			wantFetches: 1,
+		},
+		{
+			name: "resolution bytes",
+			packages: []assetmapper.ResolvedPackage{
+				{Specifier: "a", Version: "1.0.0", Type: "js", URL: "https://example.com/a.js"},
+				{Specifier: "b", Version: "1.0.0", Type: "js", URL: "https://example.com/b.js"},
+			},
+			fetched: map[string][]byte{
+				"https://example.com/a.js": []byte("1234"),
+				"https://example.com/b.js": []byte("5678"),
+			},
+			limits:      assetmapper.DownloadLimits{MaxResolutionBytes: 7},
+			want:        "7-byte limit",
+			wantFetches: 2,
+		},
+		{
+			name: "published package bytes after rewrite",
+			packages: []assetmapper.ResolvedPackage{
+				{Specifier: "a", Version: "1.0.0", Type: "js", URL: "a"},
+				{Specifier: strings.Repeat("dependency", 10), Version: "1.0.0", Type: "js", URL: "b"},
+			},
+			fetched: map[string][]byte{
+				"a": []byte(`import "b"`),
+				"b": []byte(`export {}`),
+			},
+			limits:      assetmapper.DownloadLimits{MaxPackageBytes: 80},
+			want:        "published package exceeds 80-byte limit",
+			wantFetches: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resolver := &stubResolver{
+				resolution: &assetmapper.Resolution{Packages: test.packages},
+				fetched:    test.fetched,
+			}
+			vendorDir := filepath.Join(t.TempDir(), "assets", "vendor")
+			vendor := &assetmapper.Vendor{
+				Resolver:  resolver,
+				VendorDir: vendorDir,
+				Importmap: assetmapper.NewImportmap(),
+				Limits:    test.limits,
+			}
+			err := vendor.Require(context.Background(), "a", "")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Require error = %v, want %q", err, test.want)
+			}
+			if len(resolver.calls) != test.wantFetches {
+				t.Fatalf("fetch calls = %d, want %d", len(resolver.calls), test.wantFetches)
+			}
+			if _, err := os.Stat(vendorDir); !os.IsNotExist(err) {
+				t.Fatalf("limit failure published vendor directory: %v", err)
+			}
+		})
+	}
+}
+
+func TestVendor_RejectsPartialProvenanceLock(t *testing.T) {
+	vendorDir := filepath.Join(t.TempDir(), "assets", "vendor")
+	if err := os.MkdirAll(filepath.Dir(vendorDir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(filepath.Dir(vendorDir), assetmapper.VendorLockFilename)
+	if err := os.WriteFile(lockPath, []byte("{\"version\":1,\"packages\":{}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolver := &stubResolver{
+		resolution: &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+			{Specifier: "new", Version: "1.0.0", Type: "js", URL: "https://example.com/new.js"},
+		}},
+		fetched: map[string][]byte{"https://example.com/new.js": []byte("export {}")},
+	}
+	importmap := assetmapper.NewImportmap()
+	importmap.Entries["existing"] = assetmapper.ImportmapEntry{Version: "1.0.0", Type: "js"}
+	vendor := &assetmapper.Vendor{
+		Resolver:  resolver,
+		VendorDir: vendorDir,
+		Importmap: importmap,
+	}
+
+	err := vendor.Require(context.Background(), "new", "1.0.0")
+	if err == nil || !strings.Contains(err.Error(), `existing vendored package "existing" has no provenance`) {
+		t.Fatalf("Require error = %v, want incomplete-provenance rejection", err)
+	}
+	if len(resolver.calls) != 0 {
+		t.Fatalf("fetch calls = %d, want 0", len(resolver.calls))
+	}
+	if _, err := os.Stat(vendorDir); !os.IsNotExist(err) {
+		t.Fatalf("Require mutated vendor directory: %v", err)
+	}
+	if _, exists := importmap.Entries["new"]; exists {
+		t.Fatal("Require mutated importmap")
+	}
+}
+
+func TestVendor_RejectsProvenanceThatDisagreesWithImportmap(t *testing.T) {
+	vendorDir := filepath.Join(t.TempDir(), "assets", "vendor")
+	existingURL := "https://example.com/existing.js"
+	resolver := &stubResolver{
+		resolution: &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+			{Specifier: "existing", Version: "1.0.0", Type: "js", URL: existingURL},
+		}},
+		fetched: map[string][]byte{existingURL: []byte("export {}")},
+	}
+	importmap := assetmapper.NewImportmap()
+	vendor := &assetmapper.Vendor{
+		Resolver:  resolver,
+		VendorDir: vendorDir,
+		Importmap: importmap,
+	}
+	if err := vendor.Require(context.Background(), "existing", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	importmap.Entries["existing"] = assetmapper.ImportmapEntry{Version: "2.0.0", Type: "js"}
+	resolver.resolution = &assetmapper.Resolution{Packages: []assetmapper.ResolvedPackage{
+		{Specifier: "new", Version: "1.0.0", Type: "js", URL: "https://example.com/new.js"},
+	}}
+	resolver.fetched = map[string][]byte{"https://example.com/new.js": []byte("export {}")}
+	resolver.calls = nil
+
+	err := vendor.Require(context.Background(), "new", "1.0.0")
+	if err == nil || !strings.Contains(err.Error(), `provenance for existing package "existing" does not match`) {
+		t.Fatalf("Require error = %v, want provenance mismatch", err)
+	}
+	if len(resolver.calls) != 0 {
+		t.Fatalf("fetch calls = %d, want 0", len(resolver.calls))
 	}
 }
 
@@ -351,7 +535,7 @@ func TestJSPMResolver_RejectsConflictingScopes(t *testing.T) {
 		_, _ = w.Write([]byte(response))
 	}))
 	defer srv.Close()
-	res := assetmapper.NewJSPMResolver(srv.Client())
+	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
 
 	response = `{"map": {"scopes": {
@@ -400,7 +584,7 @@ func TestJSPMResolver_ResolvesViaGenerateEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := assetmapper.NewJSPMResolver(srv.Client())
+	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
 	got, err := res.Resolve(context.Background(), []assetmapper.PackageRequest{
 		{Name: "react", Version: "18.2.0"},
@@ -450,7 +634,7 @@ func TestJSPMResolver_ResolvesScopedPackageVersion(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := assetmapper.NewJSPMResolver(srv.Client())
+	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
 	got, err := res.Resolve(context.Background(), []assetmapper.PackageRequest{
 		{Name: "@radix-ui/themes"},
@@ -476,7 +660,7 @@ func TestJSPMResolver_FetchDownloadsURL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := assetmapper.NewJSPMResolver(srv.Client())
+	res := localJSPMResolver(srv)
 	data, err := res.Fetch(context.Background(), srv.URL+"/npm:react@18.2.0/index.js")
 	if err != nil {
 		t.Fatal(err)
@@ -492,7 +676,7 @@ func TestJSPMResolver_FetchSurfacesNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := assetmapper.NewJSPMResolver(srv.Client())
+	res := localJSPMResolver(srv)
 	_, err := res.Fetch(context.Background(), srv.URL+"/x")
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -535,7 +719,7 @@ func TestVendor_EndToEnd_WithJSPMResolver(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := assetmapper.NewJSPMResolver(srv.Client())
+	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
 
 	// Fetch redirects absolute JSPM URLs to the test server.

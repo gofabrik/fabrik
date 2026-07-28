@@ -43,7 +43,7 @@ func TestRequireRemovePrune(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "htmx.org@2.0.3"}, &out); err != nil {
+	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "-allow-http", "-allow-private-network", "htmx.org@2.0.3"}, &out); err != nil {
 		t.Fatalf("require: %v", err)
 	}
 	for _, want := range []string{"vendored htmx.org 2.0.3", "vendored idiomorph 0.3.0"} {
@@ -111,7 +111,7 @@ func TestRequirePartialFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "good@1.0.0", "bad@1.0.0"}, &out); err == nil {
+	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "-allow-http", "-allow-private-network", "good@1.0.0", "bad@1.0.0"}, &out); err == nil {
 		t.Fatal("require good bad: want error from bad")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "vendor/good.js")); err != nil {
@@ -131,7 +131,7 @@ func TestRemoveValidatesBeforeDeleting(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "htmx.org"}, &out); err != nil {
+	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "-allow-http", "-allow-private-network", "htmx.org"}, &out); err != nil {
 		t.Fatal(err)
 	}
 
