@@ -1,9 +1,6 @@
 package assetmapper
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
@@ -34,12 +31,34 @@ func WithURLPrefix(prefix string) BuildOption {
 //
 // Only rewritten JS and CSS are retained in memory; other files stream from their source FS.
 func Build(roots []Root, im *Importmap, opts ...BuildOption) (*Compiled, error) {
-	return build("assetmapper.Build", roots, im, opts)
+	plan, err := planBuild("assetmapper.Build", roots, im, opts)
+	if err != nil {
+		return nil, err
+	}
+	entries := make(map[string]serveEntry, len(plan.assets))
+	for _, logical := range plan.order {
+		asset := plan.assets[logical]
+		entry := serveEntry{
+			logical: asset.logical,
+			hash:    asset.hash,
+			size:    asset.size,
+		}
+		if asset.rewritten {
+			entry.rewritten = asset.content
+		}
+		entries[asset.output] = entry
+	}
+	return &Compiled{
+		mapper:           plan.mapper(),
+		im:               plan.importmap,
+		entries:          entries,
+		cspImportmapHash: plan.cspImportmapHash,
+	}, nil
 }
 
 // Check runs the [Build] pipeline without keeping the compiled result.
 func Check(roots []Root, im *Importmap, opts ...BuildOption) error {
-	_, err := build("assetmapper.Check", roots, im, opts)
+	_, err := planBuild("assetmapper.Check", roots, im, opts)
 	return err
 }
 
@@ -150,144 +169,6 @@ func (h *compiledHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, f)
 }
 
-// build is the shared pipeline behind [Build] and [Check]. context
-// names the entry point in error messages.
-func build(context string, roots []Root, im *Importmap, opts []BuildOption) (*Compiled, error) {
-	roots, err := normalizeRoots(context, roots)
-	if err != nil {
-		return nil, err
-	}
-	var cfg buildConfig
-	for _, o := range opts {
-		o(&cfg)
-	}
-	prefix, err := normalizeURLPrefix(cfg.urlPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", context, err)
-	}
-
-	if im == nil {
-		im, err = discoverImportmap(context, roots)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	assets, err := collectAssets(roots)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", context, err)
-	}
-	if err := validateImportmap(context, im, assets); err != nil {
-		return nil, err
-	}
-
-	hashedNames := make(map[string]string, len(assets))
-	outputOwner := make(map[string]string, len(assets))
-	entries := make(map[string]serveEntry, len(assets))
-
-	// Pass-through assets hash independently of the dependency graph.
-	var passthrough []string
-	for logical, a := range assets {
-		if a.kind != kindJS && a.kind != kindCSS {
-			passthrough = append(passthrough, logical)
-		}
-	}
-	sort.Strings(passthrough)
-	for _, logical := range passthrough {
-		a := assets[logical]
-		hash, size, err := streamHash(a.root.FS, a.subPath)
-		if err != nil {
-			return nil, fmt.Errorf("%s: hash %s: %w", context, logical, err)
-		}
-		hashed := hashedName(logical, hash)
-		if cerr := checkCollision(context, logical, hashed, assets, outputOwner); cerr != nil {
-			return nil, cerr
-		}
-		outputOwner[hashed] = logical
-		hashedNames[logical] = hashed
-		entries[hashed] = serveEntry{logical: logical, hash: hash, size: size}
-	}
-
-	// JS and CSS hash after their dependencies so rewritten URLs are final.
-	deps := make(map[string][]string)
-	refsByAsset := make(map[string][]ref)
-	for logical, a := range assets {
-		if a.kind != kindJS && a.kind != kindCSS {
-			continue
-		}
-		deps[logical] = nil
-		refs := extractRefs(logical, a.content, a.kind)
-		refsByAsset[logical] = refs
-		for _, r := range refs {
-			if r.resolved == "" {
-				continue
-			}
-			target, ok := assets[r.resolved]
-			if !ok {
-				continue
-			}
-			if target.kind != kindJS && target.kind != kindCSS {
-				continue
-			}
-			deps[logical] = append(deps[logical], r.resolved)
-		}
-	}
-	order, err := topoSort(deps)
-	if err != nil {
-		return nil, err
-	}
-	for _, logical := range order {
-		a := assets[logical]
-		rewritten := a.content
-		if refs := refsByAsset[logical]; len(refs) > 0 {
-			rewritten = rewriteRefs(a.content, refs, func(r ref) string {
-				target, ok := hashedNames[r.resolved]
-				if !ok {
-					return r.spec
-				}
-				return prefix + target + r.suffix
-			})
-		}
-		hash := hashContent(rewritten)
-		hashed := hashedName(logical, hash)
-		if cerr := checkCollision(context, logical, hashed, assets, outputOwner); cerr != nil {
-			return nil, cerr
-		}
-		outputOwner[hashed] = logical
-		hashedNames[logical] = hashed
-		e := serveEntry{logical: logical, hash: hash, size: int64(len(rewritten))}
-		// Retain bytes only when rewriting changed them; unchanged
-		// JS / CSS serves from the source FS like any pass-through.
-		if !bytes.Equal(rewritten, a.content) {
-			e.rewritten = rewritten
-		}
-		entries[hashed] = e
-	}
-
-	manifest := NewManifest()
-	manifest.URLPrefix = prefix
-	for logical, hashed := range hashedNames {
-		manifest.Entries[logical] = hashed
-	}
-	// Rendering remains fixed despite later importmap or source changes.
-	snapshot := NewImportmap()
-	for k, v := range im.Entries {
-		snapshot.Entries[k] = v
-	}
-	mapper := &Mapper{roots: roots, urlPrefix: prefix, manifest: manifest}
-	snapshot.freezeRefs(mapper)
-	hash, err := snapshot.importmapBodyHash(mapper)
-	if err != nil {
-		return nil, fmt.Errorf("assetmapper.Build: %w", err)
-	}
-	return &Compiled{
-		mapper:           mapper,
-		im:               snapshot,
-		entries:          entries,
-		cspImportmapHash: hash,
-	}, nil
-}
-
 // discoverImportmap implements the nil-im contract of [Build]: read
 // importmap.json from the top of each root's tree, allowing at most
 // one across all roots.
@@ -346,20 +227,4 @@ func validateImportmap(context string, im *Importmap, assets map[string]*collect
 		}
 	}
 	return nil
-}
-
-// streamHash hashes a file's content without retaining it, returning
-// the truncated digest and the byte count.
-func streamHash(fsys fs.FS, p string) (hash string, size int64, err error) {
-	f, err := fsys.Open(p)
-	if err != nil {
-		return "", 0, err
-	}
-	defer f.Close() //nolint:errcheck // read-only asset close cannot affect the completed hash
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return "", 0, err
-	}
-	return hex.EncodeToString(h.Sum(nil))[:HashLength], n, nil
 }

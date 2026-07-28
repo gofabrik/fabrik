@@ -18,6 +18,9 @@ import (
 //	  "entries": {
 //	    "app.js": "app-7a1b2c3d4e5f60718293.js",
 //	    "images/logo.png": "images/logo-deadbeef0123456789ab.png"
+//	  },
+//	  "dependencies": {
+//	    "app.js": ["shared.js"]
 //	  }
 //	}
 //
@@ -25,6 +28,9 @@ import (
 type Manifest struct {
 	URLPrefix string            `json:"url_prefix,omitempty"`
 	Entries   map[string]string `json:"entries"`
+	// Dependencies records the validated logical asset graph used for
+	// production preload rendering.
+	Dependencies map[string][]string `json:"dependencies,omitempty"`
 }
 
 // ManifestFilename is the conventional file name used by [Manifest.Save]
@@ -41,8 +47,9 @@ func snapshotManifest(src *Manifest) (*Manifest, error) {
 		return nil, nil
 	}
 	dst := &Manifest{
-		URLPrefix: src.URLPrefix,
-		Entries:   make(map[string]string, len(src.Entries)),
+		URLPrefix:    src.URLPrefix,
+		Entries:      make(map[string]string, len(src.Entries)),
+		Dependencies: nil,
 	}
 	for logical, output := range src.Entries {
 		if err := validateManifestPath(logical); err != nil {
@@ -52,6 +59,28 @@ func snapshotManifest(src *Manifest) (*Manifest, error) {
 			return nil, fmt.Errorf("manifest output path for %q (%q): %w", logical, output, err)
 		}
 		dst.Entries[logical] = output
+	}
+	if src.Dependencies != nil {
+		dst.Dependencies = make(map[string][]string, len(src.Dependencies))
+		for logical, dependencies := range src.Dependencies {
+			if err := validateManifestPath(logical); err != nil {
+				return nil, fmt.Errorf("manifest dependency owner %q: %w", logical, err)
+			}
+			if _, ok := src.Entries[logical]; !ok {
+				return nil, fmt.Errorf("manifest dependency owner %q is not in entries", logical)
+			}
+			copied := make([]string, len(dependencies))
+			for i, dependency := range dependencies {
+				if err := validateManifestPath(dependency); err != nil {
+					return nil, fmt.Errorf("manifest dependency %q for %q: %w", dependency, logical, err)
+				}
+				if _, ok := src.Entries[dependency]; !ok {
+					return nil, fmt.Errorf("manifest dependency %q for %q is not in entries", dependency, logical)
+				}
+				copied[i] = dependency
+			}
+			dst.Dependencies[logical] = copied
+		}
 	}
 	return dst, nil
 }

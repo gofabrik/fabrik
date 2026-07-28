@@ -120,3 +120,30 @@ func TestImportmap_PreloadGraphCacheSeparatePerMapper(t *testing.T) {
 		t.Errorf("cache size = %d, want 2 (one per Mapper instance)", got)
 	}
 }
+
+func TestImportmap_PartialManifestFallsBackToSourceGraph(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js": {Data: []byte(`import "./dep.js";`)},
+		"dep.js": {Data: []byte("export {}")},
+	}
+	manifest := NewManifest()
+	manifest.Entries["app.js"] = "app-deadbeef.js"
+	manifest.Entries["dep.js"] = "dep-cafef00d.js"
+	mapper, err := New(Config{
+		Roots:    []Root{{FS: src}},
+		Manifest: manifest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := NewImportmap()
+	im.Entries["app"] = ImportmapEntry{Path: "app.js", Entrypoint: true}
+
+	graph, err := im.preloadGraph(mapper, []string{"app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.JSURLs) != 2 {
+		t.Fatalf("partial manifest preload URLs = %v, want app and dep", graph.JSURLs)
+	}
+}

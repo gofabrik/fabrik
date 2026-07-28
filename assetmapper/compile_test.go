@@ -10,6 +10,84 @@ import (
 	"github.com/gofabrik/fabrik/assetmapper"
 )
 
+func TestCompile_UsesSamePlanAsBuild(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js":          {Data: []byte(`import "./util.js";`)},
+		"util.js":         {Data: []byte(`export const value = 1;`)},
+		"styles/site.css": {Data: []byte(`body { background: url("../logo.png"); }`)},
+		"logo.png":        {Data: []byte("PNG")},
+	}
+	roots := []assetmapper.Root{{FS: src}}
+	compiled, err := assetmapper.Build(roots, nil, assetmapper.WithURLPrefix("/static/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := assetmapper.Compile(roots, t.TempDir(), assetmapper.WithURLPrefix("/static/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for logical, output := range manifest.Entries {
+		url, err := compiled.Asset(logical)
+		if err != nil {
+			t.Fatalf("Build Asset(%q): %v", logical, err)
+		}
+		if want := "/static/" + output; url != want {
+			t.Errorf("Build Asset(%q) = %q, Compile planned %q", logical, url, want)
+		}
+	}
+}
+
+func TestCompile_ValidatesDiscoveredImportmap(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js":         {Data: []byte("export {}")},
+		"importmap.json": {Data: []byte(`{"missing":{"path":"missing.js"}}`)},
+	}
+	_, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "not a known asset") {
+		t.Fatalf("Compile error = %v, want importmap validation failure", err)
+	}
+}
+
+func TestCompile_PersistsPreloadDependencies(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js":         {Data: []byte(`import "./dep.js";`)},
+		"dep.js":         {Data: []byte("export {}")},
+		"importmap.json": {Data: []byte(`{"app":{"path":"app.js","entrypoint":true}}`)},
+	}
+	dir := t.TempDir()
+	if _, err := assetmapper.Compile([]assetmapper.Root{{FS: src}}, dir); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := assetmapper.LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifest.Dependencies["app.js"]; len(got) != 1 || got[0] != "dep.js" {
+		t.Fatalf("persisted app.js dependencies = %v, want [dep.js]", got)
+	}
+
+	// Production preload rendering must use the persisted graph, not rescan
+	// source files that may no longer be present.
+	delete(src, "app.js")
+	delete(src, "dep.js")
+	mapper, err := assetmapper.New(assetmapper.Config{
+		Roots:    []assetmapper.Root{{FS: src}},
+		Manifest: manifest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
+	links, err := im.ModulePreloadLinks(mapper, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(links, manifest.Entries["dep.js"]) {
+		t.Fatalf("preloads do not use persisted dependency graph:\n%s", links)
+	}
+}
+
 func TestCompile_RejectsNoRoots(t *testing.T) {
 	if _, err := assetmapper.Compile(nil, t.TempDir()); err == nil {
 		t.Fatal("expected error for empty Roots")

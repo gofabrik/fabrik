@@ -500,3 +500,28 @@ func TestBuild_FreezesPreloadGraph(t *testing.T) {
 		t.Fatalf("preload graph followed the mutated source:\n%s", out)
 	}
 }
+
+func TestBuild_CanonicalizesImportmapPathsForPreloads(t *testing.T) {
+	src := fstest.MapFS{
+		"app.js": {Data: []byte(`import "./dep.js";`)},
+		"dep.js": {Data: []byte("export {}")},
+	}
+	im := assetmapper.NewImportmap()
+	im.Entries["app"] = assetmapper.ImportmapEntry{Path: "/app.js", Entrypoint: true}
+	compiled, err := assetmapper.Build([]assetmapper.Root{{FS: src}}, im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := compiled.FuncMap()["module_preload_links"].(func(...string) (template.HTML, error))
+	links, err := fn("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	depURL, err := compiled.Asset("dep.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(links), depURL) {
+		t.Fatalf("canonicalized entrypoint omitted dependency %q:\n%s", depURL, links)
+	}
+}

@@ -34,9 +34,6 @@ type Importmap struct {
 
 	// preloadCache is used only in prod mode, where source files do not change at runtime.
 	preloadCache sync.Map // map[preloadCacheKey]preloadResult
-
-	// frozenRefs prevents preload walks from following post-Build source changes.
-	frozenRefs map[string][]ref
 }
 
 // preloadCacheKey identifies one cached preload graph result.
@@ -297,34 +294,6 @@ func (im *Importmap) readRefs(m *Mapper, logical string) []ref {
 	return extractRefs(logical, content, kindJS)
 }
 
-func (im *Importmap) freezeRefs(m *Mapper) {
-	im.frozenRefs = map[string][]ref{}
-	seen := map[string]bool{}
-	var visit func(logical string)
-	visit = func(logical string) {
-		if logical == "" || seen[logical] || kindOf(logical) != kindJS {
-			return
-		}
-		seen[logical] = true
-		refs := im.readRefs(m, logical)
-		im.frozenRefs[logical] = refs
-		for _, r := range refs {
-			if r.resolved != "" {
-				visit(r.resolved)
-				continue
-			}
-			if entry, ok := im.Entries[r.spec]; ok {
-				visit(logicalForEntry(r.spec, entry))
-			}
-		}
-	}
-	for name, entry := range im.Entries {
-		if entry.Entrypoint {
-			visit(logicalForEntry(name, entry))
-		}
-	}
-}
-
 // ModulePreloadLinks renders JS modulepreload tags.
 func (im *Importmap) ModulePreloadLinks(m *Mapper, entrypoints ...string) (string, error) {
 	return im.ModulePreloadLinksWithOptions(m, RenderOptions{Entrypoints: entrypoints})
@@ -438,26 +407,32 @@ func (im *Importmap) computePreloadGraph(m *Mapper, entrypoints []string) (prelo
 
 		js = append(js, url)
 
-		var refs []ref
-		if im.frozenRefs != nil {
-			refs = im.frozenRefs[logical]
-		} else {
-			refs = im.readRefs(m, logical)
+		dependencies, planned := []string(nil), false
+		if m.manifest != nil && m.manifest.Dependencies != nil {
+			dependencies, planned = m.manifest.Dependencies[logical]
 		}
-		for _, r := range refs {
-			if r.resolved != "" {
-				if err := visit(r.resolved); err != nil {
+		if planned {
+			for _, dependency := range dependencies {
+				if err := visit(dependency); err != nil {
 					return err
 				}
-				continue
 			}
-			// Bare specifier: try the importmap.
-			entry, ok := im.Entries[r.spec]
-			if !ok {
-				continue
-			}
-			if err := visit(logicalForEntry(r.spec, entry)); err != nil {
-				return err
+		} else {
+			for _, r := range im.readRefs(m, logical) {
+				if r.resolved != "" {
+					if err := visit(r.resolved); err != nil {
+						return err
+					}
+					continue
+				}
+				// Bare specifier: try the importmap.
+				entry, ok := im.Entries[r.spec]
+				if !ok {
+					continue
+				}
+				if err := visit(logicalForEntry(r.spec, entry)); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
