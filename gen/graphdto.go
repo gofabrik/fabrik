@@ -182,8 +182,8 @@ func (gr *Graph) addFlow(g *Gen, id, fn string, nodes []Node, s *Scope, seen map
 		freeIdents(b.Expr, func(name string) { edge(b.ID, owner[name]) })
 	}
 	if s != nil {
-		for i, t := range s.roots {
-			t = types.Unalias(t)
+		for i, r := range s.roots {
+			t := types.Unalias(r.Type)
 			root := GraphRoot{
 				ID:   fmt.Sprintf("%s/root@%d", id, i),
 				Type: GraphType{Display: g.TypeDisplay(t), Canonical: types.TypeString(t, nil)},

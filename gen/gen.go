@@ -1042,7 +1042,7 @@ func wrapperVars(g *Gen, s *Scope) []string {
 	}
 	out := make([]string, 0, len(s.roots))
 	for _, r := range s.roots {
-		base := depVarBase(r)
+		base := depVarBase(r.Type)
 		name := base
 		for n := 2; taken[name]; n++ {
 			name = fmt.Sprintf("%s%d", base, n)

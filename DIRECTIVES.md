@@ -27,7 +27,7 @@ Options:
 
 **`//fabrik:cli:argument name= type= [help=] [default=] [values=] [required=true] [variadic=true]`**
 
-Declared alongside `//fabrik:cli:command` on the same function: one positional argument, bound to the plain parameter whose name matches (`direction` binds `direction string`). Declaration order is binding order. Optional arguments need `default=`; `values=` restricts and completes; `variadic=true` (type `strings`) collects the tail.
+Declared alongside `//fabrik:cli:command` on the same function: one positional argument, bound to the plain parameter whose name matches (`direction` binds `direction string`). Declaration order is binding order. Optional arguments need `default=`; `values=` restricts and completes; `variadic=true` (type `strings`) collects the tail. Directive completion is static: `values=` enumerates the only candidates; dynamic completion uses the cli library's `Complete` API directly.
 
 ```go
 //fabrik:cli:command
@@ -90,7 +90,7 @@ Options:
 
 **`//fabrik:cli:flag name= type= [short=] [help=] [default=] [values=] [env=] [required=true] [hidden=true] [placeholder=] [group=]`**
 
-Declared alongside `//fabrik:cli:command` on the same function: one flag, bound to the plain parameter whose lowerCamel name matches the kebab-case flag (`dry-run` binds `dryRun bool`). The cli library owns parsing, defaults, validation, and completion; `values=` maps to `OneOf` on scalar types.
+Declared alongside `//fabrik:cli:command` on the same function: one flag, bound to the plain parameter whose lowerCamel name matches the kebab-case flag (`dry-run` binds `dryRun bool`). The cli library owns parsing, defaults, validation, and completion; `values=` maps to `OneOf` on scalar types. Directive completion is static: `values=` enumerates the only candidates; dynamic completion uses the cli library's `Complete` API directly.
 
 ```go
 //fabrik:cli:command

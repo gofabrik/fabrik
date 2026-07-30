@@ -1,0 +1,36 @@
+CLI input parameters cannot resolve providers or use inject selectors.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:provider
+func NewKind() string { return "blue" }
+
+//fabrik:cli:command
+//fabrik:cli:flag name=kind type=string
+func Deploy(ctx cli.Context, kind string) error { return nil }
+
+//fabrik:inject dry name=fast
+//fabrik:cli:command
+//fabrik:cli:flag name=dry type=string
+func Clean(ctx cli.Context, dry string) error { return nil }
+-- want/diags --
+error: shared/shared.go:10:30: parameter "kind" matches CLI input "kind" and a provider for string
+  help: rename the parameter or the input; wiring never resolves this silently
+error: shared/shared.go:15:29: inject selector "dry" is a CLI input on Clean, not a dependency
+  help: CLI values come from flags and arguments; only dependency parameters take named providers

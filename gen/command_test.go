@@ -30,7 +30,7 @@ func TestAddCommandFuncRegistersShell(t *testing.T) {
 func TestRenderCommandShellTree(t *testing.T) {
 	w := newScopeWorld(t)
 	g := w.g
-	s := g.AddScope("buildServe", token.Position{}, w.store)
+	s := g.AddScope("buildServe", token.Position{}, ScopeRoot{Type: w.store})
 	g.AddCommandFunc(CommandFunc{Name: "serve", Help: "Start the server", Fn: "app.Serve", Scope: s})
 	empty := g.AddScope("buildVersion", token.Position{})
 	g.AddCommandFunc(CommandFunc{Name: "version", Fn: "app.Version", Scope: empty})
@@ -109,7 +109,7 @@ func TestRenderCommandSetupOnlyScope(t *testing.T) {
 func TestRenderRepeatedCommandShape(t *testing.T) {
 	w := newScopeWorld(t)
 	g := w.g
-	s := g.AddScope("buildServe", token.Position{}, w.store)
+	s := g.AddScope("buildServe", token.Position{}, ScopeRoot{Type: w.store})
 	g.AddCommandFunc(CommandFunc{Name: "serve", Fn: "app.Serve", Scope: s})
 	if ds := g.MaterializeScopes(); ds.HasFatal() {
 		t.Fatalf("MaterializeScopes: %v", ds)
@@ -140,7 +140,7 @@ type DB2 struct{}
 	db := types.NewPointer(pkg.Scope().Lookup("DB").Type())
 	db2t := types.NewPointer(pkg.Scope().Lookup("DB2").Type())
 	g := New()
-	s := &Scope{roots: []types.Type{server, db, db, db2t}}
+	s := &Scope{roots: []ScopeRoot{{Type: server}, {Type: db}, {Type: db}, {Type: db2t}}}
 	got := wrapperVars(g, s)
 	want := []string{"server", "db", "db2", "db22"}
 	for i := range want {
@@ -173,7 +173,7 @@ func TestWrapperVarsAvoidImportAliases(t *testing.T) {
 	appT := types.NewPointer(pkg.Scope().Lookup("App").Type())
 	g := New()
 	g.ImportPkg(pkg)
-	s := &Scope{roots: []types.Type{appT}}
+	s := &Scope{roots: []ScopeRoot{{Type: appT}}}
 	if got := wrapperVars(g, s); got[0] != "app2" {
 		t.Fatalf("wrapperVars = %v, want app2 (alias app is taken)", got)
 	}
@@ -197,7 +197,7 @@ func TestScopeReservesWrapperSkeletonNames(t *testing.T) {
 func TestRenderCommandWithInputs(t *testing.T) {
 	w := newScopeWorld(t)
 	g := w.g
-	s := g.AddScope("buildMigrate", token.Position{}, w.store)
+	s := g.AddScope("buildMigrate", token.Position{}, ScopeRoot{Type: w.store})
 	dry := g.Var("migrateDryRun")
 	dir := g.Var("migrateDirection")
 	g.AddCommandFunc(CommandFunc{

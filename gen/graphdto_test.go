@@ -52,7 +52,7 @@ type Greeter interface{ Greet() string }
 		return g.Import("example.com/app") + ".NewCache(" + conn + ")", ds
 	})
 
-	s := g.AddScope("buildRun", token.Position{}, cache)
+	s := g.AddScope("buildRun", token.Position{}, ScopeRoot{Type: cache})
 	if ds := g.MaterializeScopes(); ds.HasFatal() {
 		t.Fatalf("MaterializeScopes: %v", ds)
 	}
@@ -179,7 +179,7 @@ type Store struct{}
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/app") + ".NewStore"})
 		return v, nil
 	})
-	g.AddScope("buildMigrate", token.Position{}, store)
+	g.AddScope("buildMigrate", token.Position{}, ScopeRoot{Type: store})
 	if ds := g.MaterializeScopes(); ds.HasFatal() {
 		t.Fatalf("MaterializeScopes: %v", ds)
 	}
@@ -518,7 +518,7 @@ func TestNodelessScopeFlowNamesNoFunction(t *testing.T) {
 	g.SetModule("demo")
 	g.SetDirective("provider")
 	g.BindLazy(vT, "", func() (string, diag.Diagnostics) { return "inline.New()", nil })
-	g.AddScope("buildOnly", token.Position{}, vT)
+	g.AddScope("buildOnly", token.Position{}, ScopeRoot{Type: vT})
 	if ds := g.MaterializeScopes(); ds.HasFatal() {
 		t.Fatalf("MaterializeScopes: %v", ds)
 	}

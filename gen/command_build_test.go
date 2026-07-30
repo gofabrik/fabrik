@@ -60,9 +60,9 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 		return v, nil
 	})
 
-	greet := g.AddScope("buildGreet", token.Position{}, storeT, extraT, finalT)
+	greet := g.AddScope("buildGreet", token.Position{}, ScopeRoot{Type: storeT}, ScopeRoot{Type: extraT}, ScopeRoot{Type: finalT})
 	g.AddCommandFunc(CommandFunc{Name: "greet", Help: "Greet", Fn: "greet", Scope: greet, Pos: token.Position{}})
-	other := g.AddScope("buildOther", token.Position{}, extraT)
+	other := g.AddScope("buildOther", token.Position{}, ScopeRoot{Type: extraT})
 	g.AddCommandFunc(CommandFunc{Name: "other", Fn: "other", Scope: other, Pos: token.Position{}})
 	version := g.AddScope("buildVersion", token.Position{})
 	g.AddCommandFunc(CommandFunc{Name: "version", Fn: "version", Scope: version, Pos: token.Position{}})
