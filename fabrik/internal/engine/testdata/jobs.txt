@@ -137,27 +137,32 @@ func buildBoot(ctx context.Context) (*jobs.Manager, error) {
 
 	// Register
 	// Jobs
-	if err := jobs.Register[mail.OrderPlaced](jobsManager, "mail.OrderPlaced"); err != nil {
-		return nil, err
-	}
 	if err := jobs.Register[mail.Welcome](jobsManager, "mail.Welcome"); err != nil {
 		return nil, err
 	}
+
 	if err := jobs.On[mail.Welcome](jobsManager, "SendWelcome", func(c jobs.Context, m mail.Welcome) error {
 		return mail.SendWelcome(c, sharedStore, m)
 	}); err != nil {
 		return nil, err
 	}
+
+	if err := jobs.Register[mail.OrderPlaced](jobsManager, "mail.OrderPlaced"); err != nil {
+		return nil, err
+	}
+
 	if err := jobs.On[mail.OrderPlaced](jobsManager, "email-receipt", func(c jobs.Context, m mail.OrderPlaced) error {
 		return mail.EmailReceipt(c, sharedStore, m)
 	}); err != nil {
 		return nil, err
 	}
+
 	if err := jobs.On[mail.OrderPlaced](jobsManager, "update-inventory", func(c jobs.Context, m mail.OrderPlaced) error {
 		return mail.UpdateInventory(c, m)
 	}); err != nil {
 		return nil, err
 	}
+
 	if err := jobs.RegisterCron(jobsManager, "nightly", "0 3 * * *", func(c jobs.Context) error {
 		return mail.Nightly(c, sharedStore)
 	}); err != nil {

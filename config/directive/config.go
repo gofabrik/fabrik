@@ -216,10 +216,18 @@ func (c *Config) prelude(g *gen.Gen, cfgPkg string) preludeVars {
 			`case "development", "production":`,
 			"default:",
 			"if " + pv.env + ` == "" {`,
-			"return " + fmtPkg + `.Errorf("FABRIK_ENV is required: development or production")`,
+			"err = " + fmtPkg + `.Errorf("FABRIK_ENV is required: development or production")`,
+			"} else {",
+			"err = " + fmtPkg + `.Errorf("invalid FABRIK_ENV %q: want development or production", ` + pv.env + `)`,
 			"}",
-			"return " + fmtPkg + `.Errorf("invalid FABRIK_ENV %q: want development or production", ` + pv.env + `)`,
 			"}",
+		},
+		Defines: []string{pv.env},
+		Check:   true,
+	})
+	g.Node(&gen.Raw{
+		Base: gen.Base{Phase: gen.PhaseConfig, Uses: []string{pv.env}, Origin: gen.Origin{Directive: c.Name()}},
+		Lines: []string{
 			pv.opts + " := []" + cfgPkg + ".Option{",
 			cfgPkg + `.FileOptional("config.yaml"),`,
 			cfgPkg + `.File("config." + ` + pv.env + ` + ".yaml"),`,
@@ -228,7 +236,7 @@ func (c *Config) prelude(g *gen.Gen, cfgPkg string) preludeVars {
 			pv.opts + " = append(" + pv.opts + ", " + cfgPkg + `.FileOptional("config.local.yaml"))`,
 			"}",
 		},
-		Defines: []string{pv.env, pv.opts},
+		Defines: []string{pv.opts},
 	})
 	c.preludes[g.ScopeID()] = pv
 	return pv

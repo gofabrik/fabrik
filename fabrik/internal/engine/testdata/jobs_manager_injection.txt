@@ -116,6 +116,7 @@ func buildBoot(ctx context.Context) (*jobs.Manager, error) {
 	if err := jobs.Register[mail.Order](jobsManager, "mail.Order"); err != nil {
 		return nil, err
 	}
+
 	if err := jobs.On[mail.Order](jobsManager, "Chain", func(c jobs.Context, m mail.Order) error {
 		return mail.Chain(c, jobsManager, m)
 	}); err != nil {

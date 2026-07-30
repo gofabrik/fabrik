@@ -23,11 +23,14 @@ type Node interface {
 	base() *Base
 }
 
-// Raw is a preformatted emission.
+// Raw is a preformatted emission. Lines never contain return statements
+// outside function literals; error flow assigns err and sets Check, and
+// gen renders the arity-correct tail.
 type Raw struct {
 	Base
 	Lines   []string
 	Defines []string // variables the lines declare, for dependency ordering
+	Check   bool     // render an err check after the lines
 }
 
 // Assign declares a variable from an expression: `v := expr`.

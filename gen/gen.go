@@ -999,7 +999,7 @@ func (g *Gen) emitPhaseNodes(b *bytes.Buffer, allNodes []Node, phases ...Phase) 
 				if l := pn.n.base().Label; l != "" {
 					b.WriteString("// " + l + "\n")
 				}
-				for _, line := range renderNode(pn.n) {
+				for _, line := range renderNode(pn.n, nil) {
 					b.WriteString(line)
 					b.WriteString("\n")
 				}
@@ -1069,7 +1069,7 @@ func (g *Gen) importLine(path string) string {
 
 func (g *Gen) findUnparsable() (directive, text string, found bool) {
 	for _, n := range g.nodes {
-		text := strings.Join(renderNode(n), "\n")
+		text := strings.Join(renderNode(n, nil), "\n")
 		probe := "package p\nfunc _() error {\n" + text + "\nreturn nil\n}\n"
 		if _, err := format.Source([]byte(probe)); err != nil {
 			return n.base().Origin.Directive, text, true

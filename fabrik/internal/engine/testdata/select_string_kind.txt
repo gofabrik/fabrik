@@ -75,9 +75,13 @@ func run() int {
 		case "development", "production":
 		default:
 			if fabrikEnv == "" {
-				return fmt.Errorf("FABRIK_ENV is required: development or production")
+				err = fmt.Errorf("FABRIK_ENV is required: development or production")
+			} else {
+				err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 			}
-			return fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+		}
+		if err != nil {
+			return err
 		}
 		fabrikConfigOpts := []config.Option{
 			config.FileOptional("config.yaml"),

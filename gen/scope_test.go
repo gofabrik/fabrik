@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -272,34 +273,93 @@ type I interface{}
 	}
 }
 
-func TestTransformReturns(t *testing.T) {
-	in := []string{
-		"v, err := build()",
-		"return err",
-		`return fmt.Errorf("no impl for %q", kind)`,
-		"return nil",
-	}
-	got := transformReturns(in, "nil, ", []string{"aClose"}, "errors")
+func TestErrCtxTails(t *testing.T) {
+	scoped := &errCtx{zeros: "nil, ", accumulated: []string{"aClose"}, errsPkg: "errors"}
+	call := &Call{Var: "v", Fn: "build", Err: ErrReturn}
 	want := []string{
 		"v, err := build()",
+		"if err != nil {",
 		"if aClose != nil {",
 		"err = errors.Join(err, aClose())",
 		"}",
 		"return nil, err",
-		`err = fmt.Errorf("no impl for %q", kind)`,
+		"}",
+	}
+	if got := renderNode(call, scoped); !reflect.DeepEqual(got, want) {
+		t.Fatalf("scoped ErrReturn = %v, want %v", got, want)
+	}
+	wantDefault := []string{"v, err := build()", "if err != nil {", "return err", "}"}
+	if got := renderNode(call, nil); !reflect.DeepEqual(got, wantDefault) {
+		t.Fatalf("default ErrReturn = %v, want %v", got, wantDefault)
+	}
+
+	inline := &Call{Fn: "setup", Err: ErrInline}
+	wantInline := []string{
+		"if err := setup(); err != nil {",
 		"if aClose != nil {",
 		"err = errors.Join(err, aClose())",
 		"}",
 		"return nil, err",
-		"return nil",
+		"}",
 	}
-	if len(got) != len(want) {
-		t.Fatalf("lines = %v, want %v", got, want)
+	if got := renderNode(inline, scoped); !reflect.DeepEqual(got, wantInline) {
+		t.Fatalf("scoped ErrInline = %v, want %v", got, wantInline)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("line %d = %q, want %q\nall: %v", i, got[i], want[i], got)
-		}
+
+	sel := &Select{Var: "g", Iface: "web.G", KeyExpr: "k", FmtPkg: "fmt"}
+	got := renderNode(sel, scoped)
+	wantTail := []string{"default:", `err = fmt.Errorf("no web.G implementation for %q", k)`,
+		"if aClose != nil {", "err = errors.Join(err, aClose())", "}", "return nil, err", "}"}
+	if !reflect.DeepEqual(got[len(got)-7:], wantTail) {
+		t.Fatalf("scoped select tail = %v, want %v", got[len(got)-7:], wantTail)
+	}
+	noCleanup := &errCtx{zeros: "nil, "}
+	got = renderNode(sel, noCleanup)
+	if last := got[len(got)-2]; last != `return nil, fmt.Errorf("no web.G implementation for %q", k)` {
+		t.Fatalf("scoped select without cleanup = %q", last)
+	}
+	got = renderNode(sel, nil)
+	if last := got[len(got)-2]; last != `return fmt.Errorf("no web.G implementation for %q", k)` {
+		t.Fatalf("default select tail = %q", last)
+	}
+}
+
+func TestRawCheckRendersContextTail(t *testing.T) {
+	raw := &Raw{Lines: []string{"err = validate(v)"}, Check: true}
+	wantDefault := []string{"err = validate(v)", "if err != nil {", "return err", "}"}
+	if got := renderNode(raw, nil); !reflect.DeepEqual(got, wantDefault) {
+		t.Fatalf("default Raw.Check = %v, want %v", got, wantDefault)
+	}
+	scoped := &errCtx{zeros: "nil, "}
+	wantScoped := []string{"err = validate(v)", "if err != nil {", "return nil, err", "}"}
+	if got := renderNode(raw, scoped); !reflect.DeepEqual(got, wantScoped) {
+		t.Fatalf("scoped Raw.Check = %v, want %v", got, wantScoped)
+	}
+}
+
+func TestNodesHaveCheckRecursesSelectChildren(t *testing.T) {
+	sel := &Select{Var: "v", Iface: "I", KeyExpr: "k", FmtPkg: "fmt",
+		Cases: []Case{{Value: "x", Body: []Node{&Raw{Lines: []string{"err = f()"}, Check: true}}}}}
+	if !nodesHaveCheck([]Node{sel}) {
+		t.Fatal("Raw.Check inside a Select body must trigger err declaration")
+	}
+	if nodesHaveCheck([]Node{&Raw{Lines: []string{"x := 1"}}}) {
+		t.Fatal("no Check present, no declaration")
+	}
+}
+
+func TestRenderRejectsRawReturn(t *testing.T) {
+	g := New()
+	g.SetDirective("jobs")
+	g.Node(&Raw{Lines: []string{"if bad {", "return err", "}"}})
+	if _, err := g.Render(); err == nil || !strings.Contains(err.Error(), "jobs") {
+		t.Fatalf("Render error = %v, want raw-return contract error naming the directive", err)
+	}
+	g2 := New()
+	g2.SetDirective("jobs")
+	g2.Node(&Raw{Lines: []string{"h := func() error {", "return nil", "}", "_ = h"}, Defines: []string{"h"}})
+	if _, err := g2.Render(); err != nil {
+		t.Fatalf("Render error = %v, returns inside function literals are legal", err)
 	}
 }
 

@@ -7,18 +7,60 @@ import (
 	"strings"
 )
 
-// renderNode renders one node to source lines.
-func renderNode(n Node) []string {
+// errCtx carries the enclosing function's error-return shape. nil means
+// the default flow's single-result closure with a named err; non-nil
+// means a scoped build function whose returns carry zero values and
+// unwind the accumulated cleanups.
+type errCtx struct {
+	zeros       string
+	accumulated []string
+	errsPkg     string
+}
+
+// check renders `if <cond> { <error return> }` with the context's arity;
+// every error tail goes through it.
+func (ec *errCtx) check(cond string) []string {
+	lines := []string{"if " + cond + " {"}
+	if ec == nil {
+		return append(lines, "return err", "}")
+	}
+	lines = append(lines, unwindLines(ec.accumulated, ec.errsPkg)...)
+	return append(lines, "return "+ec.zeros+"err", "}")
+}
+
+func (ec *errCtx) errReturn() []string {
+	return ec.check("err != nil")
+}
+
+// errorExprReturn returns an error-valued expression with the arity of
+// the enclosing function.
+func (ec *errCtx) errorExprReturn(expr string) []string {
+	if ec == nil {
+		return []string{"return " + expr}
+	}
+	if len(ec.accumulated) > 0 {
+		lines := []string{"err = " + expr}
+		lines = append(lines, unwindLines(ec.accumulated, ec.errsPkg)...)
+		return append(lines, "return "+ec.zeros+"err")
+	}
+	return []string{"return " + ec.zeros + expr}
+}
+
+// renderNode renders one node to source lines for the given error context.
+func renderNode(n Node, ec *errCtx) []string {
 	switch n := n.(type) {
 	case *Raw:
+		if n.Check {
+			return append(append([]string{}, n.Lines...), ec.errReturn()...)
+		}
 		return n.Lines
 	case *Assign:
 		return []string{n.Var + " := " + n.Expr}
 	case *Call:
 		if n.Cleanup != "" {
-			return renderCleanupCall(n)
+			return renderCleanupCall(n, ec)
 		}
-		return renderCall(n.Var, n.Fn, n.Args, n.Err)
+		return renderCall(n.Var, n.Fn, n.Args, n.Err, ec)
 	case *ConfigLoad:
 		opening, closing := "(", ")"
 		if n.Prefix != "" {
@@ -29,7 +71,7 @@ func renderNode(n Node) []string {
 			lines = append(lines, opt+",")
 		}
 		lines = append(lines, closing)
-		return append(lines, errReturn()...)
+		return append(lines, ec.errReturn()...)
 	case *StructLit:
 		if len(n.Fields) == 0 {
 			return []string{fmt.Sprintf("%s := &%s{}", n.Var, n.Type)}
@@ -40,7 +82,7 @@ func renderNode(n Node) []string {
 		}
 		return append(lines, "}")
 	case *Select:
-		return renderSelect(n)
+		return renderSelect(n, ec)
 	case *Route:
 		return renderRoute(n)
 	case *Serve:
@@ -49,13 +91,13 @@ func renderNode(n Node) []string {
 	panic("gen: unrenderable node kind")
 }
 
-func renderCall(v, fn string, args []string, errStyle ErrStyle) []string {
+func renderCall(v, fn string, args []string, errStyle ErrStyle, ec *errCtx) []string {
 	call := fn + "(" + strings.Join(args, ", ") + ")"
 	switch errStyle {
 	case ErrReturn:
-		return append([]string{v + ", err := " + call}, errReturn()...)
+		return append([]string{v + ", err := " + call}, ec.errReturn()...)
 	case ErrInline:
-		return []string{"if err := " + call + "; err != nil {", "return err", "}"}
+		return ec.check("err := " + call + "; err != nil")
 	}
 	if v == "" {
 		return []string{call}
@@ -63,12 +105,20 @@ func renderCall(v, fn string, args []string, errStyle ErrStyle) []string {
 	return []string{v + " := " + call}
 }
 
-// renderCleanupCall defers cleanup and joins its error into the named return.
-func renderCleanupCall(n *Call) []string {
+// renderCleanupCall assigns the cleanup slot; the default flow defers the
+// join into the closure's named err, a scope leaves the slot to its
+// error tails.
+func renderCleanupCall(n *Call, ec *errCtx) []string {
 	call := n.Fn + "(" + strings.Join(n.Args, ", ") + ")"
+	if ec != nil {
+		if n.Err == ErrReturn {
+			return append([]string{n.Var + ", " + n.Cleanup + ", err := " + call}, ec.errReturn()...)
+		}
+		return []string{n.Var + ", " + n.Cleanup + " := " + call}
+	}
 	var lines []string
 	if n.Err == ErrReturn {
-		lines = append([]string{n.Var + ", " + n.Cleanup + ", err := " + call}, errReturn()...)
+		lines = append([]string{n.Var + ", " + n.Cleanup + ", err := " + call}, ec.errReturn()...)
 	} else {
 		lines = []string{n.Var + ", " + n.Cleanup + " := " + call}
 	}
@@ -80,11 +130,7 @@ func renderCleanupCall(n *Call) []string {
 		"}")
 }
 
-func errReturn() []string {
-	return []string{"if err != nil {", "return err", "}"}
-}
-
-func renderSelect(n *Select) []string {
+func renderSelect(n *Select, ec *errCtx) []string {
 	lines := []string{
 		"var " + n.Var + " " + n.Iface,
 		"switch " + n.KeyExpr + " {",
@@ -92,22 +138,21 @@ func renderSelect(n *Select) []string {
 	for _, c := range n.Cases {
 		lines = append(lines, "case "+strconv.Quote(c.Value)+":")
 		for _, b := range c.Body {
-			lines = append(lines, renderNode(b)...)
+			lines = append(lines, renderNode(b, ec)...)
 		}
 		call := c.Result.Fn + "(" + strings.Join(c.Result.Args, ", ") + ")"
 		if c.Result.Err == ErrReturn {
 			lines = append(lines, c.Result.Var+", err := "+call)
-			lines = append(lines, errReturn()...)
+			lines = append(lines, ec.errReturn()...)
 			lines = append(lines, n.Var+" = "+c.Result.Var)
 		} else {
 			lines = append(lines, n.Var+" = "+call)
 		}
 	}
-	lines = append(lines,
-		"default:",
-		fmt.Sprintf("return %s.Errorf(\"no %s implementation for %%q\", %s)", n.FmtPkg, n.Iface, n.KeyExpr),
-		"}")
-	return lines
+	errorf := fmt.Sprintf("%s.Errorf(\"no %s implementation for %%q\", %s)", n.FmtPkg, n.Iface, n.KeyExpr)
+	lines = append(lines, "default:")
+	lines = append(lines, ec.errorExprReturn(errorf)...)
+	return append(lines, "}")
 }
 
 func renderRoute(n *Route) []string {
@@ -265,7 +310,7 @@ func orderCluster(nodes []phaseNode, deps [][]int, members []int) []phaseNode {
 // spacedCluster reports whether a cluster needs surrounding blank lines.
 func spacedCluster(cluster []phaseNode) bool {
 	for _, pn := range cluster {
-		if pn.n.base().Label != "" || len(renderNode(pn.n)) > 1 {
+		if pn.n.base().Label != "" || len(renderNode(pn.n, nil)) > 1 {
 			return true
 		}
 	}

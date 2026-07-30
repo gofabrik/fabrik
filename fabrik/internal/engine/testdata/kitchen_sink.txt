@@ -300,15 +300,20 @@ func run() int {
 }
 
 func buildWarmCache(ctx context.Context) (*store.Pool, error) {
+	var err error
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, err
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
@@ -339,15 +344,20 @@ func buildWarmCache(ctx context.Context) (*store.Pool, error) {
 }
 
 func buildServe(ctx context.Context) (*httpserver.Server, error) {
+	var err error
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, err
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
@@ -453,15 +463,20 @@ func buildServe(ctx context.Context) (*httpserver.Server, error) {
 }
 
 func buildMigrateDB(ctx context.Context) (*sql.DB, migrations.Dialect, migrations.Sources, error) {
+	var err error
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, 0, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, 0, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, 0, nil, err
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),

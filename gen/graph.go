@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/token"
+	"strings"
 )
 
 // defines returns variables n introduces in the surrounding scope.
@@ -30,8 +32,6 @@ func defines(n Node) []string {
 	return nil
 }
 
-// exprFields returns the Go expression strings a node holds. Raw lines are
-// not expressions and Select children are aggregated separately.
 func exprFields(n Node) []string {
 	switch n := n.(type) {
 	case *Assign:
@@ -60,9 +60,7 @@ func exprFields(n Node) []string {
 	return nil
 }
 
-// uses returns names from vars that n references: declared Base.Uses plus
-// the free identifiers of its expression fields. Select aggregates its
-// children so ordering places the switch after everything any branch needs.
+// uses returns explicit and inferred dependencies, including Select children.
 func uses(n Node, vars map[string]bool) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -118,10 +116,7 @@ func uses(n Node, vars map[string]bool) []string {
 	return out
 }
 
-// freeIdents reports src's free identifiers: selector roots only,
-// named-type composite literal identifier keys skipped, names bound
-// inside function literals excluded. Parse errors are silent here;
-// validateExprFields reports them at Render with directive attribution.
+// freeIdents excludes named struct keys and function-local names; validation handles parse errors.
 func freeIdents(src string, add func(string)) {
 	e, err := parser.ParseExpr(src)
 	if err != nil {
@@ -130,8 +125,7 @@ func freeIdents(src string, add func(string)) {
 	walkExpr(e, &scopeStack{}, add)
 }
 
-// validateExprFields rejects unparsable expression fields before layout,
-// attributing the failure to the emitting directive.
+// validateExprFields attributes unparsable expressions to the emitting directive.
 func validateExprFields(nodes []Node) error {
 	for _, n := range nodes {
 		var check func(m Node) error
@@ -140,6 +134,9 @@ func validateExprFields(nodes []Node) error {
 				if _, err := parser.ParseExpr(src); err != nil {
 					return fmt.Errorf("directive %q emitted an unparsable expression %q: %v", n.base().Origin.Directive, src, err)
 				}
+			}
+			if raw, ok := m.(*Raw); ok && rawReturns(raw.Lines) {
+				return fmt.Errorf("directive %q emitted a return statement in raw lines; assign err and set Check instead", n.base().Origin.Directive)
 			}
 			if sel, ok := m.(*Select); ok {
 				for _, c := range sel.Cases {
@@ -160,6 +157,27 @@ func validateExprFields(nodes []Node) error {
 		}
 	}
 	return nil
+}
+
+// rawReturns detects returns outside function literals and leaves parse errors to findUnparsable.
+func rawReturns(lines []string) bool {
+	src := "package p\nfunc _() {\n" + strings.Join(lines, "\n") + "\n}"
+	f, err := parser.ParseFile(token.NewFileSet(), "", src, 0)
+	if err != nil {
+		return false
+	}
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 type scopeStack struct {
@@ -211,8 +229,7 @@ func walkExpr(n ast.Expr, sc *scopeStack, add func(string)) {
 			walkExpr(kv.Value, sc, add)
 		}
 	case *ast.FuncLit:
-		// Parameter and result types resolve in the enclosing scope; the
-		// names they declare are visible only from the body on.
+		// Parameter and result types use the outer scope, while declared names bind only in the body.
 		walkFieldTypes(n.Type.Params, sc, add)
 		walkFieldTypes(n.Type.Results, sc, add)
 		sc.push()
@@ -323,16 +340,18 @@ func walkStmt(s ast.Stmt, sc *scopeStack, add func(string)) {
 			return
 		}
 		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			walkExpr(vs.Type, sc, add)
-			for _, v := range vs.Values {
-				walkExpr(v, sc, add)
-			}
-			for _, name := range vs.Names {
-				sc.bind(name.Name)
+			switch spec := spec.(type) {
+			case *ast.ValueSpec:
+				walkExpr(spec.Type, sc, add)
+				for _, v := range spec.Values {
+					walkExpr(v, sc, add)
+				}
+				for _, name := range spec.Names {
+					sc.bind(name.Name)
+				}
+			case *ast.TypeSpec:
+				sc.bind(spec.Name.Name)
+				walkExpr(spec.Type, sc, add)
 			}
 		}
 	case *ast.ExprStmt:
@@ -374,8 +393,7 @@ func walkStmt(s ast.Stmt, sc *scopeStack, add func(string)) {
 		walkStmt(s.Body, sc, add)
 		sc.pop()
 	case *ast.TypeSwitchStmt:
-		// The guard binds inside each clause body only; case-list type
-		// expressions resolve in the enclosing scope.
+		// Case types use the outer scope; the guard binds only in each clause body.
 		sc.push()
 		walkStmt(s.Init, sc, add)
 		guard := ""

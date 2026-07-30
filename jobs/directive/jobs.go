@@ -361,55 +361,83 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 
 	mgr := g.Var("jobsManager")
 
-	g.Node(&gen.Raw{
-		Base: gen.Base{Phase: gen.PhaseWire, Uses: []string{storeExpr, cfgExpr}, Origin: gen.Origin{Pos: b.pos()}},
-		Lines: []string{
-			fmt.Sprintf("%s, err := %s.New(%s, %s)", mgr, jobsImport, storeExpr, cfgExpr),
-			"if err != nil {", "return err", "}",
-		},
-		Defines: []string{mgr},
+	g.Node(&gen.Call{
+		Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: b.pos()}},
+		Var:  mgr,
+		Fn:   jobsImport + ".New",
+		Args: []string{storeExpr, cfgExpr},
+		Err:  gen.ErrReturn,
 	})
 
 	// Publish the manager before resolving handlers that inject it.
 	g.BindPath(managerPath, mgr)
 
-	var lines []string
-	regUses := []string{mgr}
+	var regs []*gen.Call
+	register := func(c *gen.Call) {
+		regs = append(regs, c)
+	}
 	for _, k := range kinds {
-		lines = append(lines,
-			fmt.Sprintf("if err := %s.Register[%s](%s, %q); err != nil {", jobsImport, g.TypeExpr(k.msgType), mgr, k.kind),
-			"return err", "}")
+		register(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: k.pos}},
+			Fn:   fmt.Sprintf("%s.Register[%s]", jobsImport, g.TypeExpr(k.msgType)),
+			Args: []string{mgr, fmt.Sprintf("%q", k.kind)},
+			Err:  gen.ErrInline,
+		})
 	}
 	for _, jn := range b.jobs {
 		deps, dds := resolveDeps(g, jn.pos, jn.depTypes)
 		ds = append(ds, dds...)
-		regUses = append(regUses, deps...)
 		call := callExpr(g, jn.pkg, jn.fn, deps, true)
-		lines = append(lines,
-			fmt.Sprintf("if err := %s.On[%s](%s, %q, func(c %s.Context, m %s) error {", jobsImport, g.TypeExpr(jn.msgType), mgr, jn.name, jobsImport, g.TypeExpr(jn.msgType)),
-			"return "+call,
-			"}); err != nil {",
-			"return err", "}")
+		msg := g.TypeExpr(jn.msgType)
+		register(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: jn.pos}},
+			Fn:   fmt.Sprintf("%s.On[%s]", jobsImport, msg),
+			Args: []string{mgr, fmt.Sprintf("%q", jn.name),
+				fmt.Sprintf("func(c %s.Context, m %s) error {\nreturn %s\n}", jobsImport, msg, call)},
+			Err: gen.ErrInline,
+		})
 	}
 	for _, cn := range b.crons {
 		deps, dds := resolveDeps(g, cn.pos, cn.depTypes)
 		ds = append(ds, dds...)
-		regUses = append(regUses, deps...)
 		call := callExpr(g, cn.pkg, cn.fn, deps, false)
-		lines = append(lines,
-			fmt.Sprintf("if err := %s.RegisterCron(%s, %q, %q, func(c %s.Context) error {", jobsImport, mgr, cn.name, cn.schedule, jobsImport),
-			"return "+call,
-			"}); err != nil {",
-			"return err", "}")
-	}
-	if len(lines) > 0 {
-		g.Node(&gen.Raw{
-			Base:  gen.Base{Phase: gen.PhaseRegister, Label: "Jobs", Uses: regUses, Origin: gen.Origin{Pos: b.pos()}},
-			Lines: lines,
+		register(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: cn.pos}},
+			Fn:   jobsImport + ".RegisterCron",
+			Args: []string{mgr, fmt.Sprintf("%q", cn.name), fmt.Sprintf("%q", cn.schedule),
+				fmt.Sprintf("func(c %s.Context) error {\nreturn %s\n}", jobsImport, call)},
+			Err: gen.ErrInline,
 		})
+	}
+	if len(regs) > 0 {
+		// The earliest handler position owns the registration label.
+		first := 0
+		for i := 1; i < len(regs); i++ {
+			if posBefore(regs[i].Origin.Pos, regs[first].Origin.Pos) {
+				first = i
+			}
+		}
+		regs[first].Label = "Jobs"
+		for _, c := range regs {
+			g.Node(c)
+		}
 	}
 
 	return mgr, ds
+}
+
+// posBefore matches the generator's source-anchor ordering.
+func posBefore(a, b token.Position) bool {
+	if a.IsValid() != b.IsValid() {
+		return a.IsValid()
+	}
+	if a.Filename != b.Filename {
+		return a.Filename < b.Filename
+	}
+	if a.Line != b.Line {
+		return a.Line < b.Line
+	}
+	return a.Column < b.Column
 }
 
 func callExpr(g *gen.Gen, pkg *types.Package, fn string, deps []string, withMsg bool) string {
@@ -440,6 +468,7 @@ func resolveDeps(g *gen.Gen, pos token.Position, depTypes []types.Type) ([]strin
 type kindDecl struct {
 	kind    string
 	msgType types.Type
+	pos     token.Position
 }
 
 func (b *builder) resolveKinds(g *gen.Gen, ds *diag.Diagnostics) []kindDecl {
@@ -462,7 +491,7 @@ func (b *builder) resolveKinds(g *gen.Gen, ds *diag.Diagnostics) []kindDecl {
 				continue
 			}
 			kindOwner[kind] = key
-			kd = &kindDecl{kind: kind, msgType: d.msgType}
+			kd = &kindDecl{kind: kind, msgType: d.msgType, pos: d.pos}
 			byType[key] = kd
 			order = append(order, key)
 		} else if d.kind != "" && d.kind != kd.kind {

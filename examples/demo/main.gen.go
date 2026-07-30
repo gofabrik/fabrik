@@ -110,15 +110,20 @@ func run() int {
 }
 
 func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfig, error) {
+	var err error
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
@@ -157,15 +162,20 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 }
 
 func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() error, error) {
+	var err error
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
@@ -497,57 +507,9 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		}
 		return nil, nil, nil, err
 	}
-	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
-		}
-		return nil, nil, nil, err
-	}
+
 	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
 		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
-	}); err != nil {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
-		}
-		return nil, nil, nil, err
-	}
-	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
-		return web.RecordVisit(c, sharedQueryDB, m)
-	}); err != nil {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
-		}
-		return nil, nil, nil, err
-	}
-	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
-		return web.PurgeGreetings(c, sharedQueryDB)
 	}); err != nil {
 		if sharedStorageClose != nil {
 			err = errors.Join(err, sharedStorageClose())
@@ -575,6 +537,58 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
 	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
+	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		if sharedStorageClose != nil {
+			err = errors.Join(err, sharedStorageClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
+		}
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, nil, err
+	}
+
+	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
+		return web.RecordVisit(c, sharedQueryDB, m)
+	}); err != nil {
+		if sharedStorageClose != nil {
+			err = errors.Join(err, sharedStorageClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
+		}
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, nil, err
+	}
+
+	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
+		return web.PurgeGreetings(c, sharedQueryDB)
+	}); err != nil {
+		if sharedStorageClose != nil {
+			err = errors.Join(err, sharedStorageClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
+		}
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, nil, err
+	}
+
 	cleanup := func() error {
 		var errs []error
 		if sharedStorageClose != nil {
@@ -595,15 +609,20 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 }
 
 func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
+	var err error
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
@@ -927,57 +946,9 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		}
 		return nil, nil, err
 	}
-	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
-		}
-		return nil, nil, err
-	}
+
 	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
 		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
-	}); err != nil {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
-		}
-		return nil, nil, err
-	}
-	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
-		return web.RecordVisit(c, sharedQueryDB, m)
-	}); err != nil {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
-		}
-		return nil, nil, err
-	}
-	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
-		return web.PurgeGreetings(c, sharedQueryDB)
 	}); err != nil {
 		if sharedStorageClose != nil {
 			err = errors.Join(err, sharedStorageClose())
@@ -1005,6 +976,58 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
 	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
+	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		if sharedStorageClose != nil {
+			err = errors.Join(err, sharedStorageClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
+		}
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, err
+	}
+
+	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
+		return web.RecordVisit(c, sharedQueryDB, m)
+	}); err != nil {
+		if sharedStorageClose != nil {
+			err = errors.Join(err, sharedStorageClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
+		}
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, err
+	}
+
+	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
+		return web.PurgeGreetings(c, sharedQueryDB)
+	}); err != nil {
+		if sharedStorageClose != nil {
+			err = errors.Join(err, sharedStorageClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
+		}
+		if sharedCacheStoreClose != nil {
+			err = errors.Join(err, sharedCacheStoreClose())
+		}
+		if sharedSqlDBClose != nil {
+			err = errors.Join(err, sharedSqlDBClose())
+		}
+		return nil, nil, err
+	}
+
 	cleanup := func() error {
 		var errs []error
 		if sharedStorageClose != nil {
@@ -1025,15 +1048,20 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 }
 
 func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func() error, error) {
+	var err error
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),

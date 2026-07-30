@@ -202,6 +202,10 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		errsPkg = g.Import("errors")
 	}
 
+	if nodesHaveCheck(s.nodes) {
+		b.WriteString("var err error\n")
+	}
+
 	var accumulated []string
 	hasCleanup := false
 	first := true
@@ -229,7 +233,8 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 				if l := pn.n.base().Label; l != "" {
 					b.WriteString("// " + l + "\n")
 				}
-				for _, line := range renderNodeScoped(pn.n, zeros, accumulated, errsPkg) {
+				ec := &errCtx{zeros: zeros, accumulated: accumulated, errsPkg: errsPkg}
+				for _, line := range renderNode(pn.n, ec) {
 					b.WriteString(line)
 					b.WriteString("\n")
 				}
@@ -263,48 +268,24 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 	b.WriteString("return " + rets + "nil\n")
 }
 
-// renderNodeScoped accumulates cleanup calls and adjusts error-return arity.
-func renderNodeScoped(n Node, zeros string, accumulated []string, errsPkg string) []string {
-	if c, ok := n.(*Call); ok && c.Cleanup != "" {
-		call := c.Fn + "(" + strings.Join(c.Args, ", ") + ")"
-		if c.Err == ErrReturn {
-			lines := []string{c.Var + ", " + c.Cleanup + ", err := " + call}
-			return append(lines, scopedErrTail(zeros, accumulated, errsPkg)...)
-		}
-		return []string{c.Var + ", " + c.Cleanup + " := " + call}
-	}
-	return transformReturns(renderNode(n), zeros, accumulated, errsPkg)
-}
-
-func scopedErrTail(zeros string, accumulated []string, errsPkg string) []string {
-	lines := []string{"if err != nil {"}
-	lines = append(lines, unwindLines(accumulated, errsPkg)...)
-	return append(lines, "return "+zeros+"err", "}")
-}
-
-// transformReturns joins cleanup failures into error returns while preserving
-// result arity. A missed error return fails compilation instead of skipping
-// cleanup because scopes with cleanup have multiple results.
-func transformReturns(lines []string, zeros string, accumulated []string, errsPkg string) []string {
-	out := make([]string, 0, len(lines))
-	for _, ln := range lines {
-		switch {
-		case ln == "return err":
-			out = append(out, unwindLines(accumulated, errsPkg)...)
-			out = append(out, "return "+zeros+"err")
-		case strings.HasPrefix(ln, "return ") && strings.Contains(ln, ".Errorf("):
-			if len(accumulated) > 0 {
-				out = append(out, "err = "+strings.TrimPrefix(ln, "return "))
-				out = append(out, unwindLines(accumulated, errsPkg)...)
-				out = append(out, "return "+zeros+"err")
-			} else {
-				out = append(out, "return "+zeros+strings.TrimPrefix(ln, "return "))
+// nodesHaveCheck reports whether any node, including Select children,
+// renders a Raw err check and therefore needs err pre-declared.
+func nodesHaveCheck(nodes []Node) bool {
+	for _, n := range nodes {
+		switch n := n.(type) {
+		case *Raw:
+			if n.Check {
+				return true
 			}
-		default:
-			out = append(out, ln)
+		case *Select:
+			for _, c := range n.Cases {
+				if nodesHaveCheck(c.Body) {
+					return true
+				}
+			}
 		}
 	}
-	return out
+	return false
 }
 
 func unwindLines(accumulated []string, errsPkg string) []string {
