@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,6 +42,70 @@ func TestGuardedScopePassConvertsPanicToError(t *testing.T) {
 	if ds != nil {
 		t.Fatalf("guardedScopePass diagnostics = %v, want nil", ds)
 	}
+}
+
+func TestCompileFixtureReportsBuildOutput(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+
+	dir := t.TempDir()
+	gomod := "module fixture\n\ngo 1.26\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => /tmp/x\n)\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replaces := map[string]string{
+		"github.com/gofabrik/fabrik/config": "/elsewhere",
+		"github.com/gofabrik/fabrik/router": "/local/router",
+	}
+	err := compileFixture(dir, dir, []byte("package main\n\nfunc main() { missing() }\n"), replaces)
+	if err == nil || !strings.Contains(err.Error(), "go build failed") || !strings.Contains(err.Error(), "undefined: missing") {
+		t.Fatalf("compileFixture error = %v", err)
+	}
+	mod, err := os.ReadFile(filepath.Join(dir, "go.mod")) // #nosec G304 -- reads back the test-written go.mod
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(mod, []byte("replace github.com/gofabrik/fabrik/router => /local/router")) {
+		t.Errorf("missing appended replace for router:\n%s", mod)
+	}
+	if bytes.Count(mod, []byte("github.com/gofabrik/fabrik/config =>")) != 1 {
+		t.Errorf("block-form replace duplicated:\n%s", mod)
+	}
+}
+
+// compileFixture builds the generated source inside the fixture module.
+// Missing replaces for fabrik modules are appended first so the build
+// resolves the working tree, never a published module.
+func compileFixture(dir, mainDir string, src []byte, replaces map[string]string) error {
+	if err := os.WriteFile(filepath.Join(mainDir, "main.gen.go"), src, 0o600); err != nil {
+		return err
+	}
+	modPath := filepath.Join(dir, "go.mod")
+	mod, err := os.ReadFile(modPath) // #nosec G304 -- fixture temp dir
+	if err != nil {
+		return err
+	}
+	var extra []byte
+	for _, path := range slices.Sorted(maps.Keys(replaces)) {
+		if !bytes.Contains(mod, []byte(path+" =>")) {
+			extra = append(extra, []byte("\nreplace "+path+" => "+replaces[path]+"\n")...)
+		}
+	}
+	if len(extra) > 0 {
+		// #nosec G703 -- fixture temp module path
+		if err := os.WriteFile(modPath, append(mod, extra...), 0o600); err != nil {
+			return err
+		}
+	}
+	// #nosec G204 -- the command and all arguments are controlled by this test
+	build := exec.Command("go", "build", "-o", os.DevNull, ".")
+	build.Dir = mainDir
+	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+	if b, err := build.CombinedOutput(); err != nil {
+		return fmt.Errorf("go build failed: %w\n%s\n--- generated ---\n%s", err, b, src)
+	}
+	return nil
 }
 
 func runFixture(t *testing.T, fixture string) {
@@ -132,10 +199,28 @@ func runFixture(t *testing.T, fixture string) {
 		if !bytes.Equal(res.Src, again.Src) {
 			t.Errorf("generation is not deterministic:\nfirst:\n%s\nsecond:\n%s", res.Src, again.Src)
 		}
+		if !testing.Short() {
+			replaces := map[string]string{
+				"github.com/gofabrik/fabrik/router":      routerDir,
+				"github.com/gofabrik/fabrik/config":      configDir,
+				"github.com/gofabrik/fabrik/templates":   templateDir,
+				"github.com/gofabrik/fabrik/web":         webDir,
+				"github.com/gofabrik/fabrik/assetmapper": assetsDir,
+				"github.com/gofabrik/fabrik/migrations":  migrationsDir,
+				"github.com/gofabrik/fabrik/jobs":        jobsDir,
+				"github.com/gofabrik/fabrik/cli":         cliDir,
+				"github.com/gofabrik/fabrik/httpserver":  httpserverDir,
+			}
+			if err := compileFixture(dir, res.MainDir, res.Src, replaces); err != nil {
+				t.Error(err)
+			}
+		}
 	}
 
 	if *update {
-		updateFixture(t, fixture, ar, res.Src, gotDiags)
+		if !t.Failed() {
+			updateFixture(t, fixture, ar, res.Src, gotDiags)
+		}
 		return
 	}
 
