@@ -251,14 +251,15 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			errsPkg = g.Import("errors")
 		}
 		g.Node(&gen.Call{
-			Base:    gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
-			Var:     v,
-			Fn:      g.ImportPkg(nd.pkg) + "." + nd.fn,
-			Args:    args,
-			Err:     errStyle,
-			Type:    nd.returns[0],
-			Cleanup: closeVar,
-			ErrsPkg: errsPkg,
+			Base:        gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
+			Var:         v,
+			Fn:          g.ImportPkg(nd.pkg) + "." + nd.fn,
+			Args:        args,
+			Err:         errStyle,
+			Type:        nd.returns[0],
+			BindingName: nd.name,
+			Cleanup:     closeVar,
+			ErrsPkg:     errsPkg,
 		})
 		return v, ds
 	})

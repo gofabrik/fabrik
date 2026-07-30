@@ -448,6 +448,104 @@ func TestGraphDefaultFlowBindingsAndConsumerTargeting(t *testing.T) {
 	}
 }
 
+func TestGraphBindingAssociationsCarryNames(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/dflt", "package dflt\n\ntype Server struct{}\n")
+	srv := types.NewPointer(pkg.Scope().Lookup("Server").Type())
+	g := New()
+	g.SetModule("demo")
+	g.SetDirective("http")
+	g.Bind(srv, "replica", "dflt.NewServer(r)")
+	g.Bind(srv, "primary", "dflt.NewServer(r)")
+	gr := g.Graph()
+
+	binds := gr.Flows[0].Bindings
+	want := []GraphType{
+		{Display: "*dflt.Server", Canonical: "*example.com/dflt.Server", Name: "primary"},
+		{Display: "*dflt.Server", Canonical: "*example.com/dflt.Server", Name: "replica"},
+	}
+	if len(binds) != 1 || !reflect.DeepEqual(binds[0].Types, want) {
+		t.Fatalf("types = %+v, want %+v", binds[0].Types, want)
+	}
+}
+
+func TestGraphMultiNameBindingIsDeterministic(t *testing.T) {
+	build := func(t *testing.T) *Gen {
+		pkg := typecheckScopePkg(t, "example.com/multi", "package multi\n\ntype Server struct{}\n")
+		srv := types.NewPointer(pkg.Scope().Lookup("Server").Type())
+		g := New()
+		g.SetModule("example.com/multi")
+		g.SetDirective("provider")
+		g.Bind(srv, "replica", "multi.NewServer(r)")
+		g.Bind(srv, "primary", "multi.NewServer(r)")
+		return g
+	}
+	first, err := json.Marshal(build(t).Graph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		again, err := json.Marshal(build(t).Graph())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(first, again) {
+			t.Fatalf("graph is not deterministic:\nfirst:\n%s\nagain:\n%s", first, again)
+		}
+	}
+}
+
+func TestGraphRootCarriesName(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type Store struct{}
+`)
+	store := types.NewPointer(pkg.Scope().Lookup("Store").Type())
+	g := New()
+	g.SetModule("example.com/app")
+	g.SetDirective("provider")
+	g.BindLazy(store, "replica", func() (string, diag.Diagnostics) {
+		v := g.Var("conn")
+		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/app") + ".NewStore"})
+		return v, nil
+	})
+	g.AddScope("buildMigrate", token.Position{}, ScopeRoot{Type: store, Name: "replica"})
+	if ds := g.MaterializeScopes(); ds.HasFatal() {
+		t.Fatalf("MaterializeScopes: %v", ds)
+	}
+	if _, err := g.Render(); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	gr := g.Graph()
+
+	migrate := flowByID(t, gr, "migrate")
+	if len(migrate.Roots) != 1 || migrate.Roots[0].Name != "replica" {
+		t.Fatalf("roots = %+v", migrate.Roots)
+	}
+}
+
+func TestGraphNodeExposesBindingName(t *testing.T) {
+	g := New()
+	g.SetModule("demo")
+	g.SetDirective("provider")
+	g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "db", Fn: "shared.NewDB", BindingName: "replica"})
+	before, err := g.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gr := g.Graph()
+	node := nodeByID(t, gr, "default/db")
+	if node.BindingName != "replica" {
+		t.Fatalf("bindingName = %q, want replica", node.BindingName)
+	}
+	after, err := g.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || strings.Contains(string(after), "replica") {
+		t.Fatalf("BindingName must be graph-only metadata, got:\n%s", after)
+	}
+}
+
 func TestGraphBindingOrdinalsFollowBindOrder(t *testing.T) {
 	g := New()
 	g.SetModule("demo")
@@ -587,4 +685,70 @@ func TestRenderingsSurviveJSONRoundTrip(t *testing.T) {
 	if !strings.Contains(back.DOT(), "app.NewPlainGreeter") {
 		t.Fatal("non-error select implementation lost in round trip")
 	}
+}
+
+func TestGraphNamedJSONSpelling(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/spell", "package spell\n\ntype DB struct{}\n")
+	db := types.NewPointer(pkg.Scope().Lookup("DB").Type())
+
+	g := New()
+	g.SetModule("example.com/spell")
+	g.SetDirective("provider")
+	g.Bind(db, "replica", "spell.NewReplica()")
+	g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "db", Fn: "spell.NewReplica", BindingName: "replica"})
+	g.AddScope("buildX", token.Position{}, ScopeRoot{Type: db, Name: "replica"})
+	if _, err := g.Render(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(g.Graph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"name":"replica"`, `"bindingName":"replica"`} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("marshaled graph misses %s:\n%s", want, out)
+		}
+	}
+	if name, ok := rootField(t, out, "name"); !ok || name != "replica" {
+		t.Fatalf("root name field = %q, %v", name, ok)
+	}
+
+	unnamed := New()
+	unnamed.SetModule("example.com/spell")
+	unnamed.SetDirective("provider")
+	unnamed.Bind(db, "", "spell.NewDB()")
+	unnamed.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "db", Fn: "spell.NewDB"})
+	unnamed.AddScope("buildX", token.Position{}, ScopeRoot{Type: db})
+	if _, err := unnamed.Render(); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := json.Marshal(unnamed.Graph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stray := range []string{`"name"`, `"bindingName"`} {
+		if strings.Contains(string(plain), stray) {
+			t.Fatalf("unnamed graph must omit %s:\n%s", stray, plain)
+		}
+	}
+}
+
+func rootField(t *testing.T, out []byte, field string) (string, bool) {
+	t.Helper()
+	var doc struct {
+		Flows []struct {
+			Roots []map[string]any `json:"roots"`
+		} `json:"flows"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range doc.Flows {
+		for _, r := range f.Roots {
+			v, ok := r[field].(string)
+			return v, ok
+		}
+	}
+	t.Fatal("no scope root in marshaled graph")
+	return "", false
 }

@@ -554,11 +554,15 @@ func (g *Gen) setLazyRunning(lb *lazyBind, v bool) {
 func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string, ds diag.Diagnostics, ok bool) {
 	// Avoid adding imports while formatting cycle diagnostics.
 	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
+	chainKey := key
+	if name != "" {
+		chainKey += " (" + name + ")"
+	}
 	if g.lazyRunning(lb) {
-		return "", diag.Diagnostics{g.cycleDiag(key)}, false
+		return "", diag.Diagnostics{g.cycleDiag(chainKey)}, false
 	}
 	g.setLazyRunning(lb, true)
-	g.materializing = append(g.materializing, key)
+	g.materializing = append(g.materializing, chainKey)
 	prev := g.current
 	g.current = lb.owner
 	defer func() {

@@ -35,12 +35,14 @@ type GraphFlow struct {
 type GraphType struct {
 	Display   string `json:"display"`
 	Canonical string `json:"canonical"`
+	Name      string `json:"name,omitempty"` // Provider name, empty for the unnamed binding.
 }
 
 // GraphRoot references either an expression or a binding that owns its dependency edges.
 type GraphRoot struct {
 	ID      string    `json:"id"`
 	Type    GraphType `json:"type"`
+	Name    string    `json:"name,omitempty"` // Provider name selected for the root.
 	Expr    string    `json:"expr,omitempty"`
 	Binding string    `json:"binding,omitempty"`
 }
@@ -63,6 +65,7 @@ type GraphNode struct {
 	Type          string   `json:"type,omitempty"`
 	TypeCanonical string   `json:"typeCanonical,omitempty"` // Set when the IR carries a package-path type.
 	Cleanup       string   `json:"cleanup,omitempty"`
+	BindingName   string   `json:"bindingName,omitempty"` // Provider name bound by this call.
 	Method        string   `json:"method,omitempty"`
 	Pattern       string   `json:"pattern,omitempty"`
 	Directive     string   `json:"directive"`
@@ -187,6 +190,7 @@ func (gr *Graph) addFlow(g *Gen, id, fn string, nodes []Node, s *Scope, seen map
 			root := GraphRoot{
 				ID:   fmt.Sprintf("%s/root@%d", id, i),
 				Type: GraphType{Display: g.TypeDisplay(t), Canonical: types.TypeString(t, nil)},
+				Name: r.Name,
 			}
 			expr := ""
 			if i < len(s.rootExprs) {
@@ -225,8 +229,8 @@ func (gr *Graph) addFlow(g *Gen, id, fn string, nodes []Node, s *Scope, seen map
 func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]GraphBinding, map[string]string) {
 	typesByExpr := map[string][]GraphType{}
 	pathsByExpr := map[string][]string{}
-	addType := func(expr string, t types.Type, canonical string) {
-		gt := GraphType{Display: g.TypeDisplay(t), Canonical: canonical}
+	addType := func(expr string, t types.Type, canonical, name string) {
+		gt := GraphType{Display: g.TypeDisplay(t), Canonical: canonical, Name: name}
 		if !slices.Contains(typesByExpr[expr], gt) {
 			typesByExpr[expr] = append(typesByExpr[expr], gt)
 		}
@@ -235,8 +239,8 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 	if s != nil {
 		order = s.bindOrder
 		for key, byName := range s.binds {
-			for _, expr := range byName {
-				addType(expr, s.bindTypes[key], key)
+			for name, expr := range byName {
+				addType(expr, s.bindTypes[key], key, name)
 			}
 		}
 		for path, expr := range s.pathExprs {
@@ -248,8 +252,8 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 		order = g.bindOrder
 		g.binds.Iterate(func(t types.Type, v any) {
 			key := types.TypeString(t, nil)
-			for _, expr := range v.(map[string]string) {
-				addType(expr, t, key)
+			for name, expr := range v.(map[string]string) {
+				addType(expr, t, key, name)
 			}
 		})
 		for path, expr := range g.pathExprs {
@@ -259,7 +263,12 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 		}
 	}
 	for _, ts := range typesByExpr {
-		sort.Slice(ts, func(i, j int) bool { return ts[i].Canonical < ts[j].Canonical })
+		sort.Slice(ts, func(i, j int) bool {
+			if ts[i].Canonical != ts[j].Canonical {
+				return ts[i].Canonical < ts[j].Canonical
+			}
+			return ts[i].Name < ts[j].Name
+		})
 	}
 	for _, ps := range pathsByExpr {
 		sort.Strings(ps)
@@ -324,6 +333,7 @@ func graphNode(g *Gen, fnode flowNode, flow string) GraphNode {
 	switch n := fnode.n.(type) {
 	case *Call:
 		out.Fn, out.Cleanup = n.Fn, n.Cleanup
+		out.BindingName = n.BindingName
 		if n.Type != nil {
 			out.Type = g.TypeDisplay(n.Type)
 			out.TypeCanonical = types.TypeString(n.Type, nil)
