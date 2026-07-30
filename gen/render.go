@@ -9,22 +9,24 @@ import (
 
 // errCtx carries the enclosing function's error-return shape. nil means
 // the default flow's single-result closure with a named err; non-nil
-// means a scoped build function whose returns carry zero values and
-// unwind the accumulated cleanups.
+// means a scoped build function whose returns carry zero values and,
+// when the scope owns cleanups, route the error through its unwind
+// helper.
 type errCtx struct {
-	zeros       string
-	accumulated []string
-	errsPkg     string
+	zeros  string
+	unwind bool
 }
 
 // check renders `if <cond> { <error return> }` with the context's arity;
-// every error tail goes through it.
+// every if-form error tail goes through it.
 func (ec *errCtx) check(cond string) []string {
 	lines := []string{"if " + cond + " {"}
 	if ec == nil {
 		return append(lines, "return err", "}")
 	}
-	lines = append(lines, unwindLines(ec.accumulated, ec.errsPkg)...)
+	if ec.unwind {
+		return append(lines, "return "+ec.zeros+"unwind(err)", "}")
+	}
 	return append(lines, "return "+ec.zeros+"err", "}")
 }
 
@@ -38,10 +40,8 @@ func (ec *errCtx) errorExprReturn(expr string) []string {
 	if ec == nil {
 		return []string{"return " + expr}
 	}
-	if len(ec.accumulated) > 0 {
-		lines := []string{"err = " + expr}
-		lines = append(lines, unwindLines(ec.accumulated, ec.errsPkg)...)
-		return append(lines, "return "+ec.zeros+"err")
+	if ec.unwind {
+		return []string{"return " + ec.zeros + "unwind(" + expr + ")"}
 	}
 	return []string{"return " + ec.zeros + expr}
 }

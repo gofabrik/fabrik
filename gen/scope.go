@@ -40,6 +40,7 @@ func (g *Gen) AddScope(fn string, pos token.Position, roots ...types.Type) *Scop
 		g.Context()
 		g.idents["cleanup"] = true
 		g.idents["err"] = true
+		g.idents["unwind"] = true
 	}
 	s := &Scope{fn: fn, pos: pos, roots: roots}
 	g.scopes = append(g.scopes, s)
@@ -80,6 +81,7 @@ func (g *Gen) enterScope(s *Scope, validation bool) {
 	// Prevent generated locals from shadowing the build function skeleton.
 	s.idents["err"] = true
 	s.idents["cleanup"] = true
+	s.idents["unwind"] = true
 	s.ctxVar = "ctx"
 	s.idents["ctx"] = true
 	s.binds = map[string]map[string]string{}
@@ -206,9 +208,14 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		b.WriteString("var err error\n")
 	}
 
-	var accumulated []string
-	hasCleanup := false
-	first := true
+	// Cleanup order must follow emission order, which layout decides.
+	type section struct {
+		label    string
+		clusters [][]phaseNode
+	}
+	var sections []section
+	var cleanups []string
+	hasErrSite := false
 	for _, pl := range phaseLabels {
 		var nodes []phaseNode
 		for i, n := range s.nodes {
@@ -219,40 +226,61 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		if len(nodes) == 0 {
 			continue
 		}
-		if !first {
+		clusters := layoutPhase(nodes)
+		sections = append(sections, section{label: pl.label, clusters: clusters})
+		for _, cluster := range clusters {
+			for _, pn := range cluster {
+				if c, ok := pn.n.(*Call); ok && c.Cleanup != "" {
+					cleanups = append(cleanups, c.Cleanup)
+				}
+				if nodeHasErrTail(pn.n) {
+					hasErrSite = true
+				}
+			}
+		}
+	}
+	if len(cleanups) > 0 {
+		b.WriteString("var " + strings.Join(cleanups, ", ") + " func() error\n")
+		if hasErrSite {
+			b.WriteString("unwind := func(err error) error {\n")
+			for _, line := range unwindLines(cleanups, errsPkg) {
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+			b.WriteString("return err\n")
+			b.WriteString("}\n")
+		}
+	}
+	ec := &errCtx{zeros: zeros, unwind: len(cleanups) > 0 && hasErrSite}
+
+	for si, sec := range sections {
+		if si > 0 {
 			b.WriteString("\n")
 		}
-		first = false
-		b.WriteString("// " + pl.label + "\n")
-		clusters := layoutPhase(nodes)
-		for ci, cluster := range clusters {
-			if ci > 0 && (spacedCluster(cluster) || spacedCluster(clusters[ci-1])) {
+		b.WriteString("// " + sec.label + "\n")
+		for ci, cluster := range sec.clusters {
+			if ci > 0 && (spacedCluster(cluster) || spacedCluster(sec.clusters[ci-1])) {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {
 				if l := pn.n.base().Label; l != "" {
 					b.WriteString("// " + l + "\n")
 				}
-				ec := &errCtx{zeros: zeros, accumulated: accumulated, errsPkg: errsPkg}
 				for _, line := range renderNode(pn.n, ec) {
 					b.WriteString(line)
 					b.WriteString("\n")
-				}
-				if c, ok := pn.n.(*Call); ok && c.Cleanup != "" {
-					accumulated = append(accumulated, c.Cleanup)
-					hasCleanup = true
 				}
 			}
 		}
 	}
 
 	rets := strings.Join(s.rootExprs, ", ")
-	if hasCleanup {
+	if len(cleanups) > 0 {
 		b.WriteString("\ncleanup := func() error {\n")
 		b.WriteString("var errs []error\n")
-		for i := len(accumulated) - 1; i >= 0; i-- {
-			b.WriteString("if " + accumulated[i] + " != nil {\n")
-			b.WriteString("errs = append(errs, " + accumulated[i] + "())\n")
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			b.WriteString("if " + cleanups[i] + " != nil {\n")
+			b.WriteString("errs = append(errs, " + cleanups[i] + "())\n")
 			b.WriteString("}\n")
 		}
 		b.WriteString("return " + errsPkg + ".Join(errs...)\n")
@@ -266,6 +294,20 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		rets += ", "
 	}
 	b.WriteString("return " + rets + "nil\n")
+}
+
+// nodeHasErrTail reports whether n renders an error return, so a
+// cleanup-bearing scope knows whether the unwind helper is referenced.
+func nodeHasErrTail(n Node) bool {
+	switch n := n.(type) {
+	case *Call:
+		return n.Err != ErrNone
+	case *ConfigLoad, *Select:
+		return true
+	case *Raw:
+		return n.Check
+	}
+	return false
 }
 
 // nodesHaveCheck reports whether any node, including Select children,

@@ -86,17 +86,21 @@ func run() int {
 }
 
 func buildPing(ctx context.Context) (*shared.DB, *shared.Audit, func() error, error) {
-	// Providers
-	sharedDB, sharedDBClose, err := shared.NewDB()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	sharedAudit, err := shared.NewAudit(sharedDB)
-	if err != nil {
+	var sharedDBClose func() error
+	unwind := func(err error) error {
 		if sharedDBClose != nil {
 			err = errors.Join(err, sharedDBClose())
 		}
-		return nil, nil, nil, err
+		return err
+	}
+	// Providers
+	sharedDB, sharedDBClose, err := shared.NewDB()
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedAudit, err := shared.NewAudit(sharedDB)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
 	}
 
 	cleanup := func() error {

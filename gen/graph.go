@@ -128,8 +128,8 @@ func freeIdents(src string, add func(string)) {
 // validateExprFields attributes unparsable expressions to the emitting directive.
 func validateExprFields(nodes []Node) error {
 	for _, n := range nodes {
-		var check func(m Node) error
-		check = func(m Node) error {
+		var check func(m Node, nested bool) error
+		check = func(m Node, nested bool) error {
 			for _, src := range exprFields(m) {
 				if _, err := parser.ParseExpr(src); err != nil {
 					return fmt.Errorf("directive %q emitted an unparsable expression %q: %v", n.base().Origin.Directive, src, err)
@@ -138,21 +138,24 @@ func validateExprFields(nodes []Node) error {
 			if raw, ok := m.(*Raw); ok && rawReturns(raw.Lines) {
 				return fmt.Errorf("directive %q emitted a return statement in raw lines; assign err and set Check instead", n.base().Origin.Directive)
 			}
+			if c, ok := m.(*Call); ok && nested && c.Cleanup != "" {
+				return fmt.Errorf("directive %q emitted a cleanup-bearing call inside a select case; cleanup calls must be top-level", n.base().Origin.Directive)
+			}
 			if sel, ok := m.(*Select); ok {
 				for _, c := range sel.Cases {
 					for _, child := range c.Body {
-						if err := check(child); err != nil {
+						if err := check(child, true); err != nil {
 							return err
 						}
 					}
-					if err := check(&c.Result); err != nil {
+					if err := check(&c.Result, true); err != nil {
 						return err
 					}
 				}
 			}
 			return nil
 		}
-		if err := check(n); err != nil {
+		if err := check(n, false); err != nil {
 			return err
 		}
 	}
