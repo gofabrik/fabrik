@@ -13,7 +13,7 @@ type Base struct {
 	Origin Origin
 	Phase  Phase    // run() section; child nodes inherit their parent's phase
 	Label  string   // optional one-line comment above the node
-	Uses   []string // manual dependency additions; rendered text supplies the rest
+	Uses   []string // dependencies the expression fields do not reveal; Raw lines are never scanned
 }
 
 func (b *Base) base() *Base { return b }

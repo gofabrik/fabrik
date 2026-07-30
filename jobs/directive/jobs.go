@@ -362,7 +362,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	mgr := g.Var("jobsManager")
 
 	g.Node(&gen.Raw{
-		Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: b.pos()}},
+		Base: gen.Base{Phase: gen.PhaseWire, Uses: []string{storeExpr, cfgExpr}, Origin: gen.Origin{Pos: b.pos()}},
 		Lines: []string{
 			fmt.Sprintf("%s, err := %s.New(%s, %s)", mgr, jobsImport, storeExpr, cfgExpr),
 			"if err != nil {", "return err", "}",
@@ -374,6 +374,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	g.BindPath(managerPath, mgr)
 
 	var lines []string
+	regUses := []string{mgr}
 	for _, k := range kinds {
 		lines = append(lines,
 			fmt.Sprintf("if err := %s.Register[%s](%s, %q); err != nil {", jobsImport, g.TypeExpr(k.msgType), mgr, k.kind),
@@ -382,6 +383,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	for _, jn := range b.jobs {
 		deps, dds := resolveDeps(g, jn.pos, jn.depTypes)
 		ds = append(ds, dds...)
+		regUses = append(regUses, deps...)
 		call := callExpr(g, jn.pkg, jn.fn, deps, true)
 		lines = append(lines,
 			fmt.Sprintf("if err := %s.On[%s](%s, %q, func(c %s.Context, m %s) error {", jobsImport, g.TypeExpr(jn.msgType), mgr, jn.name, jobsImport, g.TypeExpr(jn.msgType)),
@@ -392,6 +394,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	for _, cn := range b.crons {
 		deps, dds := resolveDeps(g, cn.pos, cn.depTypes)
 		ds = append(ds, dds...)
+		regUses = append(regUses, deps...)
 		call := callExpr(g, cn.pkg, cn.fn, deps, false)
 		lines = append(lines,
 			fmt.Sprintf("if err := %s.RegisterCron(%s, %q, %q, func(c %s.Context) error {", jobsImport, mgr, cn.name, cn.schedule, jobsImport),
@@ -401,7 +404,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	}
 	if len(lines) > 0 {
 		g.Node(&gen.Raw{
-			Base:  gen.Base{Phase: gen.PhaseRegister, Label: "Jobs", Origin: gen.Origin{Pos: b.pos()}},
+			Base:  gen.Base{Phase: gen.PhaseRegister, Label: "Jobs", Uses: regUses, Origin: gen.Origin{Pos: b.pos()}},
 			Lines: lines,
 		})
 	}

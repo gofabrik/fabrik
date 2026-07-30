@@ -584,6 +584,14 @@ func (g *Gen) Render() ([]byte, error) {
 	if err := validateCommandMetadata(g.commandFuncs, g.commandGroups); err != nil {
 		return nil, err
 	}
+	if err := validateExprFields(g.nodes); err != nil {
+		return nil, err
+	}
+	for _, s := range g.scopes {
+		if err := validateExprFields(s.nodes); err != nil {
+			return nil, err
+		}
+	}
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
 	if hasCmd {
 		g.Context()

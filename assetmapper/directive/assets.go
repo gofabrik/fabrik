@@ -264,7 +264,7 @@ func (as *Assets) emitSwitch(g *gen.Gen) func() (string, diag.Diagnostics) {
 		kind := g.Var("assetKind")
 		v := g.Var("assetServer")
 		g.Node(&gen.Raw{
-			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
+			Base: gen.Base{Phase: gen.PhaseWire, Uses: []string{cfgVar}, Origin: gen.Origin{Pos: decls[0].pos}},
 			Lines: []string{
 				kind + ", err := " + cfgVar + ".Mode()",
 				"if err != nil {",
