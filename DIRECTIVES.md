@@ -341,6 +341,20 @@ Options:
 
 - `dir=`
 
+## fabrik:inject
+
+**`//fabrik:inject <param-or-field> name=<provider>`**
+
+Maps one parameter of the annotated function, or one exported field of the annotated struct type, to the named provider of its type. One line per mapping.
+
+Positional arguments:
+
+- `PARAM-OR-FIELD`
+
+Options:
+
+- `name=` (required)
+
 ## fabrik:job
 
 **`//fabrik:job [name=NAME] [kind=KIND]`**

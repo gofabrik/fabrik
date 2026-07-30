@@ -76,6 +76,8 @@ type Gen struct {
 	scope       *Scope          // active scope; nil uses default state
 	aliasIdents map[string]bool // import aliases reserved by new scopes
 
+	inject map[injectKey]*injectEntry
+
 	comments CommentLevel
 	srcRoot  string
 
