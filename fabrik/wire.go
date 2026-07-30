@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -33,6 +34,7 @@ func parseWireArgs(args []string) (dir string, check bool, opts engine.Options, 
 	fs := flag.NewFlagSet("wire", flag.ContinueOnError)
 	checkFlag := fs.Bool("check", false, "verify main.gen.go is up to date instead of writing it")
 	comments := fs.String("comments", "sections", "generated comment level: off, sections, or full")
+	graph := fs.Bool("graph", false, "write the structural graph beside main.gen.go")
 	if err := fs.Parse(args); err != nil {
 		return "", false, engine.Options{}, err
 	}
@@ -40,14 +42,17 @@ func parseWireArgs(args []string) (dir string, check bool, opts engine.Options, 
 	if err != nil {
 		return "", false, engine.Options{}, err
 	}
+	if *checkFlag && *graph {
+		return "", false, engine.Options{}, fmt.Errorf("-check does not write files; drop --graph to check, or drop -check to write the graph")
+	}
 	dir = "."
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)
 	}
 	if fs.NArg() > 1 {
-		return "", false, engine.Options{}, fmt.Errorf("unexpected argument %q; usage: fabrik wire [-check] [-comments=LEVEL] [dir]", fs.Arg(1))
+		return "", false, engine.Options{}, fmt.Errorf("unexpected argument %q; usage: fabrik wire [-check] [-comments=LEVEL] [--graph] [dir]", fs.Arg(1))
 	}
-	return dir, *checkFlag, engine.Options{Comments: level}, nil
+	return dir, *checkFlag, engine.Options{Comments: level, Graph: *graph}, nil
 }
 
 func commentLevel(s string) (gen.CommentLevel, error) {
@@ -63,8 +68,8 @@ func commentLevel(s string) (gen.CommentLevel, error) {
 }
 
 // generate reports diagnostics and returns errSilent on fatal ones.
-func generate(dir string, opts engine.Options) (src []byte, out string, err error) {
-	res, err := engine.WireOptions(dir, nil, opts)
+func generate(dir string, opts engine.Options) (res *engine.Result, out string, err error) {
+	res, err = engine.WireOptions(dir, nil, opts)
 	if err != nil {
 		if res != nil && len(res.Diags) > 0 {
 			if writeErr := emitDiagnostics(res.Diags); writeErr != nil {
@@ -81,7 +86,7 @@ func generate(dir string, opts engine.Options) (src []byte, out string, err erro
 			return nil, "", errSilent
 		}
 	}
-	return res.Src, filepath.Join(res.MainDir, "main.gen.go"), nil
+	return res, filepath.Join(res.MainDir, "main.gen.go"), nil
 }
 
 func emitDiagnostics(diags diag.Diagnostics) error {
@@ -100,19 +105,53 @@ func wire(dir string) (string, error) {
 }
 
 func wireWith(dir string, opts engine.Options) (string, error) {
-	src, out, err := generate(dir, opts)
+	res, out, err := generate(dir, opts)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(out, src, 0o644); err != nil { // #nosec G306 -- generated Go source is intentionally readable
+	if err := os.WriteFile(out, res.Src, 0o644); err != nil { // #nosec G306 -- generated Go source is intentionally readable
 		return "", err
 	}
-	if rel, rerr := filepath.Rel(dir, out); rerr == nil {
-		fmt.Printf("fabrik: wrote %s\n", rel)
-	} else {
-		fmt.Printf("fabrik: wrote %s\n", out)
+	written := []string{out}
+	if res.Graph != nil {
+		sidecars, err := writeGraphSidecars(filepath.Dir(out), res.Graph)
+		if err != nil {
+			return "", err
+		}
+		written = append(written, sidecars...)
+	}
+	for _, path := range written {
+		if rel, rerr := filepath.Rel(dir, path); rerr == nil {
+			fmt.Printf("fabrik: wrote %s\n", rel)
+		} else {
+			fmt.Printf("fabrik: wrote %s\n", path)
+		}
 	}
 	return filepath.Dir(out), nil
+}
+
+func writeGraphSidecars(mainDir string, graph *gen.Graph) ([]string, error) {
+	data, err := json.MarshalIndent(graph, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	sidecars := []struct {
+		name string
+		data []byte
+	}{
+		{"fabrik.graph.json", append(data, '\n')},
+		{"fabrik.graph.dot", []byte(graph.DOT())},
+		{"fabrik.graph.mmd", []byte(graph.Mermaid())},
+	}
+	var written []string
+	for _, s := range sidecars {
+		path := filepath.Join(mainDir, s.name)
+		if err := os.WriteFile(path, s.data, 0o644); err != nil { // #nosec G306 -- graph artifacts are intentionally readable
+			return nil, err
+		}
+		written = append(written, path)
+	}
+	return written, nil
 }
 
 // mainPackageArg renders the go command target for the main package.
@@ -126,7 +165,7 @@ func mainPackageArg(dir, mainDir string) string {
 
 // wireCheck fails when main.gen.go is missing or stale.
 func wireCheck(dir string, opts engine.Options) error {
-	src, out, err := generate(dir, opts)
+	res, out, err := generate(dir, opts)
 	if err != nil {
 		return err
 	}
@@ -138,7 +177,7 @@ func wireCheck(dir string, opts engine.Options) error {
 		}
 		return err
 	}
-	if !bytes.Equal(disk, src) {
+	if !bytes.Equal(disk, res.Src) {
 		fmt.Fprintf(os.Stderr, "fabrik: %s is stale; run fabrik wire\n", out)
 		return errSilent
 	}

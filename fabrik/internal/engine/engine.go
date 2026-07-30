@@ -17,11 +17,13 @@ type Result struct {
 	Src     []byte
 	MainDir string
 	Diags   diag.Diagnostics
+	Graph   *gen.Graph // Non-nil only when Options.Graph is true.
 }
 
 // Options configures generation beyond the defaults.
 type Options struct {
 	Comments gen.CommentLevel
+	Graph    bool
 }
 
 // Wire generates main.gen.go for the module rooted at dir with default
@@ -193,7 +195,12 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Src: src, MainDir: res.MainDir, Diags: diags}, nil
+	out := &Result{Src: src, MainDir: res.MainDir, Diags: diags}
+	if opts.Graph {
+		// Graph uses import aliases finalized by Render.
+		out.Graph = g.Graph()
+	}
+	return out, nil
 }
 
 func registryIndex(directives []gen.Directive) (map[string]gen.Directive, []string) {

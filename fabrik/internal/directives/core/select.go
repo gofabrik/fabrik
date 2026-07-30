@@ -201,6 +201,7 @@ func (p *Provider) buildGroup(grp *selGroup, g *gen.Gen) (string, diag.Diagnosti
 			Base: gen.Base{Origin: gen.Origin{Directive: p.Name(), Pos: impl.pos}},
 			Fn:   g.ImportPkg(impl.pkg) + "." + impl.fn,
 			Args: args,
+			Type: grp.iface,
 		}
 		if impl.returnsErr {
 			result.Var = g.Var(base + exportish(impl.caseVal))

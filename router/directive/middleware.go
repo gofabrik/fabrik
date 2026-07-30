@@ -51,6 +51,7 @@ type mwNode struct {
 
 	ctor      bool // constructor form, built once per scope
 	errResult bool
+	result    types.Type
 	params    []ctorParam
 	varNames  map[any]string // scope-local constructor variables
 }
@@ -102,6 +103,7 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 	case isCtorSignature(sig):
 		nd.ctor = true
 		nd.errResult = sig.Results().Len() == 2
+		nd.result = sig.Results().At(0).Type()
 		for j := 0; j < sig.Params().Len(); j++ {
 			v := sig.Params().At(j)
 			if types.TypeString(types.Unalias(v.Type()), nil) == "net/http.Handler" {
@@ -189,6 +191,7 @@ func (m *Middleware) expr(g *gen.Gen, nd *mwNode) (string, diag.Diagnostics) {
 		Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
 		Args: args,
 		Err:  errStyle,
+		Type: nd.result,
 	})
 	nd.varNames[g.ScopeID()] = v
 	return v, ds

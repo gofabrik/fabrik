@@ -1,6 +1,9 @@
 package gen
 
-import "go/token"
+import (
+	"go/token"
+	"go/types"
+)
 
 // Origin ties a node to the directive occurrence that produced it.
 type Origin struct {
@@ -13,7 +16,7 @@ type Base struct {
 	Origin Origin
 	Phase  Phase    // run() section; child nodes inherit their parent's phase
 	Label  string   // optional one-line comment above the node
-	Uses   []string // dependencies the expression fields do not reveal; Raw lines are never scanned
+	Uses   []string // Lists dependencies not visible in expression fields; Raw is never scanned.
 }
 
 func (b *Base) base() *Base { return b }
@@ -23,14 +26,12 @@ type Node interface {
 	base() *Base
 }
 
-// Raw is a preformatted emission. Lines never contain return statements
-// outside function literals; error flow assigns err and sets Check, and
-// gen renders the arity-correct tail.
+// Raw is preformatted emission; error paths outside function literals must assign err and set Check.
 type Raw struct {
 	Base
 	Lines   []string
 	Defines []string // variables the lines declare, for dependency ordering
-	Check   bool     // render an err check after the lines
+	Check   bool
 }
 
 // Assign declares a variable from an expression: `v := expr`.
@@ -56,6 +57,8 @@ type Call struct {
 	Fn   string // rendered callee, e.g. "shared.InitLogger" or "r.Use"
 	Args []string
 	Err  ErrStyle
+	// Type is graph-only metadata consumed after import aliases are final.
+	Type types.Type
 
 	// Cleanup names the cleanup result; generated calls guard a nil result.
 	Cleanup string

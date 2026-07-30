@@ -77,7 +77,10 @@ type Gen struct {
 	aliasIdents map[string]bool // import aliases reserved by new scopes
 
 	comments CommentLevel
-	srcRoot  string // origin positions render relative to this directory
+	srcRoot  string
+
+	bindOrder []string // First appearance determines graph binding ordinals.
+	bindSeen  map[string]bool
 }
 
 // New returns an empty Gen.
@@ -89,14 +92,29 @@ func New() *Gen {
 		pathExprs:   map[string]string{},
 		singletons:  map[string]string{},
 		aliasIdents: map[string]bool{},
+		bindSeen:    map[string]bool{},
+	}
+}
+
+// recordBindExpr fixes graph binding ordinals at first bind.
+func (g *Gen) recordBindExpr(expr string) {
+	if sc := g.scope; sc != nil {
+		if !sc.bindSeen[expr] {
+			sc.bindSeen[expr] = true
+			sc.bindOrder = append(sc.bindOrder, expr)
+		}
+		return
+	}
+	if !g.bindSeen[expr] {
+		g.bindSeen[expr] = true
+		g.bindOrder = append(g.bindOrder, expr)
 	}
 }
 
 // SetModule records the module path of the app being generated.
 func (g *Gen) SetModule(path string) { g.module = path }
 
-// CommentLevel selects how much commentary generated output carries. The
-// zero value is the sections default.
+// CommentLevel controls generated comments; the zero value emits sections.
 type CommentLevel int
 
 const (
@@ -111,11 +129,9 @@ const (
 // SetCommentLevel selects the generated comment level.
 func (g *Gen) SetCommentLevel(l CommentLevel) { g.comments = l }
 
-// SetSourceRoot sets the directory origin positions are shown relative to.
+// SetSourceRoot makes origin positions relative to dir.
 func (g *Gen) SetSourceRoot(dir string) { g.srcRoot = dir }
 
-// originComment renders a node's provenance line, empty when the node
-// carries no directive.
 func (g *Gen) originComment(n Node) string {
 	o := n.base().Origin
 	if o.Directive == "" {
@@ -133,7 +149,6 @@ func (g *Gen) originComment(n Node) string {
 	return fmt.Sprintf("// %s %s:%d", o.Directive, file, o.Pos.Line)
 }
 
-// nodeComments writes the comment lines that precede a node.
 func (g *Gen) nodeComments(b *bytes.Buffer, n Node) {
 	if g.comments == CommentsFull {
 		if c := g.originComment(n); c != "" {
@@ -149,7 +164,6 @@ func (g *Gen) nodeComments(b *bytes.Buffer, n Node) {
 	}
 }
 
-// nodeLines renders a node, including child provenance at full level.
 func (g *Gen) nodeLines(n Node, ec *errCtx) []string {
 	if g.comments == CommentsFull {
 		if sel, ok := n.(*Select); ok {
@@ -247,6 +261,16 @@ func (g *Gen) TypeExpr(t types.Type) string {
 	return types.TypeString(t, func(p *types.Package) string { return g.ImportPkg(p) })
 }
 
+// TypeDisplay renders t with existing aliases without registering imports.
+func (g *Gen) TypeDisplay(t types.Type) string {
+	return types.TypeString(t, func(p *types.Package) string {
+		if alias, ok := g.imports[p.Path()]; ok {
+			return alias
+		}
+		return p.Name()
+	})
+}
+
 // Bind records expr as the wired value for (t, name).
 func (g *Gen) Bind(t types.Type, name, expr string) {
 	t = types.Unalias(t)
@@ -256,11 +280,13 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		if m == nil {
 			m = map[string]string{}
 			sc.binds[key] = m
+			sc.bindTypes[key] = t
 		}
 		if _, dup := m[name]; dup {
 			panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
 		}
 		m[name] = expr
+		g.recordBindExpr(expr)
 		return
 	}
 	m, _ := g.binds.At(t).(map[string]string)
@@ -272,6 +298,7 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
 	}
 	m[name] = expr
+	g.recordBindExpr(expr)
 }
 
 // CommandFunc describes a generated CLI command and its dependency scope.
@@ -374,9 +401,11 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 func (g *Gen) BindPath(path, expr string) {
 	if sc := g.scope; sc != nil {
 		sc.pathExprs[path] = expr
+		g.recordBindExpr(expr)
 		return
 	}
 	g.pathExprs[path] = expr
+	g.recordBindExpr(expr)
 }
 
 // BindLazyPath registers a lazy binding matched by a printed type path.
@@ -406,6 +435,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 				expr, ds, ok := g.materialize(t, name, lb)
 				if ok && len(ds) == 0 {
 					sc.pathExprs[key] = expr
+					g.recordBindExpr(expr)
 				}
 				return expr, ds, ok
 			}
@@ -432,6 +462,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 			expr, ds, ok := g.materialize(t, name, lb)
 			if ok && len(ds) == 0 {
 				g.pathExprs[path] = expr
+				g.recordBindExpr(expr)
 			}
 			return expr, ds, ok
 		}
@@ -690,7 +721,7 @@ func (g *Gen) Render() ([]byte, error) {
 	needsCtx := hasCmd || usesCtx(g.nodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
-	// Any alias added here must appear in lateAliases (scope.go).
+	// lateAliases must include every alias registered here.
 	ctxPkg := ""
 	if needsCtx {
 		ctxPkg = g.Import("context")
@@ -1173,8 +1204,7 @@ func (g *Gen) findUnparsable() (directive, text string, found bool) {
 
 func findUnparsableNodes(nodes []Node, ec *errCtx, owner string) (directive, text string, found bool) {
 	for _, n := range nodes {
-		// Children without a directive of their own (a bare Case.Result)
-		// report the enclosing node's.
+		// Bare case results inherit the enclosing directive.
 		attr := n.base().Origin.Directive
 		if attr == "" {
 			attr = owner

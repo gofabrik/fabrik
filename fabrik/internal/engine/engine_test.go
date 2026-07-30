@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"maps"
@@ -75,9 +76,7 @@ func TestCompileFixtureReportsBuildOutput(t *testing.T) {
 	}
 }
 
-// compileFixture builds the generated source inside the fixture module.
-// Missing replaces for fabrik modules are appended first so the build
-// resolves the working tree, never a published module.
+// compileFixture builds generated source against local fabrik modules.
 func compileFixture(dir, mainDir string, src []byte, replaces map[string]string) error {
 	if err := os.WriteFile(filepath.Join(mainDir, "main.gen.go"), src, 0o600); err != nil {
 		return err
@@ -109,8 +108,6 @@ func compileFixture(dir, mainDir string, src []byte, replaces map[string]string)
 	return nil
 }
 
-// fixtureModules pairs each placeholder token with its module path and
-// local checkout, so fixture trees resolve the working tree.
 var fixtureModules = []struct{ token, path, rel string }{
 	{"ROUTERDIR", "github.com/gofabrik/fabrik/router", "../../../router"},
 	{"CONFIGDIR", "github.com/gofabrik/fabrik/config", "../../../config"},
@@ -123,8 +120,6 @@ var fixtureModules = []struct{ token, path, rel string }{
 	{"HTTPSERVERDIR", "github.com/gofabrik/fabrik/httpserver", "../../../httpserver"},
 }
 
-// writeFixtureTree materializes an archive into dir, extracting the
-// want/ sections and returning the local module replaces.
 func writeFixtureTree(t *testing.T, dir string, ar *txtar.Archive) (wantGen, wantDiags []byte, hasGen, hasDiags bool, replaces map[string]string) {
 	t.Helper()
 	subs := map[string]string{}
@@ -181,8 +176,7 @@ func TestWireOptionsFullComments(t *testing.T) {
 		t.Fatalf("WireOptions: %v", err)
 	}
 	src := string(res.Src)
-	// Exact module-relative positions from the fixture's source files; the
-	// store.go:32 line exists only through the select case result's origin.
+	// The select result inherits its enclosing provider's store.go:32 origin.
 	for _, want := range []string{
 		"// provider shared/http.go:5",
 		"// provider:select store/store.go:23",
@@ -198,6 +192,147 @@ func TestWireOptionsFullComments(t *testing.T) {
 	}
 	if err := compileFixture(dir, res.MainDir, res.Src, replaces); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestWireOptionsGraph(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "kitchen_sink.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+
+	plain, err := WireOptions(dir, nil, Options{})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	res, err := WireOptions(dir, nil, Options{Graph: true})
+	if err != nil {
+		t.Fatalf("WireOptions(graph): %v", err)
+	}
+	if plain.Graph != nil {
+		t.Errorf("graph exported without the option")
+	}
+	if !bytes.Equal(plain.Src, res.Src) {
+		t.Errorf("the graph option changed generated source:\n--- without ---\n%s--- with ---\n%s", plain.Src, res.Src)
+	}
+	if res.Graph == nil {
+		t.Fatal("no graph exported")
+	}
+
+	first, err := json.MarshalIndent(res.Graph, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := WireOptions(dir, nil, Options{Graph: true})
+	if err != nil {
+		t.Fatalf("WireOptions(graph, second run): %v", err)
+	}
+	second, err := json.MarshalIndent(again.Graph, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Errorf("graph is not deterministic:\n--- first ---\n%s\n--- second ---\n%s", first, second)
+	}
+	if strings.Contains(string(first), dir) {
+		t.Errorf("graph leaks absolute fixture paths:\n%s", first)
+	}
+
+	graph := res.Graph
+	if graph.Version != 1 || graph.Module != "app" {
+		t.Errorf("envelope = %d, %q", graph.Version, graph.Module)
+	}
+	var serve *gen.GraphFlow
+	for i, f := range graph.Flows {
+		if f.ID == "serve" {
+			serve = &graph.Flows[i]
+		}
+	}
+	if serve == nil {
+		t.Fatalf("no serve flow in %+v", graph.Flows)
+	}
+	if serve.Fn != "buildServe" || len(serve.Roots) != 1 {
+		t.Fatalf("serve flow = %+v", serve)
+	}
+	if serve.Roots[0].Binding == "" {
+		t.Errorf("the httpserver root is an inline constructor and must reference a binding: %+v", serve.Roots)
+	}
+	var bound *gen.GraphBinding
+	for i, b := range serve.Bindings {
+		if strings.HasPrefix(b.Expr, "httpserver.New(") {
+			bound = &serve.Bindings[i]
+		}
+	}
+	if bound == nil {
+		t.Fatalf("no httpserver binding in %+v", serve.Bindings)
+	}
+	if len(bound.Types) == 0 || bound.Types[0].Display != "*httpserver.Server" ||
+		bound.Types[0].Canonical != "*github.com/gofabrik/fabrik/httpserver.Server" {
+		t.Errorf("binding types = %+v", bound.Types)
+	}
+
+	byID := map[string]gen.GraphNode{}
+	for _, n := range graph.Nodes {
+		byID[n.ID] = n
+	}
+	pool := byID["serve/storePool"]
+	if pool.Kind != "call" || pool.Fn != "store.NewPool" || pool.Type != "*store.Pool" ||
+		pool.Directive != "provider" || pool.Pos != "store/store.go:44" {
+		t.Errorf("provider node = %+v", pool)
+	}
+	sel := byID["serve/storeStore"]
+	if sel.Kind != "select" || sel.Type != "store.Store" {
+		t.Errorf("select node = %+v", sel)
+	}
+	child := byID["serve/storeStorePostgres"]
+	if child.Parent != "serve/storeStore" || child.Case != "postgres" || child.Type != "store.Store" {
+		t.Errorf("select child node = %+v", child)
+	}
+	if cfg := byID["serve/sharedConfig"]; cfg.Kind != "configLoad" || cfg.Type != "*shared.Config" {
+		t.Errorf("config node = %+v", byID["serve/sharedConfig"])
+	}
+	found := false
+	for _, e := range graph.Edges {
+		if e.From == "serve/sharedHttpServer" && e.To == "serve/sharedConfig" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("provider dependency edge missing:\n%s", first)
+	}
+
+	poolLabel := pool.Defines[0] + "\n" + pool.Type
+	if pool.Cleanup != "" {
+		poolLabel += " (cleanup)"
+	}
+	poolLabel += "\n" + pool.Directive + "  " + pool.Pos
+	dot := graph.DOT()
+	for _, want := range []string{
+		"subgraph cluster_f",
+		`label="buildServe";`,
+		fmt.Sprintf("%q [label=%q];", pool.ID, poolLabel),
+	} {
+		if !strings.Contains(dot, want) {
+			t.Errorf("DOT missing %q", want)
+		}
+	}
+	if dot != graph.DOT() {
+		t.Error("DOT rendering is not deterministic")
+	}
+	mmd := graph.Mermaid()
+	mmdLabel := strings.ReplaceAll(strings.ReplaceAll(poolLabel, "\n", "<br/>"), "  ", " ")
+	for _, want := range []string{"flowchart TB", `["buildServe"]`, mmdLabel} {
+		if !strings.Contains(mmd, want) {
+			t.Errorf("mermaid missing %q", want)
+		}
+	}
+	if mmd != graph.Mermaid() {
+		t.Error("mermaid rendering is not deterministic")
 	}
 }
 

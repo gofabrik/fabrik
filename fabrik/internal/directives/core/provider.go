@@ -211,6 +211,7 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			Fn:      g.ImportPkg(nd.pkg) + "." + nd.fn,
 			Args:    args,
 			Err:     errStyle,
+			Type:    nd.returns[0],
 			Cleanup: closeVar,
 			ErrsPkg: errsPkg,
 		})

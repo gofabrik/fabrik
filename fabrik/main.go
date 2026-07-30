@@ -57,7 +57,7 @@ Usage:
 
 Commands:
   new    <project>       Scaffold a new project
-  wire   [-check] [-comments=LEVEL] [dir]
+  wire   [-check] [-comments=LEVEL] [--graph] [dir]
                          Generate main.gen.go from directives
   assets <require|remove|prune>
                          Manage vendored JS packages in the asset tree

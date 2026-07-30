@@ -19,8 +19,11 @@ type Scope struct {
 	hasCleanup bool
 
 	idents     map[string]bool
-	reserved   map[string]bool              // alias names generated locals must avoid
+	reserved   map[string]bool
 	binds      map[string]map[string]string // printed type -> name -> expr
+	bindTypes  map[string]types.Type
+	bindOrder  []string
+	bindSeen   map[string]bool
 	pathExprs  map[string]string
 	singletons map[string]string
 	nodes      []Node
@@ -85,13 +88,15 @@ func (g *Gen) enterScope(s *Scope, validation bool) {
 	s.idents["unwind"] = true
 	s.ctxVar = "ctx"
 	s.idents["ctx"] = true
-	// Only generated locals must avoid the late aliases; the aliases
-	// themselves may not.
+	// Late alias names constrain generated locals but remain available to imports.
 	s.reserved = map[string]bool{}
 	for _, a := range lateAliases {
 		s.reserved[a] = true
 	}
 	s.binds = map[string]map[string]string{}
+	s.bindTypes = map[string]types.Type{}
+	s.bindOrder = nil
+	s.bindSeen = map[string]bool{}
 	s.pathExprs = map[string]string{}
 	s.singletons = map[string]string{}
 	s.running = map[*lazyBind]bool{}
@@ -295,13 +300,10 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 	b.WriteString("return " + rets + "nil\n")
 }
 
-// lateAliases are the base names of every import Render can register
-// after scope identifiers freeze. A new post-MaterializeScopes import
-// must be added here or a scope-local variable can shadow its alias.
+// lateAliases must include every import Render can register after scope identifiers freeze.
 var lateAliases = []string{"os", "fmt", "errors", "signal", "syscall", "cli", "context"}
 
-// scopeErrCtx derives the scope's error-return context; emission and the
-// unparsable probe must agree on it.
+// scopeErrCtx keeps emission and parse probes on the same return path.
 func (s *Scope) scopeErrCtx() *errCtx {
 	zeros := strings.Join(s.zeros, ", ")
 	if zeros != "" {
@@ -317,8 +319,7 @@ func (s *Scope) scopeErrCtx() *errCtx {
 	return &errCtx{zeros: zeros, unwind: s.hasCleanup && hasErrSite}
 }
 
-// nodeHasErrTail reports whether n renders an error return, so a
-// cleanup-bearing scope knows whether the unwind helper is referenced.
+// nodeHasErrTail determines whether a cleanup-bearing scope needs its unwind helper.
 func nodeHasErrTail(n Node) bool {
 	switch n := n.(type) {
 	case *Call:
@@ -331,8 +332,7 @@ func nodeHasErrTail(n Node) bool {
 	return false
 }
 
-// nodesHaveCheck reports whether any node, including Select children,
-// renders a Raw err check and therefore needs err pre-declared.
+// nodesHaveCheck determines whether err must be declared before Raw checks.
 func nodesHaveCheck(nodes []Node) bool {
 	for _, n := range nodes {
 		switch n := n.(type) {
