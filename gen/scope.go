@@ -256,16 +256,16 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		if si > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString("// " + sec.label + "\n")
+		if g.comments != CommentsOff {
+			b.WriteString("// " + sec.label + "\n")
+		}
 		for ci, cluster := range sec.clusters {
 			if ci > 0 && (spacedCluster(cluster) || spacedCluster(sec.clusters[ci-1])) {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {
-				if l := pn.n.base().Label; l != "" {
-					b.WriteString("// " + l + "\n")
-				}
-				for _, line := range renderNode(pn.n, ec) {
+				g.nodeComments(b, pn.n)
+				for _, line := range g.nodeLines(pn.n, ec) {
 					b.WriteString(line)
 					b.WriteString("\n")
 				}

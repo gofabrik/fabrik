@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/gofabrik/fabrik/fabrik/internal/engine"
 )
 
 func TestDemoEndToEnd(t *testing.T) {
@@ -31,7 +33,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wireCheck(demoDir); err != nil {
+	if err := wireCheck(demoDir, engine.Options{}); err != nil {
 		t.Fatalf("demo main.gen.go is stale: %v", err)
 	}
 	repoRoot, err := filepath.Abs("..")
@@ -270,7 +272,7 @@ func TestDemoCommandScopeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := wireCheck(demoDir); err != nil {
+	if err := wireCheck(demoDir, engine.Options{}); err != nil {
 		t.Fatalf("demo main.gen.go is stale: %v", err)
 	}
 	repoRoot, err := filepath.Abs("..")

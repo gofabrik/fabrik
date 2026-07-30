@@ -128,16 +128,20 @@ func validateExprFields(nodes []Node) error {
 	for _, n := range nodes {
 		var check func(m Node, nested bool) error
 		check = func(m Node, nested bool) error {
+			directive := m.base().Origin.Directive
+			if directive == "" {
+				directive = n.base().Origin.Directive
+			}
 			for _, src := range exprFields(m) {
 				if _, err := parser.ParseExpr(src); err != nil {
-					return fmt.Errorf("directive %q emitted an unparsable expression %q: %v", n.base().Origin.Directive, src, err)
+					return fmt.Errorf("directive %q emitted an unparsable expression %q: %v", directive, src, err)
 				}
 			}
 			if raw, ok := m.(*Raw); ok && rawReturns(raw.Lines) {
-				return fmt.Errorf("directive %q emitted a return statement in raw lines; assign err and set Check instead", n.base().Origin.Directive)
+				return fmt.Errorf("directive %q emitted a return statement in raw lines; assign err and set Check instead", directive)
 			}
 			if c, ok := m.(*Call); ok && nested && c.Cleanup != "" {
-				return fmt.Errorf("directive %q emitted a cleanup-bearing call inside a select case; cleanup calls must be top-level", n.base().Origin.Directive)
+				return fmt.Errorf("directive %q emitted a cleanup-bearing call inside a select case; cleanup calls must be top-level", directive)
 			}
 			if sel, ok := m.(*Select); ok {
 				for _, c := range sel.Cases {

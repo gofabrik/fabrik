@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/fabrik/internal/engine"
 )
 
 // TestEndToEnd verifies scaffold, wire, build, and serve.
@@ -98,7 +99,7 @@ func TestEndToEnd(t *testing.T) {
 	if out, err := tidy.CombinedOutput(); err != nil {
 		t.Fatalf("go mod tidy after wire: %v\n%s", err, out)
 	}
-	if err := wireCheck(dir); err != nil {
+	if err := wireCheck(dir, engine.Options{}); err != nil {
 		t.Fatalf("fabrik wire -check right after wire: %v", err)
 	}
 

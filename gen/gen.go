@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -74,6 +75,9 @@ type Gen struct {
 	scopes      []*Scope
 	scope       *Scope          // active scope; nil uses default state
 	aliasIdents map[string]bool // import aliases reserved by new scopes
+
+	comments CommentLevel
+	srcRoot  string // origin positions render relative to this directory
 }
 
 // New returns an empty Gen.
@@ -90,6 +94,70 @@ func New() *Gen {
 
 // SetModule records the module path of the app being generated.
 func (g *Gen) SetModule(path string) { g.module = path }
+
+// CommentLevel selects how much commentary generated output carries. The
+// zero value is the sections default.
+type CommentLevel int
+
+const (
+	// CommentsSections emits the phase section headers and node labels.
+	CommentsSections CommentLevel = iota
+	// CommentsOff suppresses all generated comments.
+	CommentsOff
+	// CommentsFull adds a per-node origin line: `// <directive> <pos>`.
+	CommentsFull
+)
+
+// SetCommentLevel selects the generated comment level.
+func (g *Gen) SetCommentLevel(l CommentLevel) { g.comments = l }
+
+// SetSourceRoot sets the directory origin positions are shown relative to.
+func (g *Gen) SetSourceRoot(dir string) { g.srcRoot = dir }
+
+// originComment renders a node's provenance line, empty when the node
+// carries no directive.
+func (g *Gen) originComment(n Node) string {
+	o := n.base().Origin
+	if o.Directive == "" {
+		return ""
+	}
+	if !o.Pos.IsValid() {
+		return "// " + o.Directive
+	}
+	file := o.Pos.Filename
+	if g.srcRoot != "" {
+		if rel, err := filepath.Rel(g.srcRoot, file); err == nil {
+			file = rel
+		}
+	}
+	return fmt.Sprintf("// %s %s:%d", o.Directive, file, o.Pos.Line)
+}
+
+// nodeComments writes the comment lines that precede a node.
+func (g *Gen) nodeComments(b *bytes.Buffer, n Node) {
+	if g.comments == CommentsFull {
+		if c := g.originComment(n); c != "" {
+			b.WriteString(c)
+			b.WriteString("\n")
+		}
+	}
+	if g.comments == CommentsOff {
+		return
+	}
+	if l := n.base().Label; l != "" {
+		b.WriteString("// " + l + "\n")
+	}
+}
+
+// nodeLines renders a node, including child provenance at full level.
+func (g *Gen) nodeLines(n Node, ec *errCtx) []string {
+	if g.comments == CommentsFull {
+		if sel, ok := n.(*Select); ok {
+			return renderSelectWithComments(sel, ec, g.originComment)
+		}
+	}
+	return renderNode(n, ec)
+}
 
 // SetTypes supplies type-checked packages for [Gen.LookupType].
 func (g *Gen) SetTypes(m map[string]*types.Package) { g.types = m }
@@ -1013,17 +1081,17 @@ func (g *Gen) emitPhaseNodes(b *bytes.Buffer, allNodes []Node, phases ...Phase) 
 			b.WriteString("\n")
 		}
 		first = false
-		b.WriteString("// " + pl.label + "\n")
+		if g.comments != CommentsOff {
+			b.WriteString("// " + pl.label + "\n")
+		}
 		clusters := layoutPhase(nodes)
 		for ci, cluster := range clusters {
 			if ci > 0 && (spacedCluster(cluster) || spacedCluster(clusters[ci-1])) {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {
-				if l := pn.n.base().Label; l != "" {
-					b.WriteString("// " + l + "\n")
-				}
-				for _, line := range renderNode(pn.n, nil) {
+				g.nodeComments(b, pn.n)
+				for _, line := range g.nodeLines(pn.n, nil) {
 					b.WriteString(line)
 					b.WriteString("\n")
 				}

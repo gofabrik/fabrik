@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/gen"
 	"golang.org/x/tools/txtar"
 )
 
@@ -108,55 +109,34 @@ func compileFixture(dir, mainDir string, src []byte, replaces map[string]string)
 	return nil
 }
 
-func runFixture(t *testing.T, fixture string) {
-	data, err := os.ReadFile(fixture) // #nosec G304 -- reads a test-selected fixture path
-	if err != nil {
-		t.Fatal(err)
-	}
-	ar := txtar.Parse(data)
+// fixtureModules pairs each placeholder token with its module path and
+// local checkout, so fixture trees resolve the working tree.
+var fixtureModules = []struct{ token, path, rel string }{
+	{"ROUTERDIR", "github.com/gofabrik/fabrik/router", "../../../router"},
+	{"CONFIGDIR", "github.com/gofabrik/fabrik/config", "../../../config"},
+	{"TEMPLATEDIR", "github.com/gofabrik/fabrik/templates", "../../../templates"},
+	{"WEBDIR", "github.com/gofabrik/fabrik/web", "../../../web"},
+	{"ASSETSDIR", "github.com/gofabrik/fabrik/assetmapper", "../../../assetmapper"},
+	{"MIGRATIONSDIR", "github.com/gofabrik/fabrik/migrations", "../../../migrations"},
+	{"JOBSDIR", "github.com/gofabrik/fabrik/jobs", "../../../jobs"},
+	{"CLIDIR", "github.com/gofabrik/fabrik/cli", "../../../cli"},
+	{"HTTPSERVERDIR", "github.com/gofabrik/fabrik/httpserver", "../../../httpserver"},
+}
 
-	dir := t.TempDir()
-	if r, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = r
+// writeFixtureTree materializes an archive into dir, extracting the
+// want/ sections and returning the local module replaces.
+func writeFixtureTree(t *testing.T, dir string, ar *txtar.Archive) (wantGen, wantDiags []byte, hasGen, hasDiags bool, replaces map[string]string) {
+	t.Helper()
+	subs := map[string]string{}
+	replaces = map[string]string{}
+	for _, m := range fixtureModules {
+		abs, err := filepath.Abs(m.rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		subs[m.token] = abs
+		replaces[m.path] = abs
 	}
-	routerDir, err := filepath.Abs("../../../router")
-	if err != nil {
-		t.Fatal(err)
-	}
-	configDir, err := filepath.Abs("../../../config")
-	if err != nil {
-		t.Fatal(err)
-	}
-	templateDir, err := filepath.Abs("../../../templates")
-	if err != nil {
-		t.Fatal(err)
-	}
-	webDir, err := filepath.Abs("../../../web")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assetsDir, err := filepath.Abs("../../../assetmapper")
-	if err != nil {
-		t.Fatal(err)
-	}
-	migrationsDir, err := filepath.Abs("../../../migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	jobsDir, err := filepath.Abs("../../../jobs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cliDir, err := filepath.Abs("../../../cli")
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpserverDir, err := filepath.Abs("../../../httpserver")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wantGen, wantDiags []byte
-	hasGen, hasDiags := false, false
 	for _, f := range ar.Files {
 		switch f.Name {
 		case "want/main.gen.go":
@@ -171,19 +151,68 @@ func runFixture(t *testing.T, fixture string) {
 			t.Fatal(err)
 		}
 		// Fixtures resolve local module checkouts; only generated output imports config.
-		data := bytes.ReplaceAll(f.Data, []byte("ROUTERDIR"), []byte(routerDir))
-		data = bytes.ReplaceAll(data, []byte("CONFIGDIR"), []byte(configDir))
-		data = bytes.ReplaceAll(data, []byte("TEMPLATEDIR"), []byte(templateDir))
-		data = bytes.ReplaceAll(data, []byte("WEBDIR"), []byte(webDir))
-		data = bytes.ReplaceAll(data, []byte("ASSETSDIR"), []byte(assetsDir))
-		data = bytes.ReplaceAll(data, []byte("MIGRATIONSDIR"), []byte(migrationsDir))
-		data = bytes.ReplaceAll(data, []byte("JOBSDIR"), []byte(jobsDir))
-		data = bytes.ReplaceAll(data, []byte("CLIDIR"), []byte(cliDir))
-		data = bytes.ReplaceAll(data, []byte("HTTPSERVERDIR"), []byte(httpserverDir))
+		data := f.Data
+		for token, abs := range subs {
+			data = bytes.ReplaceAll(data, []byte(token), []byte(abs))
+		}
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
+	return wantGen, wantDiags, hasGen, hasDiags, replaces
+}
+
+func TestWireOptionsFullComments(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "kitchen_sink.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	_, _, _, _, replaces := writeFixtureTree(t, dir, txtar.Parse(data))
+
+	res, err := WireOptions(dir, nil, Options{Comments: gen.CommentsFull})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	src := string(res.Src)
+	// Exact module-relative positions from the fixture's source files; the
+	// store.go:32 line exists only through the select case result's origin.
+	for _, want := range []string{
+		"// provider shared/http.go:5",
+		"// provider:select store/store.go:23",
+		"// provider store/store.go:32",
+		"// hook shared/config.go:15",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("full output missing %q:\n%s", want, src)
+		}
+	}
+	if strings.Contains(src, dir) {
+		t.Errorf("origin comments leak absolute fixture paths:\n%s", src)
+	}
+	if err := compileFixture(dir, res.MainDir, res.Src, replaces); err != nil {
+		t.Error(err)
+	}
+}
+
+func runFixture(t *testing.T, fixture string) {
+	data, err := os.ReadFile(fixture) // #nosec G304 -- reads a test-selected fixture path
+	if err != nil {
+		t.Fatal(err)
+	}
+	ar := txtar.Parse(data)
+
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	wantGen, wantDiags, hasGen, hasDiags, replaces := writeFixtureTree(t, dir, ar)
 
 	res, err := Wire(dir, nil)
 	if err != nil {
@@ -200,17 +229,6 @@ func runFixture(t *testing.T, fixture string) {
 			t.Errorf("generation is not deterministic:\nfirst:\n%s\nsecond:\n%s", res.Src, again.Src)
 		}
 		if !testing.Short() {
-			replaces := map[string]string{
-				"github.com/gofabrik/fabrik/router":      routerDir,
-				"github.com/gofabrik/fabrik/config":      configDir,
-				"github.com/gofabrik/fabrik/templates":   templateDir,
-				"github.com/gofabrik/fabrik/web":         webDir,
-				"github.com/gofabrik/fabrik/assetmapper": assetsDir,
-				"github.com/gofabrik/fabrik/migrations":  migrationsDir,
-				"github.com/gofabrik/fabrik/jobs":        jobsDir,
-				"github.com/gofabrik/fabrik/cli":         cliDir,
-				"github.com/gofabrik/fabrik/httpserver":  httpserverDir,
-			}
 			if err := compileFixture(dir, res.MainDir, res.Src, replaces); err != nil {
 				t.Error(err)
 			}

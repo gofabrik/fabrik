@@ -19,8 +19,19 @@ type Result struct {
 	Diags   diag.Diagnostics
 }
 
-// Wire generates main.gen.go for the module rooted at dir, applying overlays in place of on-disk files.
+// Options configures generation beyond the defaults.
+type Options struct {
+	Comments gen.CommentLevel
+}
+
+// Wire generates main.gen.go for the module rooted at dir with default
+// options, applying overlays in place of on-disk files.
 func Wire(dir string, overlay map[string][]byte) (*Result, error) {
+	return WireOptions(dir, overlay, Options{})
+}
+
+// WireOptions is Wire with explicit generation options.
+func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, error) {
 	res, err := load.Load(dir, overlay)
 	if err != nil {
 		return nil, err
@@ -93,6 +104,8 @@ func Wire(dir string, overlay map[string][]byte) (*Result, error) {
 	g := gen.New()
 	g.SetModule(res.ModulePath)
 	g.SetTypes(res.Types)
+	g.SetCommentLevel(opts.Comments)
+	g.SetSourceRoot(res.Root)
 	for _, d := range directives {
 		if h, ok := d.(gen.Hinter); ok {
 			g.AddMissingHint(h.MissingHint)

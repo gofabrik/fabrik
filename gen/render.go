@@ -7,18 +7,13 @@ import (
 	"strings"
 )
 
-// errCtx carries the enclosing function's error-return shape. nil means
-// the default flow's single-result closure with a named err; non-nil
-// means a scoped build function whose returns carry zero values and,
-// when the scope owns cleanups, route the error through its unwind
-// helper.
+// errCtx carries return arity and cleanup unwinding; nil selects the default flow's named error.
 type errCtx struct {
 	zeros  string
 	unwind bool
 }
 
-// check renders `if <cond> { <error return> }` with the context's arity;
-// every if-form error tail goes through it.
+// check renders conditionals with the enclosing return arity and unwind path.
 func (ec *errCtx) check(cond string) []string {
 	lines := []string{"if " + cond + " {"}
 	if ec == nil {
@@ -34,8 +29,6 @@ func (ec *errCtx) errReturn() []string {
 	return ec.check("err != nil")
 }
 
-// errorExprReturn returns an error-valued expression with the arity of
-// the enclosing function.
 func (ec *errCtx) errorExprReturn(expr string) []string {
 	if ec == nil {
 		return []string{"return " + expr}
@@ -46,7 +39,6 @@ func (ec *errCtx) errorExprReturn(expr string) []string {
 	return []string{"return " + ec.zeros + expr}
 }
 
-// renderNode renders one node to source lines for the given error context.
 func renderNode(n Node, ec *errCtx) []string {
 	switch n := n.(type) {
 	case *Raw:
@@ -103,9 +95,7 @@ func renderCall(v, fn string, args []string, errStyle ErrStyle, ec *errCtx) []st
 	return []string{v + " := " + call}
 }
 
-// renderCleanupCall assigns the cleanup slot; the default flow defers the
-// join into the closure's named err, a scope leaves the slot to its
-// error tails.
+// renderCleanupCall defers error joining in the default flow but leaves scoped cleanup to unwind paths.
 func renderCleanupCall(n *Call, ec *errCtx) []string {
 	call := n.Fn + "(" + strings.Join(n.Args, ", ") + ")"
 	if ec != nil {
@@ -129,15 +119,33 @@ func renderCleanupCall(n *Call, ec *errCtx) []string {
 }
 
 func renderSelect(n *Select, ec *errCtx) []string {
+	return renderSelectWithComments(n, ec, nil)
+}
+
+func renderSelectWithComments(n *Select, ec *errCtx, comment func(Node) string) []string {
 	lines := []string{
 		"var " + n.Var + " " + n.Iface,
 		"switch " + n.KeyExpr + " {",
 	}
+	childComment := func(child Node) {
+		if comment == nil {
+			return
+		}
+		if c := comment(child); c != "" {
+			lines = append(lines, c)
+		}
+	}
 	for _, c := range n.Cases {
 		lines = append(lines, "case "+strconv.Quote(c.Value)+":")
 		for _, b := range c.Body {
+			childComment(b)
+			if sub, ok := b.(*Select); ok && comment != nil {
+				lines = append(lines, renderSelectWithComments(sub, ec, comment)...)
+				continue
+			}
 			lines = append(lines, renderNode(b, ec)...)
 		}
+		childComment(&c.Result)
 		lines = append(lines, renderSelectResult(n, c, ec)...)
 	}
 	errorf := fmt.Sprintf("%s.Errorf(\"no %s implementation for %%q\", %s)", n.FmtPkg, n.Iface, n.KeyExpr)
@@ -146,7 +154,6 @@ func renderSelect(n *Select, ec *errCtx) []string {
 	return append(lines, "}")
 }
 
-// renderSelectResult renders one case's constructor and assignment.
 func renderSelectResult(n *Select, c Case, ec *errCtx) []string {
 	call := c.Result.Fn + "(" + strings.Join(c.Result.Args, ", ") + ")"
 	if c.Result.Err == ErrReturn {
