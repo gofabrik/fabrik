@@ -156,7 +156,7 @@ func (g *Gen) importAs(path, base string) string {
 func (g *Gen) Var(base string) string {
 	if sc := g.scope; sc != nil {
 		name := base
-		for n := 2; sc.idents[name]; n++ {
+		for n := 2; sc.idents[name] || sc.reserved[name]; n++ {
 			name = fmt.Sprintf("%s%d", base, n)
 		}
 		sc.idents[name] = true
@@ -379,7 +379,11 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 // HasBindingPath reports whether a path-keyed binding exists, lazy or
 // already materialized.
 func (g *Gen) HasBindingPath(path string) bool {
-	if _, ok := g.pathExprs[path]; ok {
+	exprs := g.pathExprs
+	if sc := g.scope; sc != nil {
+		exprs = sc.pathExprs
+	}
+	if _, ok := exprs[path]; ok {
 		return true
 	}
 	_, ok := g.lazyByPath[path]
@@ -545,8 +549,38 @@ func (g *Gen) SingletonIn(phase Phase, key, varName, ctor string) string {
 // without materializing anything.
 func (g *Gen) HasBinding(t types.Type, name string) bool {
 	t = types.Unalias(t)
+	if sc := g.scope; sc != nil {
+		key := types.TypeString(t, nil)
+		if m := sc.binds[key]; m != nil {
+			if _, ok := m[name]; ok {
+				return true
+			}
+		}
+		if name == "" {
+			if _, ok := sc.pathExprs[key]; ok {
+				return true
+			}
+			if _, ok := g.lazyByPath[key]; ok {
+				return true
+			}
+		}
+		if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
+			if _, ok := m[name]; ok {
+				return true
+			}
+		}
+		return false
+	}
 	if m, _ := g.binds.At(t).(map[string]string); m != nil {
 		if _, ok := m[name]; ok {
+			return true
+		}
+	}
+	if path := types.TypeString(t, nil); name == "" {
+		if _, ok := g.pathExprs[path]; ok {
+			return true
+		}
+		if _, ok := g.lazyByPath[path]; ok {
 			return true
 		}
 	}
@@ -554,9 +588,6 @@ func (g *Gen) HasBinding(t types.Type, name string) bool {
 		if _, ok := m[name]; ok {
 			return true
 		}
-	}
-	if _, ok := g.lazyByPath[types.TypeString(t, nil)]; ok && name == "" {
-		return true
 	}
 	return false
 }
@@ -569,14 +600,6 @@ func (g *Gen) HasProviderBinding(t types.Type, name string) bool {
 		return ok
 	}
 	return false
-}
-
-// Stmt appends a Raw node.
-func (g *Gen) Stmt(phase Phase, format string, a ...any) {
-	g.Node(&Raw{
-		Base:  Base{Phase: phase},
-		Lines: strings.Split(fmt.Sprintf(format, a...), "\n"),
-	})
 }
 
 // Render assembles and formats main.gen.go.
@@ -599,6 +622,7 @@ func (g *Gen) Render() ([]byte, error) {
 	needsCtx := hasCmd || usesCtx(g.nodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
+	// Any alias added here must appear in lateAliases (scope.go).
 	ctxPkg := ""
 	if needsCtx {
 		ctxPkg = g.Import("context")
@@ -1068,12 +1092,51 @@ func (g *Gen) importLine(path string) string {
 }
 
 func (g *Gen) findUnparsable() (directive, text string, found bool) {
-	for _, n := range g.nodes {
-		text := strings.Join(renderNode(n, nil), "\n")
-		probe := "package p\nfunc _() error {\n" + text + "\nreturn nil\n}\n"
-		if _, err := format.Source([]byte(probe)); err != nil {
-			return n.base().Origin.Directive, text, true
+	if directive, text, found := findUnparsableNodes(g.nodes, nil, ""); found {
+		return directive, text, true
+	}
+	for _, s := range g.scopes {
+		if directive, text, found := findUnparsableNodes(s.nodes, s.scopeErrCtx(), ""); found {
+			return directive, text, true
 		}
+	}
+	return "", "", false
+}
+
+func findUnparsableNodes(nodes []Node, ec *errCtx, owner string) (directive, text string, found bool) {
+	for _, n := range nodes {
+		// Children without a directive of their own (a bare Case.Result)
+		// report the enclosing node's.
+		attr := n.base().Origin.Directive
+		if attr == "" {
+			attr = owner
+		}
+		if sel, ok := n.(*Select); ok {
+			for _, c := range sel.Cases {
+				if directive, text, found := findUnparsableNodes(c.Body, ec, attr); found {
+					return directive, text, true
+				}
+				resultAttr := c.Result.Origin.Directive
+				if resultAttr == "" {
+					resultAttr = attr
+				}
+				if directive, text, found := probeLines(renderSelectResult(sel, c, ec), resultAttr); found {
+					return directive, text, true
+				}
+			}
+		}
+		if directive, text, found := probeLines(renderNode(n, ec), attr); found {
+			return directive, text, true
+		}
+	}
+	return "", "", false
+}
+
+func probeLines(lines []string, directive string) (string, string, bool) {
+	text := strings.Join(lines, "\n")
+	probe := "package p\nfunc _() error {\n" + text + "\nreturn nil\n}\n"
+	if _, err := format.Source([]byte(probe)); err != nil {
+		return directive, text, true
 	}
 	return "", "", false
 }

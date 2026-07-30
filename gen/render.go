@@ -85,8 +85,6 @@ func renderNode(n Node, ec *errCtx) []string {
 		return renderSelect(n, ec)
 	case *Route:
 		return renderRoute(n)
-	case *Serve:
-		return []string{"return " + n.Expr}
 	}
 	panic("gen: unrenderable node kind")
 }
@@ -140,19 +138,23 @@ func renderSelect(n *Select, ec *errCtx) []string {
 		for _, b := range c.Body {
 			lines = append(lines, renderNode(b, ec)...)
 		}
-		call := c.Result.Fn + "(" + strings.Join(c.Result.Args, ", ") + ")"
-		if c.Result.Err == ErrReturn {
-			lines = append(lines, c.Result.Var+", err := "+call)
-			lines = append(lines, ec.errReturn()...)
-			lines = append(lines, n.Var+" = "+c.Result.Var)
-		} else {
-			lines = append(lines, n.Var+" = "+call)
-		}
+		lines = append(lines, renderSelectResult(n, c, ec)...)
 	}
 	errorf := fmt.Sprintf("%s.Errorf(\"no %s implementation for %%q\", %s)", n.FmtPkg, n.Iface, n.KeyExpr)
 	lines = append(lines, "default:")
 	lines = append(lines, ec.errorExprReturn(errorf)...)
 	return append(lines, "}")
+}
+
+// renderSelectResult renders one case's constructor and assignment.
+func renderSelectResult(n *Select, c Case, ec *errCtx) []string {
+	call := c.Result.Fn + "(" + strings.Join(c.Result.Args, ", ") + ")"
+	if c.Result.Err == ErrReturn {
+		lines := []string{c.Result.Var + ", err := " + call}
+		lines = append(lines, ec.errReturn()...)
+		return append(lines, n.Var+" = "+c.Result.Var)
+	}
+	return []string{n.Var + " = " + call}
 }
 
 func renderRoute(n *Route) []string {

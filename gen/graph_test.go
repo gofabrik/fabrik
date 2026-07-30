@@ -119,6 +119,7 @@ func TestUsesFuncLitLexicalEdgeCases(t *testing.T) {
 		{"switch init binding", "func() { switch s := f(a); s { case b: use(s) } }", []string{"s", "f", "a", "b", "use"}, []string{"f", "a", "b", "use"}},
 		{"var declaration point sees outer", "func() { var x = g(x); _ = x }", []string{"x", "g"}, []string{"g", "x"}},
 		{"const declaration point", "func() { const k = 1; use(k) }", []string{"k", "use"}, []string{"use"}},
+		{"local type declaration", "func() { type dep int; _ = dep(0); use(x) }", []string{"dep", "use", "x"}, []string{"use", "x"}},
 	}
 	for _, tc := range cases {
 		vars := map[string]bool{}
@@ -247,7 +248,7 @@ func TestLazyBindOwnerProvenance(t *testing.T) {
 	g := New()
 	g.SetDirective("config")
 	g.BindLazy(types.Typ[types.String], "cfg", func() (string, diag.Diagnostics) {
-		g.Stmt(PhaseConfig, "x := load()")
+		g.Node(&Raw{Base: Base{Phase: PhaseConfig}, Lines: []string{"x := load()"}})
 		return "x", nil
 	})
 	g.SetDirective("hook") // the consumer materializes the binding
@@ -266,7 +267,7 @@ func TestPathBindingAPIs(t *testing.T) {
 	g := New()
 	g.SetDirective("templates")
 	g.BindLazyPath("*x.Set", func() (string, diag.Diagnostics) {
-		g.Stmt(PhaseWire, "s := load()")
+		g.Node(&Raw{Base: Base{Phase: PhaseWire}, Lines: []string{"s := load()"}})
 		return "s", nil
 	})
 	if !g.HasBindingPath("*x.Set") || g.HasBindingPath("*x.Other") {
@@ -291,7 +292,7 @@ func TestPathThenTypeResolutionSharesOneMaterialization(t *testing.T) {
 	builds := 0
 	g.BindLazyPath("string", func() (string, diag.Diagnostics) { // path == TypeString(types.Typ[types.String])
 		builds++
-		g.Stmt(PhaseWire, "s := load()")
+		g.Node(&Raw{Base: Base{Phase: PhaseWire}, Lines: []string{"s := load()"}})
 		return "s", nil
 	})
 	if expr, _, ok := g.InstancePath("string"); !ok || expr != "s" {
@@ -378,5 +379,162 @@ func TestDiagnosedTypeBuildReportsOnceAcrossConsumers(t *testing.T) {
 	}
 	if builds != 1 {
 		t.Fatalf("builds = %d", builds)
+	}
+}
+
+func TestFindUnparsableIncludesScopesAndSelectChildren(t *testing.T) {
+	badRaw := func(directive, text string) *Raw {
+		return &Raw{Base: Base{Origin: Origin{Directive: directive}}, Lines: []string{text}}
+	}
+	badResult := func(directive string) Call {
+		return Call{
+			Base: Base{Origin: Origin{Directive: directive}},
+			Var:  "v-",
+			Fn:   "makeV",
+			Err:  ErrReturn,
+		}
+	}
+
+	tests := []struct {
+		name      string
+		configure func(*Gen)
+		directive string
+		text      string
+	}{
+		{
+			name: "global node",
+			configure: func(g *Gen) {
+				g.nodes = append(g.nodes, badRaw("global", "if {"))
+			},
+			directive: "global",
+			text:      "if {",
+		},
+		{
+			name: "scope node",
+			configure: func(g *Gen) {
+				s := g.AddScope("build", token.Position{})
+				s.nodes = append(s.nodes, &Call{
+					Base:    Base{Origin: Origin{Directive: "cleanup"}},
+					Var:     "v",
+					Fn:      "makeV",
+					Cleanup: "closeV",
+				})
+				s.nodes = append(s.nodes, badRaw("scoped", "for {"))
+			},
+			directive: "scoped",
+			text:      "for {",
+		},
+		{
+			name: "select body",
+			configure: func(g *Gen) {
+				g.nodes = append(g.nodes, &Select{
+					Base:    Base{Origin: Origin{Directive: "select"}},
+					Var:     "v",
+					Iface:   "I",
+					KeyExpr: "key",
+					FmtPkg:  "fmt",
+					Cases: []Case{{
+						Value:  "x",
+						Body:   []Node{badRaw("body", "switch {")},
+						Result: Call{Var: "vx", Fn: "newX"},
+					}},
+				})
+			},
+			directive: "body",
+			text:      "switch {",
+		},
+		{
+			name: "scoped select result",
+			configure: func(g *Gen) {
+				s := g.AddScope("build", token.Position{})
+				s.nodes = append(s.nodes, &Select{
+					Base:    Base{Origin: Origin{Directive: "select"}},
+					Var:     "v",
+					Iface:   "I",
+					KeyExpr: "key",
+					FmtPkg:  "fmt",
+					Cases: []Case{{
+						Value:  "x",
+						Result: badResult("result"),
+					}},
+				})
+			},
+			directive: "result",
+			text:      "v-, err := makeV()\nif err != nil {\nreturn err\n}\nv = v-",
+		},
+		{
+			// Zero-Base body nodes inherit the parent directive.
+			name: "bare select body attributes to parent",
+			configure: func(g *Gen) {
+				g.nodes = append(g.nodes, &Select{
+					Base:    Base{Origin: Origin{Directive: "provider:select"}},
+					Var:     "v",
+					Iface:   "I",
+					KeyExpr: "key",
+					FmtPkg:  "fmt",
+					Cases: []Case{{
+						Value:  "x",
+						Body:   []Node{&Raw{Lines: []string{"go go go"}}},
+						Result: Call{Var: "vx", Fn: "newX"},
+					}},
+				})
+			},
+			directive: "provider:select",
+			text:      "go go go",
+		},
+		{
+			// The probe must match the scope's return arity and unwind path.
+			name: "scoped probe uses the scope error context",
+			configure: func(g *Gen) {
+				s := g.AddScope("build", token.Position{})
+				s.zeros = []string{"nil"}
+				s.hasCleanup = true
+				s.nodes = append(s.nodes, &Call{
+					Base:    Base{Origin: Origin{Directive: "cleanup"}},
+					Var:     "v",
+					Fn:      "makeV",
+					Err:     ErrReturn,
+					Cleanup: "vClose",
+				})
+				s.nodes = append(s.nodes, &Call{
+					Base: Base{Origin: Origin{Directive: "broken"}},
+					Var:  "w-",
+					Fn:   "makeW",
+					Err:  ErrReturn,
+				})
+			},
+			directive: "broken",
+			text:      "w-, err := makeW()\nif err != nil {\nreturn nil, unwind(err)\n}",
+		},
+		{
+			// Zero-Base results inherit the Select directive.
+			name: "bare select result attributes to parent",
+			configure: func(g *Gen) {
+				g.nodes = append(g.nodes, &Select{
+					Base:    Base{Origin: Origin{Directive: "provider:select"}},
+					Var:     "v",
+					Iface:   "I",
+					KeyExpr: "key",
+					FmtPkg:  "fmt",
+					Cases: []Case{{
+						Value:  "x",
+						Result: Call{Var: "v-", Fn: "makeV", Err: ErrReturn},
+					}},
+				})
+			},
+			directive: "provider:select",
+			text:      "v-, err := makeV()\nif err != nil {\nreturn err\n}\nv = v-",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := New()
+			tc.configure(g)
+			directive, text, found := g.findUnparsable()
+			if !found || directive != tc.directive || text != tc.text {
+				t.Fatalf("findUnparsable = %q, %q, %v; want %q, %q, true",
+					directive, text, found, tc.directive, tc.text)
+			}
+		})
 	}
 }

@@ -19,6 +19,7 @@ type Scope struct {
 	hasCleanup bool
 
 	idents     map[string]bool
+	reserved   map[string]bool              // alias names generated locals must avoid
 	binds      map[string]map[string]string // printed type -> name -> expr
 	pathExprs  map[string]string
 	singletons map[string]string
@@ -84,6 +85,12 @@ func (g *Gen) enterScope(s *Scope, validation bool) {
 	s.idents["unwind"] = true
 	s.ctxVar = "ctx"
 	s.idents["ctx"] = true
+	// Only generated locals must avoid the late aliases; the aliases
+	// themselves may not.
+	s.reserved = map[string]bool{}
+	for _, a := range lateAliases {
+		s.reserved[a] = true
+	}
 	s.binds = map[string]map[string]string{}
 	s.pathExprs = map[string]string{}
 	s.singletons = map[string]string{}
@@ -195,10 +202,6 @@ func (g *Gen) writeScopeFuncs(b *bytes.Buffer) {
 }
 
 func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
-	zeros := strings.Join(s.zeros, ", ")
-	if zeros != "" {
-		zeros += ", "
-	}
 	errsPkg := ""
 	if s.hasCleanup {
 		errsPkg = g.Import("errors")
@@ -215,7 +218,6 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 	}
 	var sections []section
 	var cleanups []string
-	hasErrSite := false
 	for _, pl := range phaseLabels {
 		var nodes []phaseNode
 		for i, n := range s.nodes {
@@ -233,15 +235,13 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 				if c, ok := pn.n.(*Call); ok && c.Cleanup != "" {
 					cleanups = append(cleanups, c.Cleanup)
 				}
-				if nodeHasErrTail(pn.n) {
-					hasErrSite = true
-				}
 			}
 		}
 	}
+	ec := s.scopeErrCtx()
 	if len(cleanups) > 0 {
 		b.WriteString("var " + strings.Join(cleanups, ", ") + " func() error\n")
-		if hasErrSite {
+		if ec.unwind {
 			b.WriteString("unwind := func(err error) error {\n")
 			for _, line := range unwindLines(cleanups, errsPkg) {
 				b.WriteString(line)
@@ -251,7 +251,6 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 			b.WriteString("}\n")
 		}
 	}
-	ec := &errCtx{zeros: zeros, unwind: len(cleanups) > 0 && hasErrSite}
 
 	for si, sec := range sections {
 		if si > 0 {
@@ -294,6 +293,28 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		rets += ", "
 	}
 	b.WriteString("return " + rets + "nil\n")
+}
+
+// lateAliases are the base names of every import Render can register
+// after scope identifiers freeze. A new post-MaterializeScopes import
+// must be added here or a scope-local variable can shadow its alias.
+var lateAliases = []string{"os", "fmt", "errors", "signal", "syscall", "cli", "context"}
+
+// scopeErrCtx derives the scope's error-return context; emission and the
+// unparsable probe must agree on it.
+func (s *Scope) scopeErrCtx() *errCtx {
+	zeros := strings.Join(s.zeros, ", ")
+	if zeros != "" {
+		zeros += ", "
+	}
+	hasErrSite := false
+	for _, n := range s.nodes {
+		if nodeHasErrTail(n) {
+			hasErrSite = true
+			break
+		}
+	}
+	return &errCtx{zeros: zeros, unwind: s.hasCleanup && hasErrSite}
 }
 
 // nodeHasErrTail reports whether n renders an error return, so a

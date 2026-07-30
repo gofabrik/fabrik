@@ -123,12 +123,6 @@ type Route struct {
 	Chain   []string // middleware expressions, outermost first
 }
 
-// Serve returns from run with the serving call.
-type Serve struct {
-	Base
-	Expr string
-}
-
 // Node appends n and fills a missing directive origin.
 func (g *Gen) Node(n Node) {
 	b := n.base()

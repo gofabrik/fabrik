@@ -54,8 +54,6 @@ func exprFields(n Node) []string {
 		return []string{n.KeyExpr}
 	case *Route:
 		return append([]string{n.Router, n.Handler}, n.Chain...)
-	case *Serve:
-		return []string{n.Expr}
 	}
 	return nil
 }

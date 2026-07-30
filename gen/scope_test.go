@@ -380,6 +380,84 @@ func TestScopeSelfPublishingLazyBind(t *testing.T) {
 	}
 }
 
+func TestHasBindingMirrorsActiveScopeResolution(t *testing.T) {
+	typ := types.Typ[types.String]
+
+	t.Run("scope eager binding is visible", func(t *testing.T) {
+		g := New()
+		g.enterScope(&Scope{}, false)
+		g.Bind(typ, "name", "scoped")
+		if !g.HasBinding(typ, "name") {
+			t.Fatal("HasBinding missed the active scope binding")
+		}
+	})
+
+	t.Run("global eager binding is hidden", func(t *testing.T) {
+		g := New()
+		g.Bind(typ, "name", "global")
+		g.enterScope(&Scope{}, false)
+		if g.HasBinding(typ, "name") {
+			t.Fatal("HasBinding reported a global eager binding hidden from the active scope")
+		}
+	})
+
+	t.Run("shared lazy binding is visible", func(t *testing.T) {
+		g := New()
+		g.BindLazy(typ, "name", func() (string, diag.Diagnostics) { return "lazy", nil })
+		g.enterScope(&Scope{}, false)
+		if !g.HasBinding(typ, "name") {
+			t.Fatal("HasBinding missed a shared lazy binding")
+		}
+	})
+
+	t.Run("path materialization follows flow visibility", func(t *testing.T) {
+		g := New()
+		g.BindPath("string", "global")
+		if !g.HasBinding(typ, "") {
+			t.Fatal("HasBinding missed the default flow path materialization")
+		}
+		g.enterScope(&Scope{}, false)
+		if g.HasBinding(typ, "") {
+			t.Fatal("HasBinding reported a default flow path materialization in the active scope")
+		}
+		g.BindPath("string", "scoped")
+		if !g.HasBinding(typ, "") {
+			t.Fatal("HasBinding missed the active scope path materialization")
+		}
+	})
+}
+
+func TestHasBindingPathMirrorsActiveScopeResolution(t *testing.T) {
+	const path = "*example.com/app.Store"
+
+	t.Run("scope materialization is visible", func(t *testing.T) {
+		g := New()
+		g.enterScope(&Scope{}, false)
+		g.BindPath(path, "scoped")
+		if !g.HasBindingPath(path) {
+			t.Fatal("HasBindingPath missed the active scope binding")
+		}
+	})
+
+	t.Run("global materialization is hidden", func(t *testing.T) {
+		g := New()
+		g.BindPath(path, "global")
+		g.enterScope(&Scope{}, false)
+		if g.HasBindingPath(path) {
+			t.Fatal("HasBindingPath reported a global materialization hidden from the active scope")
+		}
+	})
+
+	t.Run("shared lazy binding is visible", func(t *testing.T) {
+		g := New()
+		g.BindLazyPath(path, func() (string, diag.Diagnostics) { return "lazy", nil })
+		g.enterScope(&Scope{}, false)
+		if !g.HasBindingPath(path) {
+			t.Fatal("HasBindingPath missed a shared lazy binding")
+		}
+	})
+}
+
 // File-wide import aliases must not collide with scope-local variables.
 func TestScopeVarAndImportAliasDoNotCollide(t *testing.T) {
 	w := newScopeWorld(t)
@@ -398,6 +476,35 @@ func TestScopeVarAndImportAliasDoNotCollide(t *testing.T) {
 	}
 	if !strings.Contains(src, "conn := conn2.NewPool()") {
 		t.Fatalf("scope var should keep its name with the renamed alias:\n%s", src)
+	}
+}
+
+func TestScopeReservesRenderAliases(t *testing.T) {
+	g := New()
+	s := g.AddScope("build", token.Position{})
+	g.enterScope(s, false)
+
+	tests := []struct {
+		path string
+		name string
+	}{
+		{"os", "os"},
+		{"fmt", "fmt"},
+		{"errors", "errors"},
+		{"os/signal", "signal"},
+		{"syscall", "syscall"},
+		{"github.com/gofabrik/fabrik/cli", "cli"},
+	}
+	for _, tc := range tests {
+		if got := g.Var(tc.name); got != tc.name+"2" {
+			t.Fatalf("scope variable %q = %q, want %q", tc.name, got, tc.name+"2")
+		}
+	}
+	g.scope = nil
+	for _, tc := range tests {
+		if got := g.Import(tc.path); got != tc.name {
+			t.Errorf("late import %q alias = %q, want stable alias %q", tc.path, got, tc.name)
+		}
 	}
 }
 
