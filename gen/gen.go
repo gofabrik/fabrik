@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -74,6 +75,12 @@ type Gen struct {
 	scopes      []*Scope
 	scope       *Scope          // active scope; nil uses default state
 	aliasIdents map[string]bool // import aliases reserved by new scopes
+
+	comments CommentLevel
+	srcRoot  string
+
+	bindOrder []string // First appearance determines graph binding ordinals.
+	bindSeen  map[string]bool
 }
 
 // New returns an empty Gen.
@@ -85,11 +92,86 @@ func New() *Gen {
 		pathExprs:   map[string]string{},
 		singletons:  map[string]string{},
 		aliasIdents: map[string]bool{},
+		bindSeen:    map[string]bool{},
+	}
+}
+
+// recordBindExpr fixes graph binding ordinals at first bind.
+func (g *Gen) recordBindExpr(expr string) {
+	if sc := g.scope; sc != nil {
+		if !sc.bindSeen[expr] {
+			sc.bindSeen[expr] = true
+			sc.bindOrder = append(sc.bindOrder, expr)
+		}
+		return
+	}
+	if !g.bindSeen[expr] {
+		g.bindSeen[expr] = true
+		g.bindOrder = append(g.bindOrder, expr)
 	}
 }
 
 // SetModule records the module path of the app being generated.
 func (g *Gen) SetModule(path string) { g.module = path }
+
+// CommentLevel controls generated comments; the zero value emits sections.
+type CommentLevel int
+
+const (
+	// CommentsSections emits the phase section headers and node labels.
+	CommentsSections CommentLevel = iota
+	// CommentsOff suppresses all generated comments.
+	CommentsOff
+	// CommentsFull adds a per-node origin line: `// <directive> <pos>`.
+	CommentsFull
+)
+
+// SetCommentLevel selects the generated comment level.
+func (g *Gen) SetCommentLevel(l CommentLevel) { g.comments = l }
+
+// SetSourceRoot makes origin positions relative to dir.
+func (g *Gen) SetSourceRoot(dir string) { g.srcRoot = dir }
+
+func (g *Gen) originComment(n Node) string {
+	o := n.base().Origin
+	if o.Directive == "" {
+		return ""
+	}
+	if !o.Pos.IsValid() {
+		return "// " + o.Directive
+	}
+	file := o.Pos.Filename
+	if g.srcRoot != "" {
+		if rel, err := filepath.Rel(g.srcRoot, file); err == nil {
+			file = rel
+		}
+	}
+	return fmt.Sprintf("// %s %s:%d", o.Directive, file, o.Pos.Line)
+}
+
+func (g *Gen) nodeComments(b *bytes.Buffer, n Node) {
+	if g.comments == CommentsFull {
+		if c := g.originComment(n); c != "" {
+			b.WriteString(c)
+			b.WriteString("\n")
+		}
+	}
+	if g.comments == CommentsOff {
+		return
+	}
+	if l := n.base().Label; l != "" {
+		b.WriteString("// " + l + "\n")
+	}
+}
+
+func (g *Gen) nodeLines(n Node, ec *errCtx) []string {
+	if g.comments == CommentsFull {
+		if sel, ok := n.(*Select); ok {
+			return renderSelectWithComments(sel, ec, g.originComment)
+		}
+	}
+	return renderNode(n, ec)
+}
 
 // SetTypes supplies type-checked packages for [Gen.LookupType].
 func (g *Gen) SetTypes(m map[string]*types.Package) { g.types = m }
@@ -156,7 +238,7 @@ func (g *Gen) importAs(path, base string) string {
 func (g *Gen) Var(base string) string {
 	if sc := g.scope; sc != nil {
 		name := base
-		for n := 2; sc.idents[name]; n++ {
+		for n := 2; sc.idents[name] || sc.reserved[name]; n++ {
 			name = fmt.Sprintf("%s%d", base, n)
 		}
 		sc.idents[name] = true
@@ -179,6 +261,16 @@ func (g *Gen) TypeExpr(t types.Type) string {
 	return types.TypeString(t, func(p *types.Package) string { return g.ImportPkg(p) })
 }
 
+// TypeDisplay renders t with existing aliases without registering imports.
+func (g *Gen) TypeDisplay(t types.Type) string {
+	return types.TypeString(t, func(p *types.Package) string {
+		if alias, ok := g.imports[p.Path()]; ok {
+			return alias
+		}
+		return p.Name()
+	})
+}
+
 // Bind records expr as the wired value for (t, name).
 func (g *Gen) Bind(t types.Type, name, expr string) {
 	t = types.Unalias(t)
@@ -188,11 +280,13 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		if m == nil {
 			m = map[string]string{}
 			sc.binds[key] = m
+			sc.bindTypes[key] = t
 		}
 		if _, dup := m[name]; dup {
 			panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
 		}
 		m[name] = expr
+		g.recordBindExpr(expr)
 		return
 	}
 	m, _ := g.binds.At(t).(map[string]string)
@@ -204,6 +298,7 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
 	}
 	m[name] = expr
+	g.recordBindExpr(expr)
 }
 
 // CommandFunc describes a generated CLI command and its dependency scope.
@@ -306,9 +401,11 @@ func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Dia
 func (g *Gen) BindPath(path, expr string) {
 	if sc := g.scope; sc != nil {
 		sc.pathExprs[path] = expr
+		g.recordBindExpr(expr)
 		return
 	}
 	g.pathExprs[path] = expr
+	g.recordBindExpr(expr)
 }
 
 // BindLazyPath registers a lazy binding matched by a printed type path.
@@ -338,6 +435,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 				expr, ds, ok := g.materialize(t, name, lb)
 				if ok && len(ds) == 0 {
 					sc.pathExprs[key] = expr
+					g.recordBindExpr(expr)
 				}
 				return expr, ds, ok
 			}
@@ -364,6 +462,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 			expr, ds, ok := g.materialize(t, name, lb)
 			if ok && len(ds) == 0 {
 				g.pathExprs[path] = expr
+				g.recordBindExpr(expr)
 			}
 			return expr, ds, ok
 		}
@@ -379,7 +478,11 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 // HasBindingPath reports whether a path-keyed binding exists, lazy or
 // already materialized.
 func (g *Gen) HasBindingPath(path string) bool {
-	if _, ok := g.pathExprs[path]; ok {
+	exprs := g.pathExprs
+	if sc := g.scope; sc != nil {
+		exprs = sc.pathExprs
+	}
+	if _, ok := exprs[path]; ok {
 		return true
 	}
 	_, ok := g.lazyByPath[path]
@@ -545,8 +648,38 @@ func (g *Gen) SingletonIn(phase Phase, key, varName, ctor string) string {
 // without materializing anything.
 func (g *Gen) HasBinding(t types.Type, name string) bool {
 	t = types.Unalias(t)
+	if sc := g.scope; sc != nil {
+		key := types.TypeString(t, nil)
+		if m := sc.binds[key]; m != nil {
+			if _, ok := m[name]; ok {
+				return true
+			}
+		}
+		if name == "" {
+			if _, ok := sc.pathExprs[key]; ok {
+				return true
+			}
+			if _, ok := g.lazyByPath[key]; ok {
+				return true
+			}
+		}
+		if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
+			if _, ok := m[name]; ok {
+				return true
+			}
+		}
+		return false
+	}
 	if m, _ := g.binds.At(t).(map[string]string); m != nil {
 		if _, ok := m[name]; ok {
+			return true
+		}
+	}
+	if path := types.TypeString(t, nil); name == "" {
+		if _, ok := g.pathExprs[path]; ok {
+			return true
+		}
+		if _, ok := g.lazyByPath[path]; ok {
 			return true
 		}
 	}
@@ -554,9 +687,6 @@ func (g *Gen) HasBinding(t types.Type, name string) bool {
 		if _, ok := m[name]; ok {
 			return true
 		}
-	}
-	if _, ok := g.lazyByPath[types.TypeString(t, nil)]; ok && name == "" {
-		return true
 	}
 	return false
 }
@@ -571,18 +701,18 @@ func (g *Gen) HasProviderBinding(t types.Type, name string) bool {
 	return false
 }
 
-// Stmt appends a Raw node.
-func (g *Gen) Stmt(phase Phase, format string, a ...any) {
-	g.Node(&Raw{
-		Base:  Base{Phase: phase},
-		Lines: strings.Split(fmt.Sprintf(format, a...), "\n"),
-	})
-}
-
 // Render assembles and formats main.gen.go.
 func (g *Gen) Render() ([]byte, error) {
 	if err := validateCommandMetadata(g.commandFuncs, g.commandGroups); err != nil {
 		return nil, err
+	}
+	if err := validateExprFields(g.nodes); err != nil {
+		return nil, err
+	}
+	for _, s := range g.scopes {
+		if err := validateExprFields(s.nodes); err != nil {
+			return nil, err
+		}
 	}
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
 	if hasCmd {
@@ -591,6 +721,7 @@ func (g *Gen) Render() ([]byte, error) {
 	needsCtx := hasCmd || usesCtx(g.nodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
+	// lateAliases must include every alias registered here.
 	ctxPkg := ""
 	if needsCtx {
 		ctxPkg = g.Import("context")
@@ -981,17 +1112,17 @@ func (g *Gen) emitPhaseNodes(b *bytes.Buffer, allNodes []Node, phases ...Phase) 
 			b.WriteString("\n")
 		}
 		first = false
-		b.WriteString("// " + pl.label + "\n")
+		if g.comments != CommentsOff {
+			b.WriteString("// " + pl.label + "\n")
+		}
 		clusters := layoutPhase(nodes)
 		for ci, cluster := range clusters {
 			if ci > 0 && (spacedCluster(cluster) || spacedCluster(clusters[ci-1])) {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {
-				if l := pn.n.base().Label; l != "" {
-					b.WriteString("// " + l + "\n")
-				}
-				for _, line := range renderNode(pn.n) {
+				g.nodeComments(b, pn.n)
+				for _, line := range g.nodeLines(pn.n, nil) {
 					b.WriteString(line)
 					b.WriteString("\n")
 				}
@@ -1060,12 +1191,50 @@ func (g *Gen) importLine(path string) string {
 }
 
 func (g *Gen) findUnparsable() (directive, text string, found bool) {
-	for _, n := range g.nodes {
-		text := strings.Join(renderNode(n), "\n")
-		probe := "package p\nfunc _() error {\n" + text + "\nreturn nil\n}\n"
-		if _, err := format.Source([]byte(probe)); err != nil {
-			return n.base().Origin.Directive, text, true
+	if directive, text, found := findUnparsableNodes(g.nodes, nil, ""); found {
+		return directive, text, true
+	}
+	for _, s := range g.scopes {
+		if directive, text, found := findUnparsableNodes(s.nodes, s.scopeErrCtx(), ""); found {
+			return directive, text, true
 		}
+	}
+	return "", "", false
+}
+
+func findUnparsableNodes(nodes []Node, ec *errCtx, owner string) (directive, text string, found bool) {
+	for _, n := range nodes {
+		// Bare case results inherit the enclosing directive.
+		attr := n.base().Origin.Directive
+		if attr == "" {
+			attr = owner
+		}
+		if sel, ok := n.(*Select); ok {
+			for _, c := range sel.Cases {
+				if directive, text, found := findUnparsableNodes(c.Body, ec, attr); found {
+					return directive, text, true
+				}
+				resultAttr := c.Result.Origin.Directive
+				if resultAttr == "" {
+					resultAttr = attr
+				}
+				if directive, text, found := probeLines(renderSelectResult(sel, c, ec), resultAttr); found {
+					return directive, text, true
+				}
+			}
+		}
+		if directive, text, found := probeLines(renderNode(n, ec), attr); found {
+			return directive, text, true
+		}
+	}
+	return "", "", false
+}
+
+func probeLines(lines []string, directive string) (string, string, bool) {
+	text := strings.Join(lines, "\n")
+	probe := "package p\nfunc _() error {\n" + text + "\nreturn nil\n}\n"
+	if _, err := format.Source([]byte(probe)); err != nil {
+		return directive, text, true
 	}
 	return "", "", false
 }

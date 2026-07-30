@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -104,17 +105,21 @@ func TestScopeBuildsItsSubtree(t *testing.T) {
 	src := renderScopes(t, w.g)
 
 	want := `func buildPing(ctx context.Context) (*app.Cache, func() error, error) {
-	// Providers
-	conn, connClose, err := app.NewStore(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	cache, err := app.NewCache(conn)
-	if err != nil {
+	var connClose func() error
+	unwind := func(err error) error {
 		if connClose != nil {
 			err = errors.Join(err, connClose())
 		}
-		return nil, nil, err
+		return err
+	}
+	// Providers
+	conn, connClose, err := app.NewStore(ctx)
+	if err != nil {
+		return nil, nil, unwind(err)
+	}
+	cache, err := app.NewCache(conn)
+	if err != nil {
+		return nil, nil, unwind(err)
 	}
 
 	cleanup := func() error {
@@ -272,34 +277,85 @@ type I interface{}
 	}
 }
 
-func TestTransformReturns(t *testing.T) {
-	in := []string{
-		"v, err := build()",
-		"return err",
-		`return fmt.Errorf("no impl for %q", kind)`,
-		"return nil",
-	}
-	got := transformReturns(in, "nil, ", []string{"aClose"}, "errors")
+func TestErrCtxTails(t *testing.T) {
+	scoped := &errCtx{zeros: "nil, ", unwind: true}
+	call := &Call{Var: "v", Fn: "build", Err: ErrReturn}
 	want := []string{
 		"v, err := build()",
-		"if aClose != nil {",
-		"err = errors.Join(err, aClose())",
+		"if err != nil {",
+		"return nil, unwind(err)",
 		"}",
-		"return nil, err",
-		`err = fmt.Errorf("no impl for %q", kind)`,
-		"if aClose != nil {",
-		"err = errors.Join(err, aClose())",
+	}
+	if got := renderNode(call, scoped); !reflect.DeepEqual(got, want) {
+		t.Fatalf("scoped ErrReturn = %v, want %v", got, want)
+	}
+	wantDefault := []string{"v, err := build()", "if err != nil {", "return err", "}"}
+	if got := renderNode(call, nil); !reflect.DeepEqual(got, wantDefault) {
+		t.Fatalf("default ErrReturn = %v, want %v", got, wantDefault)
+	}
+
+	inline := &Call{Fn: "setup", Err: ErrInline}
+	wantInline := []string{
+		"if err := setup(); err != nil {",
+		"return nil, unwind(err)",
 		"}",
-		"return nil, err",
-		"return nil",
 	}
-	if len(got) != len(want) {
-		t.Fatalf("lines = %v, want %v", got, want)
+	if got := renderNode(inline, scoped); !reflect.DeepEqual(got, wantInline) {
+		t.Fatalf("scoped ErrInline = %v, want %v", got, wantInline)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("line %d = %q, want %q\nall: %v", i, got[i], want[i], got)
-		}
+
+	sel := &Select{Var: "g", Iface: "web.G", KeyExpr: "k", FmtPkg: "fmt"}
+	got := renderNode(sel, scoped)
+	if last := got[len(got)-2]; last != `return nil, unwind(fmt.Errorf("no web.G implementation for %q", k))` {
+		t.Fatalf("scoped select tail = %q", last)
+	}
+	noCleanup := &errCtx{zeros: "nil, "}
+	got = renderNode(sel, noCleanup)
+	if last := got[len(got)-2]; last != `return nil, fmt.Errorf("no web.G implementation for %q", k)` {
+		t.Fatalf("scoped select without cleanup = %q", last)
+	}
+	got = renderNode(sel, nil)
+	if last := got[len(got)-2]; last != `return fmt.Errorf("no web.G implementation for %q", k)` {
+		t.Fatalf("default select tail = %q", last)
+	}
+}
+
+func TestRawCheckRendersContextTail(t *testing.T) {
+	raw := &Raw{Lines: []string{"err = validate(v)"}, Check: true}
+	wantDefault := []string{"err = validate(v)", "if err != nil {", "return err", "}"}
+	if got := renderNode(raw, nil); !reflect.DeepEqual(got, wantDefault) {
+		t.Fatalf("default Raw.Check = %v, want %v", got, wantDefault)
+	}
+	scoped := &errCtx{zeros: "nil, "}
+	wantScoped := []string{"err = validate(v)", "if err != nil {", "return nil, err", "}"}
+	if got := renderNode(raw, scoped); !reflect.DeepEqual(got, wantScoped) {
+		t.Fatalf("scoped Raw.Check = %v, want %v", got, wantScoped)
+	}
+}
+
+func TestNodesHaveCheckRecursesSelectChildren(t *testing.T) {
+	sel := &Select{Var: "v", Iface: "I", KeyExpr: "k", FmtPkg: "fmt",
+		Cases: []Case{{Value: "x", Body: []Node{&Raw{Lines: []string{"err = f()"}, Check: true}}}}}
+	if !nodesHaveCheck([]Node{sel}) {
+		t.Fatal("Raw.Check inside a Select body must trigger err declaration")
+	}
+	if nodesHaveCheck([]Node{&Raw{Lines: []string{"x := 1"}}}) {
+		t.Fatal("no Check present, no declaration")
+	}
+}
+
+func TestRenderRejectsRawReturn(t *testing.T) {
+	g := New()
+	g.SetDirective("jobs")
+	g.Node(&Raw{Lines: []string{"if bad {", "return err", "}"}})
+	if _, err := g.Render(); err == nil || !strings.Contains(err.Error(), "jobs") {
+		t.Fatalf("Render error = %v, want raw-return contract error naming the directive", err)
+	}
+	g2 := New()
+	g2.SetDirective("jobs")
+	g2.Node(&Raw{Lines: []string{"h := func() error {", "return nil", "}", "_ = h"}, Defines: []string{"h"}})
+	if _, err := g2.Render(); err != nil {
+		t.Fatalf("Render error = %v, returns inside function literals are legal", err)
 	}
 }
 
@@ -324,6 +380,84 @@ func TestScopeSelfPublishingLazyBind(t *testing.T) {
 	}
 }
 
+func TestHasBindingMirrorsActiveScopeResolution(t *testing.T) {
+	typ := types.Typ[types.String]
+
+	t.Run("scope eager binding is visible", func(t *testing.T) {
+		g := New()
+		g.enterScope(&Scope{}, false)
+		g.Bind(typ, "name", "scoped")
+		if !g.HasBinding(typ, "name") {
+			t.Fatal("HasBinding missed the active scope binding")
+		}
+	})
+
+	t.Run("global eager binding is hidden", func(t *testing.T) {
+		g := New()
+		g.Bind(typ, "name", "global")
+		g.enterScope(&Scope{}, false)
+		if g.HasBinding(typ, "name") {
+			t.Fatal("HasBinding reported a global eager binding hidden from the active scope")
+		}
+	})
+
+	t.Run("shared lazy binding is visible", func(t *testing.T) {
+		g := New()
+		g.BindLazy(typ, "name", func() (string, diag.Diagnostics) { return "lazy", nil })
+		g.enterScope(&Scope{}, false)
+		if !g.HasBinding(typ, "name") {
+			t.Fatal("HasBinding missed a shared lazy binding")
+		}
+	})
+
+	t.Run("path materialization follows flow visibility", func(t *testing.T) {
+		g := New()
+		g.BindPath("string", "global")
+		if !g.HasBinding(typ, "") {
+			t.Fatal("HasBinding missed the default flow path materialization")
+		}
+		g.enterScope(&Scope{}, false)
+		if g.HasBinding(typ, "") {
+			t.Fatal("HasBinding reported a default flow path materialization in the active scope")
+		}
+		g.BindPath("string", "scoped")
+		if !g.HasBinding(typ, "") {
+			t.Fatal("HasBinding missed the active scope path materialization")
+		}
+	})
+}
+
+func TestHasBindingPathMirrorsActiveScopeResolution(t *testing.T) {
+	const path = "*example.com/app.Store"
+
+	t.Run("scope materialization is visible", func(t *testing.T) {
+		g := New()
+		g.enterScope(&Scope{}, false)
+		g.BindPath(path, "scoped")
+		if !g.HasBindingPath(path) {
+			t.Fatal("HasBindingPath missed the active scope binding")
+		}
+	})
+
+	t.Run("global materialization is hidden", func(t *testing.T) {
+		g := New()
+		g.BindPath(path, "global")
+		g.enterScope(&Scope{}, false)
+		if g.HasBindingPath(path) {
+			t.Fatal("HasBindingPath reported a global materialization hidden from the active scope")
+		}
+	})
+
+	t.Run("shared lazy binding is visible", func(t *testing.T) {
+		g := New()
+		g.BindLazyPath(path, func() (string, diag.Diagnostics) { return "lazy", nil })
+		g.enterScope(&Scope{}, false)
+		if !g.HasBindingPath(path) {
+			t.Fatal("HasBindingPath missed a shared lazy binding")
+		}
+	})
+}
+
 // File-wide import aliases must not collide with scope-local variables.
 func TestScopeVarAndImportAliasDoNotCollide(t *testing.T) {
 	w := newScopeWorld(t)
@@ -342,6 +476,115 @@ func TestScopeVarAndImportAliasDoNotCollide(t *testing.T) {
 	}
 	if !strings.Contains(src, "conn := conn2.NewPool()") {
 		t.Fatalf("scope var should keep its name with the renamed alias:\n%s", src)
+	}
+}
+
+func TestScopeReservesRenderAliases(t *testing.T) {
+	g := New()
+	s := g.AddScope("build", token.Position{})
+	g.enterScope(s, false)
+
+	tests := []struct {
+		path string
+		name string
+	}{
+		{"os", "os"},
+		{"fmt", "fmt"},
+		{"errors", "errors"},
+		{"os/signal", "signal"},
+		{"syscall", "syscall"},
+		{"github.com/gofabrik/fabrik/cli", "cli"},
+	}
+	for _, tc := range tests {
+		if got := g.Var(tc.name); got != tc.name+"2" {
+			t.Fatalf("scope variable %q = %q, want %q", tc.name, got, tc.name+"2")
+		}
+	}
+	g.scope = nil
+	for _, tc := range tests {
+		if got := g.Import(tc.path); got != tc.name {
+			t.Errorf("late import %q alias = %q, want stable alias %q", tc.path, got, tc.name)
+		}
+	}
+}
+
+func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
+	w := newScopeWorld(t)
+	g := w.g
+	pkg := typecheckScopePkg(t, "example.com/ind", "package ind\n\ntype X struct{}\n\ntype Y struct{}\n\ntype C struct{}\n")
+	xT := types.NewPointer(pkg.Scope().Lookup("X").Type())
+	yT := types.NewPointer(pkg.Scope().Lookup("Y").Type())
+	cT := types.NewPointer(pkg.Scope().Lookup("C").Type())
+	// Layout emits Y before X despite insertion order.
+	g.BindLazy(xT, "", func() (string, diag.Diagnostics) {
+		v := g.Var("x")
+		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 30}}},
+			Var: v, Fn: g.Import("example.com/ind") + ".NewX", Err: ErrReturn, Cleanup: g.Var(v + "Close")})
+		return v, nil
+	})
+	g.BindLazy(yT, "", func() (string, diag.Diagnostics) {
+		v := g.Var("y")
+		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 10}}},
+			Var: v, Fn: g.Import("example.com/ind") + ".NewY", Err: ErrReturn, Cleanup: g.Var(v + "Close")})
+		return v, nil
+	})
+	g.BindLazy(cT, "", func() (string, diag.Diagnostics) {
+		xv, _, _ := g.Instance(xT, "")
+		yv, _, _ := g.Instance(yT, "")
+		v := g.Var("c")
+		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 40}}},
+			Var: v, Fn: g.Import("example.com/ind") + ".NewC", Args: []string{xv, yv}, Err: ErrReturn})
+		return v, nil
+	})
+	g.AddScope("buildC", token.Position{}, cT)
+	src := renderScopes(t, g)
+
+	yPos := strings.Index(src, "y, yClose, err := ind.NewY()")
+	xPos := strings.Index(src, "x, xClose, err := ind.NewX()")
+	if yPos < 0 || xPos < 0 || yPos > xPos {
+		t.Fatalf("layout should emit y before x:\n%s", src)
+	}
+	unwind := `unwind := func(err error) error {
+		if xClose != nil {
+			err = errors.Join(err, xClose())
+		}
+		if yClose != nil {
+			err = errors.Join(err, yClose())
+		}
+		return err
+	}`
+	if !strings.Contains(src, unwind) {
+		t.Fatalf("unwind must reverse emission order (x released before y):\n%s", src)
+	}
+}
+
+func TestCleanupWithoutErrorSitesOmitsUnwind(t *testing.T) {
+	w := newScopeWorld(t)
+	g := w.g
+	pkg := typecheckScopePkg(t, "example.com/pure", "package pure\n\ntype P struct{}\n")
+	pT := types.NewPointer(pkg.Scope().Lookup("P").Type())
+	g.BindLazy(pT, "", func() (string, diag.Diagnostics) {
+		v := g.Var("p")
+		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/pure") + ".New", Cleanup: g.Var(v + "Close")})
+		return v, nil
+	})
+	g.AddScope("buildP", token.Position{}, pT)
+	src := renderScopes(t, g)
+	if strings.Contains(src, "unwind") {
+		t.Fatalf("no error sites, unwind must not be declared:\n%s", src)
+	}
+	if !strings.Contains(src, "var pClose func() error") || !strings.Contains(src, "p, pClose := pure.New()") {
+		t.Fatalf("cleanup slot must still be declared and assigned:\n%s", src)
+	}
+}
+
+func TestRenderRejectsNestedCleanup(t *testing.T) {
+	g := New()
+	g.SetDirective("provider:select")
+	g.Node(&Select{Var: "v", Iface: "web.I", KeyExpr: "k", FmtPkg: "fmt",
+		Cases: []Case{{Value: "x", Result: Call{Var: "vx", Fn: "mk", Err: ErrReturn, Cleanup: "vxClose"}}}})
+	if _, err := g.Render(); err == nil || !strings.Contains(err.Error(), "cleanup") {
+		t.Fatalf("Render error = %v, want nested-cleanup rejection", err)
 	}
 }
 
@@ -372,18 +615,25 @@ func TestScopeMultiCleanupReverseOrder(t *testing.T) {
 	g.AddScope("buildC", token.Position{}, cT)
 	src := renderScopes(t, g)
 
-	unwind := `	c, err := two.NewC(b)
-	if err != nil {
+	slots := `	var aClose, bClose func() error
+	unwind := func(err error) error {
 		if bClose != nil {
 			err = errors.Join(err, bClose())
 		}
 		if aClose != nil {
 			err = errors.Join(err, aClose())
 		}
-		return nil, nil, err
+		return err
 	}`
-	if !strings.Contains(src, unwind) {
-		t.Fatalf("unwind should release b then a:\n%s", src)
+	if !strings.Contains(src, slots) {
+		t.Fatalf("unwind helper should pre-declare slots and release b then a:\n%s", src)
+	}
+	collapsed := `	c, err := two.NewC(b)
+	if err != nil {
+		return nil, nil, unwind(err)
+	}`
+	if !strings.Contains(src, collapsed) {
+		t.Fatalf("error site should collapse to unwind(err):\n%s", src)
 	}
 	composed := `	cleanup := func() error {
 		var errs []error

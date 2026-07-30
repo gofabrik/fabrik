@@ -112,15 +112,27 @@ func run() int {
 }
 
 func buildPing(ctx context.Context) (*db.DB, shared.Selected, func() error, error) {
+	var err error
+	var dbDBClose func() error
+	unwind := func(err error) error {
+		if dbDBClose != nil {
+			err = errors.Join(err, dbDBClose())
+		}
+		return err
+	}
 	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
 	default:
 		if fabrikEnv == "" {
-			return nil, nil, nil, fmt.Errorf("FABRIK_ENV is required: development or production")
+			err = fmt.Errorf("FABRIK_ENV is required: development or production")
+		} else {
+			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
 		}
-		return nil, nil, nil, fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+	}
+	if err != nil {
+		return nil, nil, nil, unwind(err)
 	}
 	fabrikConfigOpts := []config.Option{
 		config.FileOptional("config.yaml"),
@@ -134,13 +146,13 @@ func buildPing(ctx context.Context) (*db.DB, shared.Selected, func() error, erro
 		config.Section("store"),
 	)...)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, unwind(err)
 	}
 
 	// Providers
 	dbDB, dbDBClose, err := db.NewDB()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, unwind(err)
 	}
 
 	// shared.Selected, selected by store.kind
@@ -149,18 +161,11 @@ func buildPing(ctx context.Context) (*db.DB, shared.Selected, func() error, erro
 	case "sqlite":
 		storeStoreSqlite, err := store.NewSqlite(storeConfig)
 		if err != nil {
-			if dbDBClose != nil {
-				err = errors.Join(err, dbDBClose())
-			}
-			return nil, nil, nil, err
+			return nil, nil, nil, unwind(err)
 		}
 		storeStore = storeStoreSqlite
 	default:
-		err = fmt.Errorf("no shared.Selected implementation for %q", storeConfig.Kind)
-		if dbDBClose != nil {
-			err = errors.Join(err, dbDBClose())
-		}
-		return nil, nil, nil, err
+		return nil, nil, nil, unwind(fmt.Errorf("no shared.Selected implementation for %q", storeConfig.Kind))
 	}
 
 	cleanup := func() error {

@@ -64,12 +64,20 @@ point that connects directive-owned code into executable Go.
 | `fabrik build` | Generate `main.gen.go`, then `go build`. |
 | `fabrik wire` | Generate `main.gen.go` from directives. |
 | `fabrik wire -check` | Verify `main.gen.go` is up to date (for CI). |
+| `fabrik wire -comments=off\|sections\|full` | Comment level for the generated file; `full` adds a `// <directive> <file:line>` provenance line per statement. |
+| `fabrik wire --graph` | Also write the app's dependency graph beside `main.gen.go`: `fabrik.graph.json` (complete, versioned), `fabrik.graph.dot` and `fabrik.graph.mmd` (architecture diagrams). |
 | `fabrik assets require <pkg>[@version]` | Vendor a JS package (and its dependencies) into the asset tree. |
 | `fabrik assets remove <pkg>`, `fabrik assets prune` | Remove a vendored package; delete orphaned files. |
 | `fabrik directives` | Print the directive reference. |
 
 Commit `main.gen.go` so plain `go build` works without fabrik installed.
 Use `fabrik wire -check` in CI to verify it is current.
+
+`-comments` and `--graph` are one-shot inspection outputs: a later
+`fabrik wire`, `run`, or `build` regenerates `main.gen.go` at the default
+comment level and leaves stale graph sidecars behind. Delete the sidecars or
+keep them out of version control (scaffolded apps ignore them); rerun
+`fabrik wire --graph` for a fresh view.
 
 ## Directives
 

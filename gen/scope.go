@@ -19,7 +19,11 @@ type Scope struct {
 	hasCleanup bool
 
 	idents     map[string]bool
+	reserved   map[string]bool
 	binds      map[string]map[string]string // printed type -> name -> expr
+	bindTypes  map[string]types.Type
+	bindOrder  []string
+	bindSeen   map[string]bool
 	pathExprs  map[string]string
 	singletons map[string]string
 	nodes      []Node
@@ -40,6 +44,7 @@ func (g *Gen) AddScope(fn string, pos token.Position, roots ...types.Type) *Scop
 		g.Context()
 		g.idents["cleanup"] = true
 		g.idents["err"] = true
+		g.idents["unwind"] = true
 	}
 	s := &Scope{fn: fn, pos: pos, roots: roots}
 	g.scopes = append(g.scopes, s)
@@ -80,9 +85,18 @@ func (g *Gen) enterScope(s *Scope, validation bool) {
 	// Prevent generated locals from shadowing the build function skeleton.
 	s.idents["err"] = true
 	s.idents["cleanup"] = true
+	s.idents["unwind"] = true
 	s.ctxVar = "ctx"
 	s.idents["ctx"] = true
+	// Late alias names constrain generated locals but remain available to imports.
+	s.reserved = map[string]bool{}
+	for _, a := range lateAliases {
+		s.reserved[a] = true
+	}
 	s.binds = map[string]map[string]string{}
+	s.bindTypes = map[string]types.Type{}
+	s.bindOrder = nil
+	s.bindSeen = map[string]bool{}
 	s.pathExprs = map[string]string{}
 	s.singletons = map[string]string{}
 	s.running = map[*lazyBind]bool{}
@@ -193,18 +207,22 @@ func (g *Gen) writeScopeFuncs(b *bytes.Buffer) {
 }
 
 func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
-	zeros := strings.Join(s.zeros, ", ")
-	if zeros != "" {
-		zeros += ", "
-	}
 	errsPkg := ""
 	if s.hasCleanup {
 		errsPkg = g.Import("errors")
 	}
 
-	var accumulated []string
-	hasCleanup := false
-	first := true
+	if nodesHaveCheck(s.nodes) {
+		b.WriteString("var err error\n")
+	}
+
+	// Cleanup order must follow emission order, which layout decides.
+	type section struct {
+		label    string
+		clusters [][]phaseNode
+	}
+	var sections []section
+	var cleanups []string
 	for _, pl := range phaseLabels {
 		var nodes []phaseNode
 		for i, n := range s.nodes {
@@ -215,39 +233,58 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		if len(nodes) == 0 {
 			continue
 		}
-		if !first {
+		clusters := layoutPhase(nodes)
+		sections = append(sections, section{label: pl.label, clusters: clusters})
+		for _, cluster := range clusters {
+			for _, pn := range cluster {
+				if c, ok := pn.n.(*Call); ok && c.Cleanup != "" {
+					cleanups = append(cleanups, c.Cleanup)
+				}
+			}
+		}
+	}
+	ec := s.scopeErrCtx()
+	if len(cleanups) > 0 {
+		b.WriteString("var " + strings.Join(cleanups, ", ") + " func() error\n")
+		if ec.unwind {
+			b.WriteString("unwind := func(err error) error {\n")
+			for _, line := range unwindLines(cleanups, errsPkg) {
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+			b.WriteString("return err\n")
+			b.WriteString("}\n")
+		}
+	}
+
+	for si, sec := range sections {
+		if si > 0 {
 			b.WriteString("\n")
 		}
-		first = false
-		b.WriteString("// " + pl.label + "\n")
-		clusters := layoutPhase(nodes)
-		for ci, cluster := range clusters {
-			if ci > 0 && (spacedCluster(cluster) || spacedCluster(clusters[ci-1])) {
+		if g.comments != CommentsOff {
+			b.WriteString("// " + sec.label + "\n")
+		}
+		for ci, cluster := range sec.clusters {
+			if ci > 0 && (spacedCluster(cluster) || spacedCluster(sec.clusters[ci-1])) {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {
-				if l := pn.n.base().Label; l != "" {
-					b.WriteString("// " + l + "\n")
-				}
-				for _, line := range renderNodeScoped(pn.n, zeros, accumulated, errsPkg) {
+				g.nodeComments(b, pn.n)
+				for _, line := range g.nodeLines(pn.n, ec) {
 					b.WriteString(line)
 					b.WriteString("\n")
-				}
-				if c, ok := pn.n.(*Call); ok && c.Cleanup != "" {
-					accumulated = append(accumulated, c.Cleanup)
-					hasCleanup = true
 				}
 			}
 		}
 	}
 
 	rets := strings.Join(s.rootExprs, ", ")
-	if hasCleanup {
+	if len(cleanups) > 0 {
 		b.WriteString("\ncleanup := func() error {\n")
 		b.WriteString("var errs []error\n")
-		for i := len(accumulated) - 1; i >= 0; i-- {
-			b.WriteString("if " + accumulated[i] + " != nil {\n")
-			b.WriteString("errs = append(errs, " + accumulated[i] + "())\n")
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			b.WriteString("if " + cleanups[i] + " != nil {\n")
+			b.WriteString("errs = append(errs, " + cleanups[i] + "())\n")
 			b.WriteString("}\n")
 		}
 		b.WriteString("return " + errsPkg + ".Join(errs...)\n")
@@ -263,48 +300,55 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 	b.WriteString("return " + rets + "nil\n")
 }
 
-// renderNodeScoped accumulates cleanup calls and adjusts error-return arity.
-func renderNodeScoped(n Node, zeros string, accumulated []string, errsPkg string) []string {
-	if c, ok := n.(*Call); ok && c.Cleanup != "" {
-		call := c.Fn + "(" + strings.Join(c.Args, ", ") + ")"
-		if c.Err == ErrReturn {
-			lines := []string{c.Var + ", " + c.Cleanup + ", err := " + call}
-			return append(lines, scopedErrTail(zeros, accumulated, errsPkg)...)
-		}
-		return []string{c.Var + ", " + c.Cleanup + " := " + call}
+// lateAliases must include every import Render can register after scope identifiers freeze.
+var lateAliases = []string{"os", "fmt", "errors", "signal", "syscall", "cli", "context"}
+
+// scopeErrCtx keeps emission and parse probes on the same return path.
+func (s *Scope) scopeErrCtx() *errCtx {
+	zeros := strings.Join(s.zeros, ", ")
+	if zeros != "" {
+		zeros += ", "
 	}
-	return transformReturns(renderNode(n), zeros, accumulated, errsPkg)
+	hasErrSite := false
+	for _, n := range s.nodes {
+		if nodeHasErrTail(n) {
+			hasErrSite = true
+			break
+		}
+	}
+	return &errCtx{zeros: zeros, unwind: s.hasCleanup && hasErrSite}
 }
 
-func scopedErrTail(zeros string, accumulated []string, errsPkg string) []string {
-	lines := []string{"if err != nil {"}
-	lines = append(lines, unwindLines(accumulated, errsPkg)...)
-	return append(lines, "return "+zeros+"err", "}")
+// nodeHasErrTail determines whether a cleanup-bearing scope needs its unwind helper.
+func nodeHasErrTail(n Node) bool {
+	switch n := n.(type) {
+	case *Call:
+		return n.Err != ErrNone
+	case *ConfigLoad, *Select:
+		return true
+	case *Raw:
+		return n.Check
+	}
+	return false
 }
 
-// transformReturns joins cleanup failures into error returns while preserving
-// result arity. A missed error return fails compilation instead of skipping
-// cleanup because scopes with cleanup have multiple results.
-func transformReturns(lines []string, zeros string, accumulated []string, errsPkg string) []string {
-	out := make([]string, 0, len(lines))
-	for _, ln := range lines {
-		switch {
-		case ln == "return err":
-			out = append(out, unwindLines(accumulated, errsPkg)...)
-			out = append(out, "return "+zeros+"err")
-		case strings.HasPrefix(ln, "return ") && strings.Contains(ln, ".Errorf("):
-			if len(accumulated) > 0 {
-				out = append(out, "err = "+strings.TrimPrefix(ln, "return "))
-				out = append(out, unwindLines(accumulated, errsPkg)...)
-				out = append(out, "return "+zeros+"err")
-			} else {
-				out = append(out, "return "+zeros+strings.TrimPrefix(ln, "return "))
+// nodesHaveCheck determines whether err must be declared before Raw checks.
+func nodesHaveCheck(nodes []Node) bool {
+	for _, n := range nodes {
+		switch n := n.(type) {
+		case *Raw:
+			if n.Check {
+				return true
 			}
-		default:
-			out = append(out, ln)
+		case *Select:
+			for _, c := range n.Cases {
+				if nodesHaveCheck(c.Body) {
+					return true
+				}
+			}
 		}
 	}
-	return out
+	return false
 }
 
 func unwindLines(accumulated []string, errsPkg string) []string {

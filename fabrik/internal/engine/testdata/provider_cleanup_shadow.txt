@@ -88,10 +88,17 @@ func run() int {
 }
 
 func buildPing(ctx context.Context) (*cleanups.DB, func() error, error) {
+	var cleanupsDBClose func() error
+	unwind := func(err error) error {
+		if cleanupsDBClose != nil {
+			err = errors.Join(err, cleanupsDBClose())
+		}
+		return err
+	}
 	// Providers
 	cleanupsDB, cleanupsDBClose, err := cleanups.NewDB()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, unwind(err)
 	}
 
 	cleanup := func() error {

@@ -263,13 +263,15 @@ func (as *Assets) emitSwitch(g *gen.Gen) func() (string, diag.Diagnostics) {
 		amPkg := g.Import(assetmapperPath)
 		kind := g.Var("assetKind")
 		v := g.Var("assetServer")
-		g.Node(&gen.Raw{
+		g.Node(&gen.Call{
 			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
+			Var:  kind,
+			Fn:   cfgVar + ".Mode",
+			Err:  gen.ErrReturn,
+		})
+		g.Node(&gen.Raw{
+			Base: gen.Base{Phase: gen.PhaseWire, Uses: []string{kind}, Origin: gen.Origin{Pos: decls[0].pos}},
 			Lines: []string{
-				kind + ", err := " + cfgVar + ".Mode()",
-				"if err != nil {",
-				"return err",
-				"}",
 				"var " + v + " " + amPkg + ".Server",
 				"switch " + kind + " {",
 				"case " + amPkg + ".KindSource:",
@@ -277,11 +279,9 @@ func (as *Assets) emitSwitch(g *gen.Gen) func() (string, diag.Diagnostics) {
 				"case " + amPkg + ".KindCompiled:",
 				v + ", err = " + amPkg + ".Build(" + as.embedRoots(g, decls) + ", nil)",
 				"}",
-				"if err != nil {",
-				"return err",
-				"}",
 			},
 			Defines: []string{v},
+			Check:   true,
 		})
 		return v, ds
 	}

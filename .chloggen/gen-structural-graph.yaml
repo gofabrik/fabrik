@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: fabrik wire can now link generated wiring to its source and export application dependency graphs for tools and architecture diagrams.
+issues: [0]

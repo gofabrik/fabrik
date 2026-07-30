@@ -197,7 +197,12 @@ func (p *Provider) buildGroup(grp *selGroup, g *gen.Gen) (string, diag.Diagnosti
 		var body []gen.Node
 		args, ids := p.resolveCaseParams(g, impl, cfgNode, cfgVar, &body)
 		ds = append(ds, ids...)
-		result := gen.Call{Fn: g.ImportPkg(impl.pkg) + "." + impl.fn, Args: args}
+		result := gen.Call{
+			Base: gen.Base{Origin: gen.Origin{Directive: p.Name(), Pos: impl.pos}},
+			Fn:   g.ImportPkg(impl.pkg) + "." + impl.fn,
+			Args: args,
+			Type: grp.iface,
+		}
 		if impl.returnsErr {
 			result.Var = g.Var(base + exportish(impl.caseVal))
 			result.Err = gen.ErrReturn

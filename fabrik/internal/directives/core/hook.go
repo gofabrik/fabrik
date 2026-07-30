@@ -180,7 +180,9 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 					"construct the resource in a //fabrik:provider and inject it into a command"
 			})
 		g.Node(&gen.Call{
-			Base: gen.Base{Phase: gen.PhaseSetup, Origin: gen.Origin{Pos: nd.pos}},
+			// Scoped replay runs under the consuming directive; name the
+			// hook explicitly so provenance stays correct.
+			Base: gen.Base{Phase: gen.PhaseSetup, Origin: gen.Origin{Directive: h.Name(), Pos: nd.pos}},
 			Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
 			Args: args,
 			Err:  gen.ErrInline,

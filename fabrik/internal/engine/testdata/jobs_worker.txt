@@ -104,6 +104,7 @@ func buildWork(ctx context.Context) (*jobs.Runner, error) {
 	if err := jobs.Register[shared.Welcome](jobsManager, "shared.Welcome"); err != nil {
 		return nil, err
 	}
+
 	if err := jobs.On[shared.Welcome](jobsManager, "SendWelcome", func(c jobs.Context, m shared.Welcome) error {
 		return shared.SendWelcome(c, m)
 	}); err != nil {

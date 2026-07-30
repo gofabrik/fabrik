@@ -7,10 +7,8 @@
 //
 // # The generation tree
 //
-// Emit appends typed nodes such as [ConfigLoad], [Call], [StructLit],
-// [Select], [Route], [Serve], and [Assign]. [Raw] holds preformatted lines
-// when no typed node fits. [Base] records origin, phase, optional label, and
-// manual dependencies.
+// Emit appends typed nodes; [Raw] holds preformatted lines, and [Base] records
+// origin, phase, labels, and manual dependencies.
 //
 // # Rendering policies
 //
