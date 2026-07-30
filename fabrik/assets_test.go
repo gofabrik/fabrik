@@ -50,22 +50,39 @@ func TestAssetsRequire(t *testing.T) {
 	write("web/assets/app.js", "export {}\n")
 	t.Chdir(dir)
 
-	if err := assetsCmd([]string{"require", "-jspm", srv.URL, "htmx.org@2.0.3"}); err != nil {
+	if err := assetsCmd([]string{
+		"require",
+		"-jspm", srv.URL,
+		"-allow-http",
+		"-allow-private-network",
+		"htmx.org@2.0.3",
+	}); err != nil {
 		t.Fatalf("fabrik assets require: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "web/assets/vendor/htmx.org.js")); err != nil {
-		t.Fatalf("vendored file missing: %v", err)
+	matches, err := filepath.Glob(filepath.Join(dir, "web/assets/vendor/htmx.org-*.js"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("vendored files = %v, %v; want one immutable artifact", matches, err)
 	}
+	artifact := matches[0]
 	im, err := os.ReadFile(filepath.Join(dir, "web/assets/importmap.json")) // #nosec G304 -- reads a test-controlled temporary path
 	if err != nil || !strings.Contains(string(im), `"htmx.org"`) {
 		t.Fatalf("importmap.json = %q, %v", im, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "web/assets/vendor.lock.json")); err != nil {
+		t.Fatalf("vendor lock missing: %v", err)
 	}
 
 	if err := assetsCmd([]string{"remove", "htmx.org"}); err != nil {
 		t.Fatalf("fabrik assets remove: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "web/assets/vendor/htmx.org.js")); !os.IsNotExist(err) {
-		t.Fatal("vendored file survived remove")
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("remove deleted immutable artifact before prune: %v", err)
+	}
+	if err := assetsCmd([]string{"prune"}); err != nil {
+		t.Fatalf("fabrik assets prune: %v", err)
+	}
+	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+		t.Fatalf("orphaned artifact survived prune: %v", err)
 	}
 }
 
