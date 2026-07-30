@@ -15,7 +15,7 @@ import (
 
 // Provider is the //fabrik:provider directive.
 type Provider struct {
-	seen      map[string]map[string]token.Position // type key -> name -> first declaration
+	seen      map[string]map[string]token.Position // first declaration by type and provider name
 	nodes     []*node
 	caseNodes []*node
 	groups    map[string]*selGroup
@@ -32,7 +32,7 @@ func (*Provider) Name() string { return "provider" }
 func (*Provider) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Constructor wired by return type",
-		Doc: "**`//fabrik:provider [case=kind]`**\n\n" +
+		Doc: "**`//fabrik:provider [name=token] [case=kind]`**\n\n" +
 			"Marks a constructor whose return value is available to generated " +
 			"app code by matching types. Parameters resolve to other " +
 			"providers; `context.Context` parameters receive the shared " +
@@ -45,8 +45,19 @@ func (*Provider) Meta() gen.Meta {
 			"still runs but its errors cannot be reported; cleanups must not " +
 			"panic. A provider returning an " +
 			"error owns its partial " +
-			"teardown. Cleanup returns are not allowed on `case=` providers. " +
-			"With `case=<kind>`, the constructor is instead one selectable " +
+			"teardown.\n\n" +
+			"Without `name=`, the constructor is the unnamed provider for its " +
+			"return type. A type may have one unnamed provider and any number " +
+			"of distinctly named providers. Names must match " +
+			"`[a-z][a-z0-9]*`. Named providers resolve only where a dependency " +
+			"selects one with `//fabrik:inject`; unmapped dependencies use the " +
+			"unnamed provider. `name=` and `case=` are mutually exclusive.\n\n" +
+			"`//fabrik:inject` may select providers for constructor parameters. " +
+			"A provider can assemble several named values into one container " +
+			"dependency. Provider-constructed types do not accept field " +
+			"mappings; map the provider's parameters instead.\n\n" +
+			"Cleanup returns are not allowed on `case=` providers. With " +
+			"`case=<kind>`, the constructor is instead one selectable " +
 			"implementation for a `//fabrik:provider:select` interface, " +
 			"matched by its return type and constructed only when the " +
 			"configuration names its kind.\n\n" +
@@ -64,14 +75,14 @@ type param struct {
 	t     types.Type
 	pos   token.Position
 	ident string
-	name  string // inject-selected provider name, "" for the unnamed binding
+	name  string // selected provider name, empty for the unnamed binding
 }
 
 type node struct {
 	pos token.Position
 
 	caseVal string // case= value: this provider is one candidate in a provider:select group, chosen by return type
-	name    string // name= value: binds the return value under (type, name) instead of the default (type, "")
+	name    string // name= value, empty for the unnamed provider
 
 	fn             string
 	obj            types.Object
@@ -84,9 +95,7 @@ type node struct {
 	built          bool
 }
 
-// nameRE keeps names injective under exportish: separators next to
-// digits would collapse (a1 and a-1 both render as A1), making the
-// generated variable depend on which spelling registered first.
+// nameRE excludes spellings that exportish would map to the same identifier.
 var nameRE = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
 
 func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {

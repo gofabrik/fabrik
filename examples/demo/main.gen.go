@@ -163,7 +163,7 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 
 func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() error, error) {
 	var err error
-	var sharedSqlDBClose, sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
+	var sharedSqlDBDatabaseClose, sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
 	unwind := func(err error) error {
 		if sharedStorageClose != nil {
 			err = errors.Join(err, sharedStorageClose())
@@ -174,8 +174,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		if sharedCacheStoreClose != nil {
 			err = errors.Join(err, sharedCacheStoreClose())
 		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
+		if sharedSqlDBDatabaseClose != nil {
+			err = errors.Join(err, sharedSqlDBDatabaseClose())
 		}
 		return err
 	}
@@ -315,15 +315,15 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		Templates: appTemplates,
 	}
 
-	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
+	sharedSqlDBDatabase, sharedSqlDBDatabaseClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedQueryDB, err := shared.NewQueries(sharedSqlDB)
+	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedJobsStore, err := shared.NewJobStore(sharedSqlDB)
+	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -332,7 +332,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedSessionManager, err := shared.NewSession(sharedSqlDB, sharedSessionConfig)
+	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -340,7 +340,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDB)
+	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -485,8 +485,8 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 		if sharedCacheStoreClose != nil {
 			errs = append(errs, sharedCacheStoreClose())
 		}
-		if sharedSqlDBClose != nil {
-			errs = append(errs, sharedSqlDBClose())
+		if sharedSqlDBDatabaseClose != nil {
+			errs = append(errs, sharedSqlDBDatabaseClose())
 		}
 		return errors.Join(errs...)
 	}
@@ -495,7 +495,7 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 
 func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	var err error
-	var sharedSqlDBClose, sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
+	var sharedSqlDBDatabaseClose, sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
 	unwind := func(err error) error {
 		if sharedStorageClose != nil {
 			err = errors.Join(err, sharedStorageClose())
@@ -506,8 +506,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		if sharedCacheStoreClose != nil {
 			err = errors.Join(err, sharedCacheStoreClose())
 		}
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
+		if sharedSqlDBDatabaseClose != nil {
+			err = errors.Join(err, sharedSqlDBDatabaseClose())
 		}
 		return err
 	}
@@ -640,15 +640,15 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		Templates: appTemplates,
 	}
 
-	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
+	sharedSqlDBDatabase, sharedSqlDBDatabaseClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, unwind(err)
 	}
-	sharedQueryDB, err := shared.NewQueries(sharedSqlDB)
+	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, unwind(err)
 	}
-	sharedJobsStore, err := shared.NewJobStore(sharedSqlDB)
+	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, unwind(err)
 	}
@@ -657,7 +657,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	if err != nil {
 		return nil, nil, unwind(err)
 	}
-	sharedSessionManager, err := shared.NewSession(sharedSqlDB, sharedSessionConfig)
+	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
 	if err != nil {
 		return nil, nil, unwind(err)
 	}
@@ -665,7 +665,7 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	if err != nil {
 		return nil, nil, unwind(err)
 	}
-	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDB)
+	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, unwind(err)
 	}
@@ -809,8 +809,8 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		if sharedCacheStoreClose != nil {
 			errs = append(errs, sharedCacheStoreClose())
 		}
-		if sharedSqlDBClose != nil {
-			errs = append(errs, sharedSqlDBClose())
+		if sharedSqlDBDatabaseClose != nil {
+			errs = append(errs, sharedSqlDBDatabaseClose())
 		}
 		return errors.Join(errs...)
 	}
@@ -819,10 +819,10 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 
 func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func() error, error) {
 	var err error
-	var sharedSqlDBClose func() error
+	var sharedSqlDBDatabaseClose func() error
 	unwind := func(err error) error {
-		if sharedSqlDBClose != nil {
-			err = errors.Join(err, sharedSqlDBClose())
+		if sharedSqlDBDatabaseClose != nil {
+			err = errors.Join(err, sharedSqlDBDatabaseClose())
 		}
 		return err
 	}
@@ -872,17 +872,17 @@ func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func() erro
 		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
 	}
 
-	sharedSqlDB, sharedSqlDBClose, err := shared.NewDB(sharedDatabaseConfig)
+	sharedSqlDBDatabase, sharedSqlDBDatabaseClose, err := shared.NewDB(sharedDatabaseConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 
 	cleanup := func() error {
 		var errs []error
-		if sharedSqlDBClose != nil {
-			errs = append(errs, sharedSqlDBClose())
+		if sharedSqlDBDatabaseClose != nil {
+			errs = append(errs, sharedSqlDBDatabaseClose())
 		}
 		return errors.Join(errs...)
 	}
-	return sharedSqlDB, migrationSources, cleanup, nil
+	return sharedSqlDBDatabase, migrationSources, cleanup, nil
 }

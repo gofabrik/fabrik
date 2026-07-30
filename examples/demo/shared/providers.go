@@ -22,7 +22,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//fabrik:provider
+//fabrik:provider name=database
 func NewDB(cfg *DatabaseConfig) (*sql.DB, func() error, error) {
 	db, err := sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)")
 	if err != nil {
@@ -31,11 +31,13 @@ func NewDB(cfg *DatabaseConfig) (*sql.DB, func() error, error) {
 	return db, db.Close, nil
 }
 
+//fabrik:inject db name=database
 //fabrik:provider
 func NewQueries(db *sql.DB) (*query.DB, error) {
 	return query.New(db, query.DialectSQLite)
 }
 
+//fabrik:inject db name=database
 //fabrik:provider
 func NewJobStore(db *sql.DB) (jobs.Store, error) {
 	// Migrations create the jobs schema before schedule reconciliation.
@@ -49,6 +51,7 @@ func NewJobsConfig() jobs.Config {
 	return jobs.Config{Logger: slog.Default()}
 }
 
+//fabrik:inject db name=database
 //fabrik:provider
 func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error) {
 	store, err := session.NewSQLiteStore(db, session.SQLiteOptions{})
@@ -68,6 +71,7 @@ func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 	return flash.New(m)
 }
 
+//fabrik:inject db name=database
 //fabrik:provider
 func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 	// Schema creation belongs to migration 0005_cache.sql.

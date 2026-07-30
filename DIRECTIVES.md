@@ -27,7 +27,7 @@ Options:
 
 **`//fabrik:cli:argument name= type= [help=] [default=] [values=] [required=true] [variadic=true]`**
 
-Declared alongside `//fabrik:cli:command` on the same function: one positional argument, bound to the plain parameter whose name matches (`direction` binds `direction string`). Declaration order is binding order. Optional arguments need `default=`; `values=` restricts and completes; `variadic=true` (type `strings`) collects the tail. Directive completion is static: `values=` enumerates the only candidates; dynamic completion uses the cli library's `Complete` API directly.
+Declared alongside `//fabrik:cli:command` on the same function: one positional argument, bound to the plain parameter whose name matches (`direction` binds `direction string`). Declaration order is binding order. Optional arguments need `default=`; `values=` restricts and completes; `variadic=true` (type `strings`) collects the tail. Dynamic completion uses the cli library's `Complete` API.
 
 ```go
 //fabrik:cli:command
@@ -90,7 +90,7 @@ Options:
 
 **`//fabrik:cli:flag name= type= [short=] [help=] [default=] [values=] [env=] [required=true] [hidden=true] [placeholder=] [group=]`**
 
-Declared alongside `//fabrik:cli:command` on the same function: one flag, bound to the plain parameter whose lowerCamel name matches the kebab-case flag (`dry-run` binds `dryRun bool`). The cli library owns parsing, defaults, validation, and completion; `values=` maps to `OneOf` on scalar types. Directive completion is static: `values=` enumerates the only candidates; dynamic completion uses the cli library's `Complete` API directly.
+Declared alongside `//fabrik:cli:command` on the same function: one flag, bound to the plain parameter whose lowerCamel name matches the kebab-case flag (`dry-run` binds `dryRun bool`). The cli library owns parsing, defaults, validation, and completion; `values=` maps to `OneOf` on scalar types. Dynamic completion uses the cli library's `Complete` API.
 
 ```go
 //fabrik:cli:command
@@ -345,7 +345,28 @@ Options:
 
 **`//fabrik:inject <param-or-field> name=<provider>`**
 
-Maps one parameter of the annotated function, or one exported field of the annotated struct type, to the named provider of its type. One line per mapping.
+Maps a function parameter or exported struct field to a named provider. Stack one directive per mapping in the declaration's doc comment. Generated wiring resolves mapped dependencies from the provider of the same type with the matching `name=`; unmapped dependencies use unnamed providers. Unknown selectors report the available parameters or exported fields. Unused mappings are errors.
+
+Provider-constructed types do not accept field mappings; map the provider's parameters instead. CLI value parameters are also invalid targets because flags and arguments supply them.
+
+```go
+//fabrik:provider
+func NewDB(cfg *Config) *sql.DB { ... }
+
+//fabrik:provider name=replica
+func NewReplicaDB(cfg *Config) *sql.DB { ... }
+
+type Databases struct {
+	Primary *sql.DB
+	Replica *sql.DB
+}
+
+//fabrik:inject replica name=replica
+//fabrik:provider
+func NewDatabases(primary, replica *sql.DB) *Databases {
+	return &Databases{Primary: primary, Replica: replica}
+}
+```
 
 Positional arguments:
 
@@ -392,9 +413,15 @@ Options:
 
 ## fabrik:provider
 
-**`//fabrik:provider [case=kind]`**
+**`//fabrik:provider [name=token] [case=kind]`**
 
-Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive the shared signal-bound application context (cancelled at shutdown). A second `error` return aborts startup. A `func() error` before it is a cleanup. Generated code skips nil cleanups, runs them in reverse construction order at process end and on construction failure, and joins cleanup errors into the application's error. A forced second signal skips cleanup. When the command function panics, cleanup still runs but its errors cannot be reported; cleanups must not panic. A provider returning an error owns its partial teardown. Cleanup returns are not allowed on `case=` providers. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
+Marks a constructor whose return value is available to generated app code by matching types. Parameters resolve to other providers; `context.Context` parameters receive the shared signal-bound application context (cancelled at shutdown). A second `error` return aborts startup. A `func() error` before it is a cleanup. Generated code skips nil cleanups, runs them in reverse construction order at process end and on construction failure, and joins cleanup errors into the application's error. A forced second signal skips cleanup. When the command function panics, cleanup still runs but its errors cannot be reported; cleanups must not panic. A provider returning an error owns its partial teardown.
+
+Without `name=`, the constructor is the unnamed provider for its return type. A type may have one unnamed provider and any number of distinctly named providers. Names must match `[a-z][a-z0-9]*`. Named providers resolve only where a dependency selects one with `//fabrik:inject`; unmapped dependencies use the unnamed provider. `name=` and `case=` are mutually exclusive.
+
+`//fabrik:inject` may select providers for constructor parameters. A provider can assemble several named values into one container dependency. Provider-constructed types do not accept field mappings; map the provider's parameters instead.
+
+Cleanup returns are not allowed on `case=` providers. With `case=<kind>`, the constructor is instead one selectable implementation for a `//fabrik:provider:select` interface, matched by its return type and constructed only when the configuration names its kind.
 
 ```go
 //fabrik:provider

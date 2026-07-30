@@ -27,9 +27,31 @@ func (*Inject) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Name the provider for one parameter or field",
 		Doc: "**`//fabrik:inject <param-or-field> name=<provider>`**\n\n" +
-			"Maps one parameter of the annotated function, or one exported " +
-			"field of the annotated struct type, to the named provider of " +
-			"its type. One line per mapping.",
+			"Maps a function parameter or exported struct field to a named " +
+			"provider. Stack one directive per mapping in the declaration's doc " +
+			"comment. Generated wiring resolves mapped dependencies from the " +
+			"provider of the same type with the matching `name=`; unmapped " +
+			"dependencies use unnamed providers. Unknown selectors report the " +
+			"available parameters or exported fields. Unused mappings are " +
+			"errors.\n\n" +
+			"Provider-constructed types do not accept field mappings; map the " +
+			"provider's parameters instead. CLI value parameters are also " +
+			"invalid targets because flags and arguments supply them.\n\n" +
+			"```go\n" +
+			"//fabrik:provider\n" +
+			"func NewDB(cfg *Config) *sql.DB { ... }\n\n" +
+			"//fabrik:provider name=replica\n" +
+			"func NewReplicaDB(cfg *Config) *sql.DB { ... }\n\n" +
+			"type Databases struct {\n" +
+			"\tPrimary *sql.DB\n" +
+			"\tReplica *sql.DB\n" +
+			"}\n\n" +
+			"//fabrik:inject replica name=replica\n" +
+			"//fabrik:provider\n" +
+			"func NewDatabases(primary, replica *sql.DB) *Databases {\n" +
+			"\treturn &Databases{Primary: primary, Replica: replica}\n" +
+			"}\n" +
+			"```",
 		Example: "//fabrik:inject db name=replica",
 		Pos: []gen.PosSpec{
 			{Name: "PARAM-OR-FIELD", Kind: gen.KindFreeform},
@@ -145,7 +167,7 @@ func (i *Inject) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (*Inject) Emit(any, *gen.Gen) diag.Diagnostics { return nil }
 
-// Mappings returns the accepted mapping table for engine seeding.
+// Mappings returns accepted declaration mappings.
 func (i *Inject) Mappings() map[types.Object]map[string]string {
 	table := map[types.Object]map[string]string{}
 	for _, nd := range i.nodes {
@@ -157,8 +179,7 @@ func (i *Inject) Mappings() map[types.Object]map[string]string {
 	return table
 }
 
-// Validate rejects field mappings on provider-constructed types and
-// reports mappings no generated wiring read.
+// Validate rejects mappings that generated wiring cannot use.
 func (i *Inject) Validate(g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, nd := range i.nodes {
