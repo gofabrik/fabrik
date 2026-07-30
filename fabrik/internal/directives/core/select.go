@@ -82,7 +82,7 @@ func (sel *Select) Check(n any, t gen.Typed) diag.Diagnostics {
 			"declare a concrete interface")
 		return ds
 	}
-	if key := types.TypeString(types.Unalias(tn.Type()), nil); hasKey(sel.providers.seen, key) {
+	if key := types.TypeString(types.Unalias(tn.Type()), nil); len(sel.providers.seen[key]) > 0 {
 		ds.Error(nd.pos, fmt.Sprintf("type %s already has a plain provider", key),
 			"a type is either provided directly or selected between implementations, not both")
 		return ds
@@ -342,11 +342,6 @@ func (p *Provider) finishGroups(g *gen.Gen, ds *diag.Diagnostics) {
 				"a case provider must implement exactly one selected interface")
 		}
 	}
-}
-
-func hasKey(m map[string]token.Position, key string) bool {
-	_, ok := m[key]
-	return ok
 }
 
 // exportish renders a case value as an identifier suffix.

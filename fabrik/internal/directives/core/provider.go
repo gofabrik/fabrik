@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"regexp"
 	"strings"
 
 	cfgdir "github.com/gofabrik/fabrik/config/directive"
@@ -14,7 +15,7 @@ import (
 
 // Provider is the //fabrik:provider directive.
 type Provider struct {
-	seen      map[string]token.Position
+	seen      map[string]map[string]token.Position // type key -> name -> first declaration
 	nodes     []*node
 	caseNodes []*node
 	groups    map[string]*selGroup
@@ -23,7 +24,7 @@ type Provider struct {
 
 // NewProvider returns a Provider directive for one run.
 func NewProvider(cfg *cfgdir.Config) *Provider {
-	return &Provider{seen: map[string]token.Position{}, cfg: cfg}
+	return &Provider{seen: map[string]map[string]token.Position{}, cfg: cfg}
 }
 
 func (*Provider) Name() string { return "provider" }
@@ -52,6 +53,7 @@ func (*Provider) Meta() gen.Meta {
 			"```go\n//fabrik:provider\nfunc NewGreeter() *Greeter { ... }\n```",
 		Example: "//fabrik:provider",
 		Attrs: []gen.AttrSpec{
+			{Key: "name", Kind: gen.KindFreeform},
 			{Key: "case", Kind: gen.KindFreeform},
 		},
 		Tier: gen.TierBind,
@@ -67,6 +69,7 @@ type node struct {
 	pos token.Position
 
 	caseVal string // case= value: this provider is one candidate in a provider:select group, chosen by return type
+	name    string // name= value: binds the return value under (type, name) instead of the default (type, "")
 
 	fn             string
 	pkg            *types.Package
@@ -78,6 +81,11 @@ type node struct {
 	built          bool
 }
 
+// nameRE keeps names injective under exportish: separators next to
+// digits would collapse (a1 and a-1 both render as A1), making the
+// generated variable depend on which spelling registered first.
+var nameRE = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
+
 func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	args, ds := gen.ParseArgs(a, p.Meta())
 	nd := &node{pos: a.Pos}
@@ -86,6 +94,20 @@ func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 		if nd.caseVal == "" {
 			ds.Error(a.ArgPos(caseA.Col), "case= must not be empty",
 				"example: //fabrik:provider case=memory")
+		}
+	}
+	if nameA, hasName := args.Attr["name"]; hasName {
+		nd.name = nameA.Text
+		switch {
+		case nd.name == "":
+			ds.Error(a.ArgPos(nameA.Col), "name= must not be empty",
+				"example: //fabrik:provider name=replica")
+		case !nameRE.MatchString(nd.name):
+			ds.Error(a.ArgPos(nameA.Col), fmt.Sprintf("provider name %q is invalid", nd.name),
+				"names are a lowercase letter followed by lowercase letters or digits: [a-z][a-z0-9]*")
+		case nd.caseVal != "":
+			ds.Error(a.ArgPos(nameA.Col), "name= cannot be combined with case=",
+				"a case provider is selected by its group's config key")
 		}
 	}
 	if ds.HasFatal() {
@@ -165,9 +187,14 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	}
 
 	key := types.TypeString(nd.returns[0], nil)
-	if first, dup := p.seen[key]; dup {
-		ds.Error(nd.pos, fmt.Sprintf("multiple providers for type %s", key),
-			fmt.Sprintf("only one //fabrik:provider per type is supported; first declared at %s", first))
+	if first, dup := p.seen[key][nd.name]; dup {
+		if nd.name != "" {
+			ds.Error(nd.pos, fmt.Sprintf("multiple providers for type %s named %q", key, nd.name),
+				fmt.Sprintf("only one //fabrik:provider per (type, name) is supported; first declared at %s", first))
+		} else {
+			ds.Error(nd.pos, fmt.Sprintf("multiple providers for type %s", key),
+				fmt.Sprintf("only one //fabrik:provider per type is supported; first declared at %s", first))
+		}
 		return ds
 	}
 	if _, grouped := p.groups[key]; grouped {
@@ -175,7 +202,10 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 			"a type is either provided directly or selected between implementations, not both")
 		return ds
 	}
-	p.seen[key] = nd.pos
+	if p.seen[key] == nil {
+		p.seen[key] = map[string]token.Position{}
+	}
+	p.seen[key][nd.name] = nd.pos
 	return ds
 }
 
@@ -187,12 +217,12 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		// Selected providers bind through their interface group.
 		return nil
 	}
-	g.BindLazy(nd.returns[0], "", func() (string, diag.Diagnostics) {
+	g.BindLazy(nd.returns[0], nd.name, func() (string, diag.Diagnostics) {
 		if !g.InValidationScope() {
 			nd.built = true
 		}
 		args, ds := p.resolveParams(g, nd.params)
-		v := g.Var(varBase(nd.pkg, nd.returns[0]))
+		v := g.Var(varBase(nd.pkg, nd.returns[0]) + exportish(nd.name))
 		var closeVar string
 		if nd.returnsCleanup {
 			closeVar = g.Var(v + "Close")

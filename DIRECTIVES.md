@@ -389,6 +389,7 @@ func NewGreeter() *Greeter { ... }
 
 Options:
 
+- `name=`
 - `case=`
 
 ## fabrik:provider:select

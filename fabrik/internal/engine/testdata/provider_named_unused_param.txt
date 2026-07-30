@@ -1,0 +1,42 @@
+A named provider that nothing consumes still has its parameters
+validated against the available bindings.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- store/store.go --
+package store
+
+type DB struct{ Addr string }
+
+type Audit struct{}
+
+//fabrik:provider
+func NewDB() *DB { return &DB{Addr: "primary"} }
+
+//fabrik:provider name=replica
+func NewReplicaDB(a *Audit) *DB { return &DB{Addr: "replica"} }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type API struct {
+	DB *store.DB
+}
+
+//fabrik:http GET /api
+func (a *API) Get(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:11:19: no provider for *store.Audit
+  help: add a //fabrik:provider returning *store.Audit
