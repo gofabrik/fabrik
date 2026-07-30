@@ -23,20 +23,21 @@ const ImportmapFilename = "importmap.json"
 //
 //   - Local: Path set, Version empty. Resolved through [Mapper.Asset]
 //     so it tracks dev/prod hashing automatically.
-//   - Vendored: Version set, Path empty. Resolved against the
-//     convention path vendor/<key>.js (or .css). Vendored files are
-//     downloaded by [Vendor.Require]; they live under the mapper's
-//     asset roots like any other file.
+//   - Vendored: Version set. New vendoring operations also set Path to an
+//     immutable content-addressed file; legacy entries with no Path resolve
+//     against vendor/<key>.js (or .css).
 //
-// Importmap can be loaded from disk, edited by [Vendor], and rendered into HTML.
+// Importmap is a mutable builder. It can be loaded from disk, edited by
+// [Vendor], and rendered into HTML. Do not mutate Entries concurrently with
+// other builder operations or while taking a snapshot. [Importmap.Bind]
+// snapshots the entries for stable, concurrent runtime rendering; the direct
+// Render methods take a fresh snapshot for each call.
 type Importmap struct {
+	// Entries is intentionally mutable during application setup.
 	Entries map[string]ImportmapEntry
 
 	// preloadCache is used only in prod mode, where source files do not change at runtime.
 	preloadCache sync.Map // map[preloadCacheKey]preloadResult
-
-	// frozenRefs prevents preload walks from following post-Build source changes.
-	frozenRefs map[string][]ref
 }
 
 // preloadCacheKey identifies one cached preload graph result.
@@ -47,8 +48,8 @@ type preloadCacheKey struct {
 
 // ImportmapEntry is one bare-specifier mapping.
 type ImportmapEntry struct {
-	// Path is the logical asset path for local entries. Mutually
-	// exclusive with Version.
+	// Path is the logical asset path. With Version empty it is local; with
+	// Version set it is an immutable vendored artifact.
 	Path string `json:"path,omitempty"`
 	// Version is the package version for vendored entries. Mutually
 	// exclusive with Path.
@@ -101,15 +102,14 @@ func ParseImportmap(r io.Reader) (*Importmap, error) {
 // Save writes the importmap to path with sorted keys and two-space
 // indentation. The directory must already exist.
 func (im *Importmap) Save(path string) error {
-	f, err := os.Create(path) // #nosec G304 -- writes to a caller-selected asset path
-	if err != nil {
-		return fmt.Errorf("assetmapper.Importmap.Save: create %s: %w", path, err)
-	}
-	if err := im.Write(f); err != nil {
-		_ = f.Close()
+	var out strings.Builder
+	if err := im.Write(&out); err != nil {
 		return err
 	}
-	return f.Close()
+	if err := atomicWriteFile(path, []byte(out.String()), 0o644); err != nil {
+		return fmt.Errorf("assetmapper.Importmap.Save: write %s: %w", path, err)
+	}
+	return nil
 }
 
 // Write encodes the importmap as deterministic indented JSON.
@@ -138,6 +138,10 @@ type RenderOptions struct {
 }
 
 // Render renders importmap, preload, stylesheet, and entrypoint tags.
+//
+// Render snapshots the mutable Importmap for this call. Use [Importmap.Bind]
+// when rendering repeatedly or concurrently so one immutable snapshot and its
+// preload cache are reused.
 func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 	return im.RenderWithOptions(m, RenderOptions{Entrypoints: entrypoints})
 }
@@ -162,7 +166,7 @@ func (im *Importmap) Render(m *Mapper, entrypoints ...string) (string, error) {
 //
 // Use [FuncMap] for html/template helpers that return [template.HTML].
 func (im *Importmap) RenderWithOptions(m *Mapper, opts RenderOptions) (string, error) {
-	return im.render("assetmapper.Importmap.Render", m, opts)
+	return im.Bind(m).RenderWithOptions(opts)
 }
 
 func (im *Importmap) render(op string, m *Mapper, opts RenderOptions) (string, error) {
@@ -297,34 +301,6 @@ func (im *Importmap) readRefs(m *Mapper, logical string) []ref {
 	return extractRefs(logical, content, kindJS)
 }
 
-func (im *Importmap) freezeRefs(m *Mapper) {
-	im.frozenRefs = map[string][]ref{}
-	seen := map[string]bool{}
-	var visit func(logical string)
-	visit = func(logical string) {
-		if logical == "" || seen[logical] || kindOf(logical) != kindJS {
-			return
-		}
-		seen[logical] = true
-		refs := im.readRefs(m, logical)
-		im.frozenRefs[logical] = refs
-		for _, r := range refs {
-			if r.resolved != "" {
-				visit(r.resolved)
-				continue
-			}
-			if entry, ok := im.Entries[r.spec]; ok {
-				visit(logicalForEntry(r.spec, entry))
-			}
-		}
-	}
-	for name, entry := range im.Entries {
-		if entry.Entrypoint {
-			visit(logicalForEntry(name, entry))
-		}
-	}
-}
-
 // ModulePreloadLinks renders JS modulepreload tags.
 func (im *Importmap) ModulePreloadLinks(m *Mapper, entrypoints ...string) (string, error) {
 	return im.ModulePreloadLinksWithOptions(m, RenderOptions{Entrypoints: entrypoints})
@@ -334,6 +310,10 @@ func (im *Importmap) ModulePreloadLinks(m *Mapper, entrypoints ...string) (strin
 //
 // CSS is excluded because modulepreload applies only to JavaScript modules.
 func (im *Importmap) ModulePreloadLinksWithOptions(m *Mapper, opts RenderOptions) (string, error) {
+	return im.Bind(m).ModulePreloadLinksWithOptions(opts)
+}
+
+func (im *Importmap) modulePreloadLinksWithOptions(m *Mapper, opts RenderOptions) (string, error) {
 	if m == nil {
 		return "", fmt.Errorf("assetmapper.Importmap.ModulePreloadLinks: nil Mapper")
 	}
@@ -438,26 +418,32 @@ func (im *Importmap) computePreloadGraph(m *Mapper, entrypoints []string) (prelo
 
 		js = append(js, url)
 
-		var refs []ref
-		if im.frozenRefs != nil {
-			refs = im.frozenRefs[logical]
-		} else {
-			refs = im.readRefs(m, logical)
+		dependencies, planned := []string(nil), false
+		if m.manifest != nil && m.manifest.Dependencies != nil {
+			dependencies, planned = m.manifest.Dependencies[logical]
 		}
-		for _, r := range refs {
-			if r.resolved != "" {
-				if err := visit(r.resolved); err != nil {
+		if planned {
+			for _, dependency := range dependencies {
+				if err := visit(dependency); err != nil {
 					return err
 				}
-				continue
 			}
-			// Bare specifier: try the importmap.
-			entry, ok := im.Entries[r.spec]
-			if !ok {
-				continue
-			}
-			if err := visit(logicalForEntry(r.spec, entry)); err != nil {
-				return err
+		} else {
+			for _, r := range im.readRefs(m, logical) {
+				if r.resolved != "" {
+					if err := visit(r.resolved); err != nil {
+						return err
+					}
+					continue
+				}
+				// Bare specifier: try the importmap.
+				entry, ok := im.Entries[r.spec]
+				if !ok {
+					continue
+				}
+				if err := visit(logicalForEntry(r.spec, entry)); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -495,8 +481,8 @@ func (im *Importmap) resolveEntry(m *Mapper, key string, entry ImportmapEntry) (
 	if entry.Path == "" && entry.Version == "" {
 		return "", fmt.Errorf("entry has neither \"path\" (local) nor \"version\" (vendored)")
 	}
-	if entry.Path != "" && entry.Version != "" {
-		return "", fmt.Errorf("entry has both \"path\" and \"version\"; pick one")
+	if entry.Path != "" && entry.Version != "" && !strings.HasPrefix(entry.Path, VendorDir+"/") {
+		return "", fmt.Errorf("entry has both \"path\" and \"version\" but is not under %s/", VendorDir)
 	}
 	if entry.Path != "" {
 		return m.Asset(entry.Path)

@@ -535,6 +535,24 @@ func TestHandler_404ForUnknownAsset(t *testing.T) {
 	}
 }
 
+func TestHandler_404ForDirectoryPaths(t *testing.T) {
+	m := mustMapper(t, assetmapper.Config{
+		Roots: []assetmapper.Root{{FS: fstest.MapFS{
+			"css/app.css": {Data: []byte("body{}")},
+		}}},
+	})
+	if _, err := m.Asset("css"); !errors.Is(err, assetmapper.ErrAssetNotFound) {
+		t.Fatalf("Asset(directory) err = %v, want ErrAssetNotFound", err)
+	}
+	for _, url := range []string{"/assets/css", "/assets/css/"} {
+		rec := httptest.NewRecorder()
+		m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404", url, rec.Code)
+		}
+	}
+}
+
 func TestHandler_404OutsideURLPrefix(t *testing.T) {
 	m := mustMapper(t, assetmapper.Config{
 		Roots: []assetmapper.Root{{FS: fstest.MapFS{"app.js": {Data: []byte("x")}}}},

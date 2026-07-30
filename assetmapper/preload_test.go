@@ -95,7 +95,7 @@ func TestModulePreloadLinks_DiamondDeps_NoDuplicates(t *testing.T) {
 }
 
 func TestModulePreloadLinks_CyclicImports_NoInfiniteLoop(t *testing.T) {
-	// Compile rejects cycles, but preload walking still terminates.
+	// Cyclic compiled graphs preload each member once.
 	src := fstest.MapFS{
 		"a.js": {Data: []byte(`import b from "./b.js"; export default b;`)},
 		"b.js": {Data: []byte(`import a from "./a.js"; export default a;`)},

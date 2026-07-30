@@ -1,6 +1,6 @@
 # assetmapper
 
-Frontend assets for Go without Node or a bundler: content-hashed URLs
+Frontend assets for Go without Node or a bundler: hash-addressed URLs
 for immutable caching, ES modules with importmaps, JS / CSS reference
 rewriting, and vendoring from jspm.io. Stdlib only.
 
@@ -8,12 +8,16 @@ rewriting, and vendoring from jspm.io. Stdlib only.
 
 Assets are plain files in a directory - CSS, ES modules, images,
 fonts. The library maps each logical path (`app.css`) to a
-content-hashed public URL (`/assets/app-4c9d02ef7129e84f21d3.css`), rewriting the
+hash-addressed public URL (`/assets/app-4c9d02ef7129e84f21d3.css`), rewriting the
 references inside JS and CSS (`import "./nav.js"`, `url("bg.png")`,
 `@import`) so the whole graph is hash-addressed and cacheable forever.
 JavaScript stays standard ES modules the browser runs directly; bare
 specifiers like `import htmx from "htmx"` resolve through an
 importmap rendered into the page.
+
+Circular module and stylesheet graphs are supported. Every member of a
+strongly connected component receives one shared graph digest, so changing any
+member invalidates the complete cycle and every importer downstream from it.
 
 ## Usage
 
@@ -52,17 +56,25 @@ Use the `all:` embed prefix. Plain `//go:embed assets` silently drops
 URLs (transitively - a changed image re-busts the CSS referencing it,
 which re-busts anything importing that CSS), and validates the
 importmap. It is deterministic from content, so URLs are stable
-across replicas. Only content that rewriting changed is held in
-memory; images and fonts serve straight from the embedded source FS.
+across replicas. `Build` snapshots every served byte in memory, so even a
+mutable source filesystem cannot change or remove content after its hashed
+URL, ETag, and length have been fixed.
 
 `Handler` owns its prefix stripping - no `http.StripPrefix`. It
 serves GET and HEAD (405 otherwise), answers `If-None-Match` with
 304, and sets `Cache-Control: public, max-age=31536000, immutable`,
-which is safe because every served name embeds its content hash.
+which is safe because every served name is derived from its final content or,
+for a cycle, from the complete component graph. Strong ETags still identify
+each member's exact served bytes.
 
 `Check(roots, im, opts...)` runs the same pipeline and reports the
 error `Build` would, without keeping the result - wire it into CI so
 a broken reference or importmap fails the build, not the deploy.
+Relative JS imports/exports and CSS imports must resolve to an asset, and bare
+JS specifiers must exist in the importmap. Root-relative references and CSS
+`url()` targets may intentionally be application endpoints, so they remain
+external by default; pass `WithStrictAssetURLs()` to require those targets to
+resolve as assets too.
 
 ## Roots
 
@@ -95,6 +107,13 @@ none means empty). Entries map bare specifiers to local assets
 }
 ```
 
+Treat `Importmap` as a mutable setup-time builder. `Bind(mapper)` creates an
+immutable renderer for repeated or concurrent runtime use, and `FuncMap`
+performs that binding automatically when its helpers are created. Later
+builder mutations cannot change a bound renderer or make its preload cache
+stale. Direct `Render` calls take a fresh snapshot each time; do not mutate the
+builder concurrently while a snapshot is being taken.
+
 `{{ importmap "app" }}` emits the `<script type="importmap">` block,
 `<link rel="modulepreload">` tags for the transitive module graph,
 and the entrypoint tag. JS entrypoints load as external module
@@ -124,16 +143,38 @@ Then in any module:
 import htmx from "htmx.org";
 ```
 
-Vendored files are ordinary assets afterwards - committed, embedded,
-hashed, importmap-resolved. There is no lockfile and no install step
-on other machines: the files themselves are in the repository.
+Vendored files are immutable, content-addressed assets afterwards - committed,
+embedded, hashed again by the production compiler, and importmap-resolved.
+The importmap switches to a new artifact only after its bytes are durable.
+`vendor.lock.json` records each artifact's
+exact version, type, final source URL, downloaded size and SHA-256, plus the
+published size and SHA-256 so committed files can be verified with
+`VendorLock.Verify`. There is no install step on other machines: the files and
+provenance lock live in the repository.
 
-The same flow works without the CLI. Manually: drop the file at
-`assets/vendor/htmx.org.js` and add `"htmx.org": {"version": "2.0.3"}`
-to `importmap.json` (a `"version"` entry resolves to
-`vendor/<name>.js` by convention). Programmatically: the `Vendor` type
-with a `PackageResolver` (jspm.io shipped, others pluggable) is what
-the CLI calls.
+The lock also distinguishes direct requirements from the resolved closure and
+records dependency edges and direct owners. Every `require` or `remove`
+re-resolves all direct pins together and atomically replaces the complete
+lock/importmap graph. This prevents a later install from silently changing a
+shared transitive dependency without checking its other owners. Only direct
+requirements can be removed; orphaned transitives disappear from the active
+graph automatically.
+
+The CLI commits the lock and importmap through a recovery journal. If a process
+is interrupted between those two atomic metadata writes, the next vendoring
+command completes the recorded commit before doing new work. Removed versions
+remain as harmless unreferenced bytes until `assetmapper prune`.
+
+JSPM resolution requires HTTPS and same-host redirects by default, blocks
+private-network destinations, and limits package count, individual package
+size, total resolution size, and generator response size. Trusted development
+mirrors can opt into HTTP, private-network access, or cross-host redirects on
+`JSPMResolver`.
+
+The same flow works without the CLI: use the `Vendor` type with a
+`PackageResolver` (jspm.io shipped, others pluggable). Keep vendored files,
+`importmap.json`, and `vendor.lock.json` together; creating versioned importmap
+entries by hand would bypass provenance recording.
 
 ## Other modes
 
@@ -150,9 +191,10 @@ the CLI calls.
 
 ## Errors
 
-`Build` and `Check` fail loudly and completely: an invalid root, a
-dependency cycle among modules, two assets compiling to the same
-output name, a malformed `importmap.json`, or an importmap entry
-naming a missing asset all abort with a message naming the culprit.
+`Build`, `Check`, and `Compile` fail loudly and completely: an invalid root,
+two assets compiling to the same output name, a malformed `importmap.json`, or
+an importmap entry naming a missing asset all abort with a message naming the
+culprit. Missing relative JS and CSS imports are also rejected during
+planning, before any output is served or published.
 `ErrAssetNotFound` reports unknown logical paths at lookup time;
 template helpers return errors that surface as execution errors.

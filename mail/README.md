@@ -66,26 +66,6 @@ and do not retain it. Built-ins:
 The `transporttest` package checks custom transports against the shared
 contract.
 
-## Wiring in a fabrik app
-
-A fabrik app selects a transport by aliasing the interface and annotating its
-providers:
-
-```go
-//fabrik:provider:select mailer.kind
-type Mailer = mail.Transport
-
-//fabrik:provider case=log
-func NewLogMailer() *mail.Log { return &mail.Log{} }
-
-//fabrik:provider case=smtp
-func NewSMTPMailer(cfg *MailerConfig) *mail.SMTP {
-	return &mail.SMTP{Addr: cfg.Addr, Username: cfg.Username, Password: cfg.Password}
-}
-```
-
-`mailer.kind` selects one provider at startup.
-
 ## Delivery semantics
 
 `Send` succeeds once the transport knows the message was accepted; later cleanup

@@ -92,7 +92,7 @@ Constraint failures classify to sentinels with no driver imports:
 
 ```go
 if _, err := query.Insert(ctx, db, d, "users", u); errors.Is(err, query.ErrUnique) {
-	return web.View(SignupPage{Error: "email already registered"}), nil
+	return fmt.Errorf("email already registered: %w", err)
 }
 ```
 

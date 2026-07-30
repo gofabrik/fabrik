@@ -35,6 +35,15 @@ func jspmMirror(t *testing.T) *httptest.Server {
 	return srv
 }
 
+func requireGlob(t *testing.T, pattern string) string {
+	t.Helper()
+	matches, err := filepath.Glob(pattern)
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("glob %q = %v, %v; want one match", pattern, matches, err)
+	}
+	return matches[0]
+}
+
 func TestRequireRemovePrune(t *testing.T) {
 	srv := jspmMirror(t)
 	dir := filepath.Join(t.TempDir(), "assets")
@@ -43,7 +52,7 @@ func TestRequireRemovePrune(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "htmx.org@2.0.3"}, &out); err != nil {
+	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "-allow-http", "-allow-private-network", "htmx.org@2.0.3"}, &out); err != nil {
 		t.Fatalf("require: %v", err)
 	}
 	for _, want := range []string{"vendored htmx.org 2.0.3", "vendored idiomorph 0.3.0"} {
@@ -51,11 +60,8 @@ func TestRequireRemovePrune(t *testing.T) {
 			t.Errorf("require output %q lacks %q", out.String(), want)
 		}
 	}
-	for _, f := range []string{"vendor/htmx.org.js", "vendor/idiomorph.js", "importmap.json"} {
-		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
-			t.Errorf("missing %s after require: %v", f, err)
-		}
-	}
+	htmxFile := requireGlob(t, filepath.Join(dir, "vendor/htmx.org-*.js"))
+	idiomorphFile := requireGlob(t, filepath.Join(dir, "vendor/idiomorph-*.js"))
 	im, err := os.ReadFile(filepath.Join(dir, "importmap.json")) // #nosec G304 -- reads an app-selected asset path
 	if err != nil || !strings.Contains(string(im), `"htmx.org"`) {
 		t.Fatalf("importmap.json = %q, %v", im, err)
@@ -65,8 +71,8 @@ func TestRequireRemovePrune(t *testing.T) {
 	if err := run([]string{"remove", "-dir", dir, "htmx.org"}, &out); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "vendor/htmx.org.js")); !os.IsNotExist(err) {
-		t.Error("vendor/htmx.org.js survived remove")
+	if _, err := os.Stat(htmxFile); err != nil {
+		t.Error("removed immutable file should remain until prune")
 	}
 
 	// Prune removes files orphaned by hand-edited importmaps.
@@ -78,12 +84,17 @@ func TestRequireRemovePrune(t *testing.T) {
 		t.Fatalf("prune: %v", err)
 	}
 	if !strings.Contains(out.String(), "pruned idiomorph.js") {
-		t.Errorf("prune output %q lacks orphaned dependency", out.String())
+		if !strings.Contains(out.String(), filepath.Base(idiomorphFile)) {
+			t.Errorf("prune output %q lacks orphaned dependency", out.String())
+		}
+	}
+	if _, err := os.Stat(htmxFile); !os.IsNotExist(err) {
+		t.Errorf("htmx artifact survived prune: %v", err)
 	}
 }
 
-// Completed packages stay consistent when a later package fails.
-func TestRequirePartialFailure(t *testing.T) {
+// A failed batch publishes none of its packages.
+func TestRequireBatchFailureIsAtomic(t *testing.T) {
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -111,15 +122,14 @@ func TestRequirePartialFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "good@1.0.0", "bad@1.0.0"}, &out); err == nil {
+	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "-allow-http", "-allow-private-network", "good@1.0.0", "bad@1.0.0"}, &out); err == nil {
 		t.Fatal("require good bad: want error from bad")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "vendor/good.js")); err != nil {
-		t.Fatalf("good's file missing after partial failure: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "vendor/good.js")); !os.IsNotExist(err) {
+		t.Fatalf("good's file was published from failed batch: %v", err)
 	}
-	im, err := os.ReadFile(filepath.Join(dir, "importmap.json")) // #nosec G304 -- reads an app-selected asset path
-	if err != nil || !strings.Contains(string(im), `"good"`) {
-		t.Fatalf("good's entry not committed before the failure: %q, %v", im, err)
+	if _, err := os.Stat(filepath.Join(dir, "importmap.json")); !os.IsNotExist(err) {
+		t.Fatalf("importmap was published from failed batch: %v", err)
 	}
 }
 
@@ -131,7 +141,7 @@ func TestRemoveValidatesBeforeDeleting(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "htmx.org"}, &out); err != nil {
+	if err := run([]string{"require", "-dir", dir, "-jspm", srv.URL, "-allow-http", "-allow-private-network", "htmx.org"}, &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -140,7 +150,7 @@ func TestRemoveValidatesBeforeDeleting(t *testing.T) {
 	}
 	assertUntouched := func(t *testing.T, why string) {
 		t.Helper()
-		if _, err := os.Stat(filepath.Join(dir, "vendor/htmx.org.js")); err != nil {
+		if matches, _ := filepath.Glob(filepath.Join(dir, "vendor/htmx.org-*.js")); len(matches) != 1 {
 			t.Fatalf("valid package was deleted despite %s aborting the batch", why)
 		}
 		im, _ := os.ReadFile(filepath.Join(dir, "importmap.json")) // #nosec G304 -- reads an app-selected asset path

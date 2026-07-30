@@ -85,4 +85,4 @@ The empty key `""` is a form-level error, such as "email or password is wrong". 
 
 ## Status
 
-Reference code. Flat structs and fixed English messages only. The `forms` package builds on this for HTTP request binding and repopulation.
+Reference code. Flat structs and fixed English messages only.

@@ -38,6 +38,9 @@ func run(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("assetmapper "+sub, flag.ContinueOnError)
 	dir := fs.String("dir", "assets", "asset tree directory (importmap.json at its top, files under vendor/)")
 	jspm := fs.String("jspm", "", "jspm.io API mirror URL (default "+assetmapper.DefaultJSPMBaseURL+")")
+	allowHTTP := fs.Bool("allow-http", false, "allow HTTP for an explicitly trusted JSPM mirror")
+	allowPrivate := fs.Bool("allow-private-network", false, "allow an explicitly trusted private-network JSPM mirror")
+	allowCrossHost := fs.Bool("allow-cross-host-redirects", false, "allow JSPM redirects to another hostname")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -52,10 +55,14 @@ func run(args []string, out io.Writer) error {
 	}
 	resolver := assetmapper.NewJSPMResolver(nil)
 	resolver.BaseURL = *jspm
+	resolver.AllowHTTP = *allowHTTP
+	resolver.AllowPrivateNetwork = *allowPrivate
+	resolver.AllowCrossHostRedirects = *allowCrossHost
 	v := &assetmapper.Vendor{
-		Resolver:  resolver,
-		VendorDir: filepath.Join(*dir, assetmapper.VendorDir),
-		Importmap: im,
+		Resolver:      resolver,
+		VendorDir:     filepath.Join(*dir, assetmapper.VendorDir),
+		Importmap:     im,
+		ImportmapFile: imPath,
 	}
 
 	switch sub {
@@ -65,18 +72,17 @@ func run(args []string, out io.Writer) error {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		// Orphaned files are recoverable; importmap entries for missing files are not.
+		requests := make([]assetmapper.PackageRequest, 0, fs.NArg())
 		for _, arg := range fs.Args() {
 			pkg, version := splitPackageVersion(arg)
-			before := entriesCopy(im)
-			if err := v.Require(ctx, pkg, version); err != nil {
-				return err
-			}
-			if err := im.Save(imPath); err != nil {
-				return err
-			}
-			reportChanged(out, im, before)
+			requests = append(requests, assetmapper.PackageRequest{Name: pkg, Version: version})
 		}
+		before := entriesCopy(im)
+		// Resolve and publish the command's complete request batch once.
+		if err := v.RequirePackages(ctx, requests); err != nil {
+			return err
+		}
+		reportChanged(out, im, before)
 		return nil
 
 	case "remove":
@@ -84,23 +90,17 @@ func run(args []string, out io.Writer) error {
 			return errors.New("usage: assetmapper remove [-dir assets] <specifier> [more specifiers]")
 		}
 		// Preflight the batch before deleting any files.
-		paths := make([]string, fs.NArg())
-		for i, spec := range fs.Args() {
-			p, err := v.ValidateRemove(spec)
-			if err != nil {
+		for _, spec := range fs.Args() {
+			if _, err := v.ValidateRemove(spec); err != nil {
 				return err
 			}
-			paths[i] = p
 		}
-		// Persist entry removal before deleting files.
-		for i, spec := range fs.Args() {
-			delete(im.Entries, spec)
-			if err := im.Save(imPath); err != nil {
-				return err
-			}
-			if err := os.Remove(paths[i]); err != nil && !os.IsNotExist(err) {
-				return err
-			}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		if err := v.RemovePackagesContext(ctx, fs.Args()); err != nil {
+			return err
+		}
+		for _, spec := range fs.Args() {
 			fmt.Fprintf(out, "removed %s\n", spec) //nolint:errcheck // CLI stdout status output is best-effort
 		}
 		fmt.Fprintln(out, "run `assetmapper prune` to delete orphaned transitive files") //nolint:errcheck // CLI stdout status output is best-effort

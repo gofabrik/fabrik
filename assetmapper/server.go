@@ -75,12 +75,7 @@ func NewSource(roots []Root, im *Importmap, opts ...BuildOption) (Server, error)
 	if err != nil {
 		return nil, err
 	}
-	// Snapshot the importmap so rendering is stable after construction.
-	snapshot := NewImportmap()
-	for k, v := range im.Entries {
-		snapshot.Entries[k] = v
-	}
-	return &sourceServer{m: m, im: snapshot}, nil
+	return &sourceServer{m: m, im: snapshotImportmap(im)}, nil
 }
 
 type sourceServer struct {

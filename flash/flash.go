@@ -1,6 +1,6 @@
-// Package flash stores one-shot messages in the visitor's session.
+// Package flash stores one-shot messages for a later request.
 //
-//	fl, err := flash.New(sessions) // any *session.Manager[T]
+//	fl, err := flash.New(registry)
 //
 //	// in the handler that acts:
 //	fl.Add(ctx, "success", "Profile saved.")
@@ -8,13 +8,10 @@
 //	// in the handler that renders:
 //	msgs, err := fl.Take(ctx)
 //
-// Flash keeps its data in a private session cell. Add, Take, and Clear commit
-// immediately with optimistic CAS, retried up to the session's MaxRetries. A
-// successful call preserves one-shot delivery; retry exhaustion returns
-// session.ErrVersionConflict.
-//
-// The library is standalone: net/http and any mux, no framework
-// required.
+// Flash keeps its data in a private state cell. Add, Take, and Clear commit
+// immediately with optimistic CAS under the registry's retry policy. A
+// successful call preserves one-shot delivery; retry exhaustion returns the
+// registry's conflict error.
 package flash
 
 import (
@@ -35,12 +32,12 @@ type data struct {
 
 var key = session.NewKey[data]("github.com/gofabrik/fabrik/flash")
 
-// Flash stores one-shot messages in the visitor's session.
+// Flash stores one-shot messages.
 type Flash struct {
 	cell *session.Handle[data]
 }
 
-// New registers flash's private session cell.
+// New registers flash's private state cell.
 func New(m session.Registry) (*Flash, error) {
 	h, err := session.Use(m, key)
 	if err != nil {
@@ -50,7 +47,7 @@ func New(m session.Registry) (*Flash, error) {
 }
 
 // Add appends a message for the next render. Concurrent successful calls all
-// survive; retry exhaustion returns session.ErrVersionConflict.
+// survive; retry exhaustion returns the registry's conflict error.
 func (f *Flash) Add(ctx context.Context, kind, text string) error {
 	return f.cell.Update(ctx, func(d *data) error {
 		d.Messages = append(d.Messages, Message{Kind: kind, Text: text})
@@ -60,9 +57,9 @@ func (f *Flash) Add(ctx context.Context, kind, text string) error {
 
 // Take returns pending messages and clears them, atomically: a message is
 // delivered to exactly one Take. Like Add it retries a CAS conflict up to the
-// session's MaxRetries, then returns session.ErrVersionConflict.
+// registry's retry limit, then returns its conflict error.
 func (f *Flash) Take(ctx context.Context) ([]Message, error) {
-	// Empty reads do not write or mint a session.
+	// Empty reads do not write persistent state.
 	d, err := f.cell.Get(ctx)
 	if err != nil {
 		return nil, err

@@ -13,8 +13,6 @@
 // (tests, examples, local dev) and a SQLite store (single node,
 // durable). Neither imports a SQL driver; the SQLite store takes a
 // caller-opened *sql.DB.
-//
-// In a fabrik app, the //fabrik:job directive generates registration code.
 package jobs
 
 import (

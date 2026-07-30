@@ -24,6 +24,9 @@ func assetsCmd(args []string) error {
 	sub, rest := args[0], args[1:]
 	fs := flag.NewFlagSet("assets "+sub, flag.ContinueOnError)
 	jspm := fs.String("jspm", "", "jspm.io API mirror URL")
+	allowHTTP := fs.Bool("allow-http", false, "allow HTTP for an explicitly trusted JSPM mirror")
+	allowPrivate := fs.Bool("allow-private-network", false, "allow an explicitly trusted private-network JSPM mirror")
+	allowCrossHost := fs.Bool("allow-cross-host-redirects", false, "allow JSPM redirects to another hostname")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -39,43 +42,42 @@ func assetsCmd(args []string) error {
 	}
 	resolver := assetmapper.NewJSPMResolver(nil)
 	resolver.BaseURL = *jspm
+	resolver.AllowHTTP = *allowHTTP
+	resolver.AllowPrivateNetwork = *allowPrivate
+	resolver.AllowCrossHostRedirects = *allowCrossHost
 	v := &assetmapper.Vendor{
-		Resolver:  resolver,
-		VendorDir: filepath.Join(dir, assetmapper.VendorDir),
-		Importmap: im,
+		Resolver:      resolver,
+		VendorDir:     filepath.Join(dir, assetmapper.VendorDir),
+		Importmap:     im,
+		ImportmapFile: imPath,
 	}
 
 	switch sub {
 	case "require":
 		if fs.NArg() == 0 {
-			return errors.New("usage: fabrik assets require <package>[@version] [package...]")
+			return errors.New("usage: fabrik assets require [-jspm URL] <package>[@version] [package...]")
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		// Orphaned files are recoverable; importmap entries for missing files are not.
+		requests := make([]assetmapper.PackageRequest, 0, fs.NArg())
 		for _, arg := range fs.Args() {
 			pkg, version := splitPackageVersion(arg)
-			before := make(map[string]assetmapper.ImportmapEntry, len(im.Entries))
-			for k, e := range im.Entries {
-				before[k] = e
+			requests = append(requests, assetmapper.PackageRequest{Name: pkg, Version: version})
+		}
+		before := copyAssetEntries(im)
+		if err := v.RequirePackages(ctx, requests); err != nil {
+			return err
+		}
+		keys := make([]string, 0, len(im.Entries))
+		for k := range im.Entries {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if prev, ok := before[k]; ok && prev == im.Entries[k] {
+				continue
 			}
-			if err := v.Require(ctx, pkg, version); err != nil {
-				return err
-			}
-			if err := im.Save(imPath); err != nil {
-				return err
-			}
-			keys := make([]string, 0, len(im.Entries))
-			for k := range im.Entries {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				if prev, ok := before[k]; ok && prev == im.Entries[k] {
-					continue
-				}
-				fmt.Printf("fabrik: vendored %s %s in %s\n", k, im.Entries[k].Version, dir)
-			}
+			fmt.Printf("fabrik: vendored %s %s in %s\n", k, im.Entries[k].Version, dir)
 		}
 		return nil
 
@@ -83,24 +85,12 @@ func assetsCmd(args []string) error {
 		if fs.NArg() == 0 {
 			return errors.New("usage: fabrik assets remove <specifier> [specifier...]")
 		}
-		// Preflight the batch before deleting any files.
-		paths := make([]string, fs.NArg())
-		for i, spec := range fs.Args() {
-			p, err := v.ValidateRemove(spec)
-			if err != nil {
-				return err
-			}
-			paths[i] = p
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		if err := v.RemovePackagesContext(ctx, fs.Args()); err != nil {
+			return err
 		}
-		// Persist entry removal before deleting files.
-		for i, spec := range fs.Args() {
-			delete(im.Entries, spec)
-			if err := im.Save(imPath); err != nil {
-				return err
-			}
-			if err := os.Remove(paths[i]); err != nil && !os.IsNotExist(err) {
-				return err
-			}
+		for _, spec := range fs.Args() {
 			fmt.Printf("fabrik: removed %s\n", spec)
 		}
 		fmt.Println("fabrik: run `fabrik assets prune` to delete orphaned transitive files")
@@ -189,4 +179,12 @@ func loadOrEmptyImportmap(path string) (*assetmapper.Importmap, error) {
 		return assetmapper.NewImportmap(), nil
 	}
 	return nil, err
+}
+
+func copyAssetEntries(im *assetmapper.Importmap) map[string]assetmapper.ImportmapEntry {
+	entries := make(map[string]assetmapper.ImportmapEntry, len(im.Entries))
+	for specifier, entry := range im.Entries {
+		entries[specifier] = entry
+	}
+	return entries
 }

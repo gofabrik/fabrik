@@ -98,11 +98,8 @@ func TestValidateRunsLibraryCheck(t *testing.T) {
 			"assets/b.js": {Data: []byte(`import "./a.js";`)},
 		},
 	})
-	if len(ds) == 0 || !strings.Contains(ds[0].Message, "dependency cycle") {
-		t.Fatalf("cycle not surfaced: %v", ds)
-	}
-	if ds[0].Pos.Filename != "a/assets.go" {
-		t.Fatalf("library errors should anchor to the first declaration: %v", ds[0])
+	if len(ds) != 0 {
+		t.Fatalf("supported dependency cycle produced diagnostics: %v", ds)
 	}
 }
 

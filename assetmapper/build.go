@@ -1,29 +1,34 @@
 package assetmapper
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // BuildOption configures [Build], [Check], and [NewSource].
 type BuildOption func(*buildConfig)
 
 type buildConfig struct {
-	urlPrefix string
+	urlPrefix       string
+	strictAssetURLs bool
 }
 
 // WithURLPrefix sets the URL prefix for hashed asset URLs.
 func WithURLPrefix(prefix string) BuildOption {
 	return func(c *buildConfig) { c.urlPrefix = prefix }
+}
+
+// WithStrictAssetURLs makes unresolved root-relative references and CSS
+// url(...) references build errors. Relative JS imports and CSS imports are
+// always strict; bare JS imports must always exist in the importmap.
+func WithStrictAssetURLs() BuildOption {
+	return func(c *buildConfig) { c.strictAssetURLs = true }
 }
 
 // Build compiles asset sources in memory and returns their runtime surfaces.
@@ -32,21 +37,53 @@ func WithURLPrefix(prefix string) BuildOption {
 //
 // Build validates importmap entries before returning.
 //
-// Only rewritten JS and CSS are retained in memory; other files stream from their source FS.
+// Build snapshots every served byte. Source filesystem mutations after Build
+// cannot change content served under an immutable hashed URL.
 func Build(roots []Root, im *Importmap, opts ...BuildOption) (*Compiled, error) {
-	return build("assetmapper.Build", roots, im, opts)
+	plan, err := planBuild("assetmapper.Build", roots, im, opts)
+	if err != nil {
+		return nil, err
+	}
+	entries := make(map[string]serveEntry, len(plan.assets))
+	for _, logical := range plan.order {
+		asset := plan.assets[logical]
+		entry := serveEntry{
+			logical: asset.logical,
+			hash:    asset.etagHash,
+			size:    asset.size,
+		}
+		if asset.kind == kindJS || asset.kind == kindCSS {
+			entry.content = asset.content
+		} else {
+			content, err := fs.ReadFile(asset.root.FS, asset.subPath)
+			if err != nil {
+				return nil, fmt.Errorf("assetmapper.Build: snapshot %s: %w", logical, err)
+			}
+			if int64(len(content)) != asset.size || hashContent(content) != asset.outputHash {
+				return nil, fmt.Errorf("assetmapper.Build: source %s changed while snapshotting", logical)
+			}
+			entry.content = content
+		}
+		entries[asset.output] = entry
+	}
+	return &Compiled{
+		mapper:           plan.mapper(),
+		im:               plan.importmap,
+		entries:          entries,
+		cspImportmapHash: plan.cspImportmapHash,
+	}, nil
 }
 
 // Check runs the [Build] pipeline without keeping the compiled result.
 func Check(roots []Root, im *Importmap, opts ...BuildOption) error {
-	_, err := build("assetmapper.Check", roots, im, opts)
+	_, err := planBuild("assetmapper.Check", roots, im, opts)
 	return err
 }
 
 // Compiled is the in-memory result of [Build].
 //
-// A Compiled is safe for concurrent use: [Build] fixes importmap rendering,
-// while [Compiled.Handler] serves unchanged files from the source filesystem.
+// A Compiled is safe for concurrent use and independent of its source
+// filesystems: [Build] fixes importmap rendering and snapshots all served bytes.
 type Compiled struct {
 	mapper           *Mapper
 	im               *Importmap
@@ -56,10 +93,10 @@ type Compiled struct {
 
 // serveEntry is one compiled file addressable by hashed path.
 type serveEntry struct {
-	logical   string
-	hash      string
-	size      int64
-	rewritten []byte
+	logical string
+	hash    string
+	size    int64
+	content []byte
 }
 
 // Asset returns the public URL for a logical path.
@@ -132,160 +169,7 @@ func (h *compiledHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if e.rewritten != nil {
-		_, _ = w.Write(e.rewritten)
-		return
-	}
-	root, sub, err := h.c.mapper.resolveFile(e.logical)
-	if err != nil {
-		http.Error(w, "asset error", http.StatusInternalServerError)
-		return
-	}
-	f, err := root.FS.Open(sub)
-	if err != nil {
-		http.Error(w, "asset error", http.StatusInternalServerError)
-		return
-	}
-	defer f.Close() //nolint:errcheck // served asset source close after response copy is cleanup only
-	_, _ = io.Copy(w, f)
-}
-
-// build is the shared pipeline behind [Build] and [Check]. context
-// names the entry point in error messages.
-func build(context string, roots []Root, im *Importmap, opts []BuildOption) (*Compiled, error) {
-	roots, err := normalizeRoots(context, roots)
-	if err != nil {
-		return nil, err
-	}
-	var cfg buildConfig
-	for _, o := range opts {
-		o(&cfg)
-	}
-	prefix, err := normalizeURLPrefix(cfg.urlPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", context, err)
-	}
-
-	if im == nil {
-		im, err = discoverImportmap(context, roots)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	assets, err := collectAssets(roots)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", context, err)
-	}
-	if err := validateImportmap(context, im, assets); err != nil {
-		return nil, err
-	}
-
-	hashedNames := make(map[string]string, len(assets))
-	outputOwner := make(map[string]string, len(assets))
-	entries := make(map[string]serveEntry, len(assets))
-
-	// Pass-through assets hash independently of the dependency graph.
-	var passthrough []string
-	for logical, a := range assets {
-		if a.kind != kindJS && a.kind != kindCSS {
-			passthrough = append(passthrough, logical)
-		}
-	}
-	sort.Strings(passthrough)
-	for _, logical := range passthrough {
-		a := assets[logical]
-		hash, size, err := streamHash(a.root.FS, a.subPath)
-		if err != nil {
-			return nil, fmt.Errorf("%s: hash %s: %w", context, logical, err)
-		}
-		hashed := hashedName(logical, hash)
-		if cerr := checkCollision(context, logical, hashed, assets, outputOwner); cerr != nil {
-			return nil, cerr
-		}
-		outputOwner[hashed] = logical
-		hashedNames[logical] = hashed
-		entries[hashed] = serveEntry{logical: logical, hash: hash, size: size}
-	}
-
-	// JS and CSS hash after their dependencies so rewritten URLs are final.
-	deps := make(map[string][]string)
-	refsByAsset := make(map[string][]ref)
-	for logical, a := range assets {
-		if a.kind != kindJS && a.kind != kindCSS {
-			continue
-		}
-		deps[logical] = nil
-		refs := extractRefs(logical, a.content, a.kind)
-		refsByAsset[logical] = refs
-		for _, r := range refs {
-			if r.resolved == "" {
-				continue
-			}
-			target, ok := assets[r.resolved]
-			if !ok {
-				continue
-			}
-			if target.kind != kindJS && target.kind != kindCSS {
-				continue
-			}
-			deps[logical] = append(deps[logical], r.resolved)
-		}
-	}
-	order, err := topoSort(deps)
-	if err != nil {
-		return nil, err
-	}
-	for _, logical := range order {
-		a := assets[logical]
-		rewritten := a.content
-		if refs := refsByAsset[logical]; len(refs) > 0 {
-			rewritten = rewriteRefs(a.content, refs, func(r ref) string {
-				target, ok := hashedNames[r.resolved]
-				if !ok {
-					return r.spec
-				}
-				return prefix + target + r.suffix
-			})
-		}
-		hash := hashContent(rewritten)
-		hashed := hashedName(logical, hash)
-		if cerr := checkCollision(context, logical, hashed, assets, outputOwner); cerr != nil {
-			return nil, cerr
-		}
-		outputOwner[hashed] = logical
-		hashedNames[logical] = hashed
-		e := serveEntry{logical: logical, hash: hash, size: int64(len(rewritten))}
-		// Retain bytes only when rewriting changed them; unchanged
-		// JS / CSS serves from the source FS like any pass-through.
-		if !bytes.Equal(rewritten, a.content) {
-			e.rewritten = rewritten
-		}
-		entries[hashed] = e
-	}
-
-	manifest := NewManifest()
-	manifest.URLPrefix = prefix
-	for logical, hashed := range hashedNames {
-		manifest.Entries[logical] = hashed
-	}
-	// Rendering remains fixed despite later importmap or source changes.
-	snapshot := NewImportmap()
-	for k, v := range im.Entries {
-		snapshot.Entries[k] = v
-	}
-	mapper := &Mapper{roots: roots, urlPrefix: prefix, manifest: manifest}
-	snapshot.freezeRefs(mapper)
-	hash, err := snapshot.importmapBodyHash(mapper)
-	if err != nil {
-		return nil, fmt.Errorf("assetmapper.Build: %w", err)
-	}
-	return &Compiled{
-		mapper:           mapper,
-		im:               snapshot,
-		entries:          entries,
-		cspImportmapHash: hash,
-	}, nil
+	_, _ = w.Write(e.content)
 }
 
 // discoverImportmap implements the nil-im contract of [Build]: read
@@ -332,8 +216,8 @@ func validateImportmap(context string, im *Importmap, assets map[string]*collect
 		if e.Path == "" && e.Version == "" {
 			return fmt.Errorf("%s: importmap entry %q has neither \"path\" (local) nor \"version\" (vendored)", context, k)
 		}
-		if e.Path != "" && e.Version != "" {
-			return fmt.Errorf("%s: importmap entry %q has both \"path\" and \"version\"; pick one", context, k)
+		if e.Path != "" && e.Version != "" && !strings.HasPrefix(e.Path, VendorDir+"/") {
+			return fmt.Errorf("%s: importmap entry %q has both \"path\" and \"version\"; vendored paths must be under %s/", context, k, VendorDir)
 		}
 		switch e.Type {
 		case "", "js", "css":
@@ -346,20 +230,4 @@ func validateImportmap(context string, im *Importmap, assets map[string]*collect
 		}
 	}
 	return nil
-}
-
-// streamHash hashes a file's content without retaining it, returning
-// the truncated digest and the byte count.
-func streamHash(fsys fs.FS, p string) (hash string, size int64, err error) {
-	f, err := fsys.Open(p)
-	if err != nil {
-		return "", 0, err
-	}
-	defer f.Close() //nolint:errcheck // read-only asset close cannot affect the completed hash
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return "", 0, err
-	}
-	return hex.EncodeToString(h.Sum(nil))[:HashLength], n, nil
 }
