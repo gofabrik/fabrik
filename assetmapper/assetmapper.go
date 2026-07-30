@@ -184,7 +184,7 @@ func (m *Mapper) resolveFile(logicalPath string) (Root, string, error) {
 			sub == VendorTransactionFilename {
 			continue
 		}
-		if _, err := fs.Stat(r.FS, sub); err == nil {
+		if info, err := fs.Stat(r.FS, sub); err == nil && !info.IsDir() {
 			return r, sub, nil
 		}
 	}
