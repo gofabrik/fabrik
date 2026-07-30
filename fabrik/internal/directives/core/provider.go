@@ -61,8 +61,10 @@ func (*Provider) Meta() gen.Meta {
 }
 
 type param struct {
-	t   types.Type
-	pos token.Position
+	t     types.Type
+	pos   token.Position
+	ident string
+	name  string // inject-selected provider name, "" for the unnamed binding
 }
 
 type node struct {
@@ -72,6 +74,7 @@ type node struct {
 	name    string // name= value: binds the return value under (type, name) instead of the default (type, "")
 
 	fn             string
+	obj            types.Object
 	pkg            *types.Package
 	returns        []types.Type
 	returnsErr     bool
@@ -172,12 +175,13 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	}
 
 	nd.fn = fn.Name()
+	nd.obj = fn
 	nd.pkg = fn.Pkg()
 	nd.returns = []types.Type{types.Unalias(results.At(0).Type())}
 	nd.fset = t.Fset
 	for i := 0; i < sig.Params().Len(); i++ {
 		v := sig.Params().At(i)
-		nd.params = append(nd.params, param{t: v.Type(), pos: t.Fset.Position(v.Pos())})
+		nd.params = append(nd.params, param{t: v.Type(), pos: t.Fset.Position(v.Pos()), ident: v.Name()})
 	}
 
 	if nd.caseVal != "" {
@@ -216,6 +220,17 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	if nd.caseVal != "" {
 		// Selected providers bind through their interface group.
 		return nil
+	}
+	for i := range nd.params {
+		pr := &nd.params[i]
+		if gen.IsContext(pr.t) {
+			// Context mappings stay pending because provider lookup is bypassed.
+			continue
+		}
+		if name, ok := g.InjectName(nd.obj, pr.ident); ok {
+			pr.name = name
+			g.ConsumeInject(nd.obj, pr.ident)
+		}
 	}
 	g.BindLazy(nd.returns[0], nd.name, func() (string, diag.Diagnostics) {
 		if !g.InValidationScope() {
@@ -262,9 +277,13 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 			if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
 				continue
 			}
-			if !g.HasBinding(pr.t, "") {
-				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-					missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
+			if !g.HasBinding(pr.t, pr.name) {
+				if msg, help, named := g.MissingBinding(pr.t, pr.name); named {
+					ds.Error(pr.pos, msg, help)
+				} else {
+					ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+						missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
+				}
 			}
 		}
 	}
@@ -274,11 +293,14 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 func (p *Provider) resolveParams(g *gen.Gen, params []param) ([]string, diag.Diagnostics) {
 	return resolveArgs(g, p.cfg, params,
 		func(pr param) (string, diag.Diagnostics, bool) {
-			return g.Instance(pr.t, "")
+			return g.Instance(pr.t, pr.name)
 		},
-		func(pr param) (string, string) {
+		func(pr param) (string, string, bool) {
+			if msg, help, named := g.MissingBinding(pr.t, pr.name); named {
+				return msg, help, true
+			}
 			return fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))
+				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)), false
 		})
 }
 

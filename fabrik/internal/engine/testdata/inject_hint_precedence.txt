@@ -1,0 +1,46 @@
+Named lookup errors list provider names instead of type-specific hints.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/jobs v0.0.0
+
+replace github.com/gofabrik/fabrik/jobs => JOBSDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- shared/shared.go --
+package shared
+
+import "github.com/gofabrik/fabrik/jobs"
+
+//fabrik:provider
+func NewJobStore() (jobs.Store, error) { return jobs.NewMemoryStore(), nil }
+
+type Indexer struct{ S jobs.Store }
+
+//fabrik:inject s name=backup
+//fabrik:provider
+func NewIndexer(s jobs.Store) *Indexer { return &Indexer{S: s} }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/shared"
+)
+
+type API struct {
+	Ix *shared.Indexer
+}
+
+//fabrik:http GET /api
+func (a *API) Get(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: shared/shared.go:12:17: no provider for jobs.Store named "backup"
+  help: known names: (unnamed)

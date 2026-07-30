@@ -46,6 +46,7 @@ type mwNode struct {
 	name string // "" is global
 
 	fn   string
+	obj  types.Object
 	pkg  *types.Package
 	used bool // referenced by at least one middleware= chain
 
@@ -58,8 +59,9 @@ type mwNode struct {
 
 // ctorParam is one binding-resolved constructor parameter.
 type ctorParam struct {
-	t   types.Type
-	pos token.Position
+	ident string
+	t     types.Type
+	pos   token.Position
 }
 
 func (m *Middleware) Parse(a gen.Annotation) (any, diag.Diagnostics) {
@@ -111,7 +113,7 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 					"direct: func(next http.Handler) http.Handler; constructor: binding-resolved parameters returning the middleware")
 				return ds
 			}
-			nd.params = append(nd.params, ctorParam{t: v.Type(), pos: t.Fset.Position(v.Pos())})
+			nd.params = append(nd.params, ctorParam{ident: v.Name(), t: v.Type(), pos: t.Fset.Position(v.Pos())})
 		}
 	default:
 		ds.Error(nd.pos, fmt.Sprintf("middleware %s has the wrong signature", fn.Name()),
@@ -128,6 +130,7 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 	}
 
 	nd.fn = fn.Name()
+	nd.obj = fn
 	nd.pkg = fn.Pkg()
 	return ds
 }
@@ -165,14 +168,23 @@ func (m *Middleware) expr(g *gen.Gen, nd *mwNode) (string, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	args := make([]string, 0, len(nd.params))
 	for _, pr := range nd.params {
-		expr, ids, ok := g.Instance(pr.t, "")
+		name := ""
+		if n, ok := g.InjectName(nd.obj, pr.ident); ok {
+			name = n
+			g.ConsumeInject(nd.obj, pr.ident)
+		}
+		expr, ids, ok := g.Instance(pr.t, name)
 		ds = append(ds, ids...)
 		if !ok && len(ids) == 0 {
-			help := "declare a //fabrik:provider for it"
-			if h, hinted := g.MissingHint(pr.t); hinted {
-				help = h
+			if msg, help, named := g.MissingBinding(pr.t, name); named {
+				ds.Error(pr.pos, msg, help)
+			} else {
+				help := "declare a //fabrik:provider for it"
+				if h, hinted := g.MissingHint(pr.t); hinted {
+					help = h
+				}
+				ds.Error(pr.pos, "no provider or binding supplies this middleware constructor parameter", help)
 			}
-			ds.Error(pr.pos, "no provider or binding supplies this middleware constructor parameter", help)
 		}
 		args = append(args, expr)
 	}

@@ -282,9 +282,9 @@ func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node,
 			*body = append(*body, load)
 			return v, nil, true
 		},
-		func(param) (string, string) {
+		func(param) (string, string, bool) {
 			return "case provider parameters must be //fabrik:config structs or context.Context",
-				"construct other dependencies inside the provider, so unselected implementations cost nothing"
+				"construct other dependencies inside the provider, so unselected implementations cost nothing", false
 		})
 }
 

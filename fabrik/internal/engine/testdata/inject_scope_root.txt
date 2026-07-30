@@ -1,0 +1,31 @@
+Command roots with only named providers list available names and suggest
+//fabrik:inject.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.0.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- store/store.go --
+package store
+
+import "github.com/gofabrik/fabrik/cli"
+
+type Cache struct{}
+
+//fabrik:provider name=warm
+func NewWarmCache() *Cache { return &Cache{} }
+
+//fabrik:cli:command
+func Warmup(ctx cli.Context, c *Cache) error { return nil }
+-- want/diags --
+error: store/store.go:10:1: type *store.Cache has only named providers
+  help: known names: warm; select one with //fabrik:inject

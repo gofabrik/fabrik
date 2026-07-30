@@ -120,8 +120,12 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 			expr, rds, ok := g.Instance(root, "")
 			ds = append(ds, rds...)
 			if !ok && len(rds) == 0 {
-				ds.Error(s.pos, "no provider for "+g.TypeExpr(root),
-					"add a //fabrik:provider returning "+g.TypeExpr(root))
+				if msg, help, named := g.MissingBinding(root, ""); named {
+					ds.Error(s.pos, msg, help)
+				} else {
+					ds.Error(s.pos, "no provider for "+g.TypeExpr(root),
+						"add a //fabrik:provider returning "+g.TypeExpr(root))
+				}
 			}
 			s.rootExprs = append(s.rootExprs, expr)
 			s.resultTypes = append(s.resultTypes, g.TypeExpr(root))
