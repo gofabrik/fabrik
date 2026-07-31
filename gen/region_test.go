@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"go/token"
 	"go/types"
+	"sort"
 	"strings"
 	"testing"
 
@@ -542,5 +543,113 @@ type Sink struct{}
 	relB := strings.Index(cleanup, "earlyClose()")
 	if relA < 0 || relB < 0 || relA > relB {
 		t.Fatalf("cleanup must release in reverse emitted order (late before early):\n%s", cleanup)
+	}
+}
+
+func TestRenderFilesSplitsRegionsWithPrunedImports(t *testing.T) {
+	w := newRegionWorld(t, "db")
+	w.addCommand("alpha", ScopeRoot{Type: w.cache})
+	w.addCommand("beta", ScopeRoot{Type: w.cache})
+	g := w.g
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	files, err := g.RenderFiles()
+	if err != nil {
+		t.Fatalf("RenderFiles: %v", err)
+	}
+	main, ok := files["main.gen.go"]
+	if !ok {
+		t.Fatalf("missing main.gen.go: %v", filesNames(files))
+	}
+	frag, ok := files["fragments_builddb.gen.go"]
+	if !ok {
+		t.Fatalf("missing region file: %v", filesNames(files))
+	}
+	if !strings.Contains(string(frag), "func buildDb()") || strings.Contains(string(main), "func buildDb()") {
+		t.Fatalf("region function must live in its own file")
+	}
+	// The region file needs only the app import; the cli import stays
+	// with the command tree.
+	if strings.Contains(string(frag), `"github.com/gofabrik/fabrik/cli"`) {
+		t.Fatalf("region file carries an unused import:\n%s", frag)
+	}
+	if !strings.Contains(string(main), `"github.com/gofabrik/fabrik/cli"`) {
+		t.Fatalf("main file lost its cli import:\n%s", main)
+	}
+}
+
+func filesNames(m map[string][]byte) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestRenderFilesAllocatesDistinctFilenames(t *testing.T) {
+	// buildDB and buildDb lowercase to one filename; the second region
+	// must get its own file instead of overwriting the first.
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type DB struct{}
+
+type Db struct{}
+`)
+	tdb := types.NewPointer(pkg.Scope().Lookup("DB").Type())
+	tdb2 := types.NewPointer(pkg.Scope().Lookup("Db").Type())
+	g := New()
+	g.SetModule("demo")
+	g.FragmentMode()
+	chain := func(tt types.Type, ctor string) {
+		g.BindLazy(tt, "", func() (string, diag.Diagnostics) {
+			v := g.Var(strings.ToLower(ctor))
+			g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
+				Fn: g.Import("example.com/app") + ".New" + ctor, Err: ErrReturn, Type: tt})
+			v2 := g.Var(strings.ToLower(ctor) + "Ping")
+			g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v2,
+				Fn: g.Import("example.com/app") + ".Ping" + ctor, Args: []string{v}, Err: ErrNone, Type: tt})
+			return v, nil
+		})
+	}
+	chain(tdb, "DB")
+	chain(tdb2, "Db")
+	addCmd := func(name string, root ScopeRoot) {
+		s := g.AddScope("build"+upperFirst(name)+"Cmd", token.Position{}, root)
+		g.AddCommandFunc(CommandFunc{Name: name, Fn: "app.Run" + upperFirst(name), Scope: s})
+	}
+	addCmd("one", ScopeRoot{Type: tdb})
+	addCmd("two", ScopeRoot{Type: tdb})
+	addCmd("three", ScopeRoot{Type: tdb2})
+	addCmd("four", ScopeRoot{Type: tdb2})
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	files, err := g.RenderFiles()
+	if err != nil {
+		t.Fatalf("RenderFiles: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("files = %v, want main plus two region files", filesNames(files))
+	}
+}
+
+func TestUsedIdentsMatchesOnlyPackageQualifiers(t *testing.T) {
+	used, err := usedIdents("func f() {\n\tx := T{errors: 1}\n\t_ = x\n\t_ = shared.V\n}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !used["shared"] {
+		t.Fatal("selector base not collected")
+	}
+	if used["errors"] {
+		t.Fatal("field name wrongly counted as an import use")
 	}
 }

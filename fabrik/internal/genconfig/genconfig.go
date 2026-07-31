@@ -16,7 +16,6 @@ import (
 	"unicode"
 
 	"github.com/gofabrik/fabrik/diag"
-	"github.com/gofabrik/fabrik/fabrik/internal/engine"
 	"github.com/gofabrik/fabrik/gen"
 	"gopkg.in/yaml.v3"
 )
@@ -51,12 +50,6 @@ type Options struct {
 // Overrides carries per-invocation flag values that beat fabrik.yaml.
 type Overrides struct {
 	Comments *gen.CommentLevel
-}
-
-// EngineOptions fills the engine's option struct with everything the
-// engine currently understands; later increments extend both together.
-func (o Options) EngineOptions() engine.Options {
-	return engine.Options{Comments: o.Comments, BuildTag: o.BuildTag}
 }
 
 const fileName = "fabrik.yaml"
@@ -155,7 +148,7 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 		return diags
 	}
 
-	var dirNode, packageNode, emitNode, splitNode, entrypointsKey *yaml.Node
+	var dirNode, packageNode, emitNode, entrypointsKey *yaml.Node
 	scalar := func(key, val *yaml.Node) bool {
 		if val.Kind == yaml.ScalarNode && val.Tag != "!!null" && val.Value != "" {
 			return true
@@ -201,7 +194,6 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 			if !scalar(key, val) {
 				continue
 			}
-			splitNode = val
 			switch val.Value {
 			case "off":
 				opts.Split = SplitOff
@@ -272,9 +264,6 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 
 	if opts.Emit == EmitEmbedded {
 		diags.Error(posAt(path, emitNode), "emit: embedded is not supported yet", "")
-	}
-	if opts.Split == SplitFragment {
-		diags.Error(posAt(path, splitNode), "split: fragment is not supported yet", "")
 	}
 
 	return diags

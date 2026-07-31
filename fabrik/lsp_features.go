@@ -11,6 +11,8 @@ import (
 
 	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
+	"github.com/gofabrik/fabrik/fabrik/internal/genfiles"
 	"github.com/gofabrik/fabrik/fabrik/internal/load"
 	"github.com/gofabrik/fabrik/gen"
 )
@@ -57,7 +59,11 @@ func (s *lspServer) publishTyped(uri string, gen int) {
 	}
 	s.mu.Unlock()
 
-	res, err := engine.Wire(root, overlay)
+	cfg, cdiags := genconfig.Resolve(root, genconfig.Overrides{})
+	if cdiags.HasFatal() {
+		return
+	}
+	res, err := engine.WireOptions(root, overlay, engine.OptionsFrom(cfg))
 	if err != nil {
 		return
 	}
@@ -343,7 +349,7 @@ func (s *lspServer) middlewareCompletions(uri, partial, directive string) []comp
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || filepath.Base(path) == "main.gen.go" {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || generatedOutputFile(path) {
 			return nil
 		}
 		for _, name := range s.middlewareNames(path, overlay[path], d, directive) {
@@ -546,4 +552,19 @@ func stripDirective(line string) (int, string, bool) {
 	}
 	i += len("fabrik:")
 	return i, line[i:], true
+}
+
+// generatedOutputFile reports fabrik-generated files the language
+// features skip: main.gen.go and anything the directory's manifest owns.
+func generatedOutputFile(path string) bool {
+	base := filepath.Base(path)
+	if base == "main.gen.go" {
+		return true
+	}
+	for _, owned := range genfiles.Owned(filepath.Dir(path)) {
+		if owned == base {
+			return true
+		}
+	}
+	return false
 }

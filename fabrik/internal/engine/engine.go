@@ -8,13 +8,17 @@ import (
 	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 	"github.com/gofabrik/fabrik/fabrik/internal/load"
 	"github.com/gofabrik/fabrik/gen"
 )
 
 // Result contains generated source and diagnostics; Src is nil after a fatal diagnostic.
 type Result struct {
+	// Src is the single-file output; nil under split, where Files
+	// carries the set. Files is populated in both modes.
 	Src     []byte
+	Files   map[string][]byte
 	MainDir string
 	OutDir  string // directory the generated output belongs to; equals MainDir until split/embedded modes relocate it
 	Diags   diag.Diagnostics
@@ -26,6 +30,14 @@ type Options struct {
 	Comments gen.CommentLevel
 	Graph    bool
 	BuildTag string // constrains the generated file with a //go:build line
+	Split    bool   // one file per extracted region instead of a single main.gen.go
+}
+
+// OptionsFrom is the one mapping from the resolved project
+// configuration to engine options; every surface uses it so none
+// duplicates the field correspondence.
+func OptionsFrom(cfg genconfig.Options) Options {
+	return Options{Comments: cfg.Comments, BuildTag: cfg.BuildTag, Split: cfg.Split == genconfig.SplitFragment}
 }
 
 // Wire generates main.gen.go for the module rooted at dir with default
@@ -213,11 +225,21 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 		return &Result{MainDir: res.MainDir, OutDir: res.MainDir, Diags: diags}, nil
 	}
 
-	src, err := g.Render()
-	if err != nil {
-		return nil, err
+	out := &Result{MainDir: res.MainDir, OutDir: res.MainDir, Diags: diags}
+	if opts.Split {
+		files, err := g.RenderFiles()
+		if err != nil {
+			return nil, err
+		}
+		out.Files = files
+	} else {
+		src, err := g.Render()
+		if err != nil {
+			return nil, err
+		}
+		out.Src = src
+		out.Files = map[string][]byte{"main.gen.go": src}
 	}
-	out := &Result{Src: src, MainDir: res.MainDir, OutDir: res.MainDir, Diags: diags}
 	if opts.Graph {
 		// Graph uses import aliases finalized by Render.
 		out.Graph = g.Graph()

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/fabrik/internal/genfiles"
 	"github.com/gofabrik/fabrik/gen"
 	"golang.org/x/tools/go/packages"
 )
@@ -67,12 +68,19 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 		if pkg.Name == "main" {
 			mains = append(mains, pkg)
-			// main.gen.go may be stale; handwritten parse errors still block wiring.
+			// Generated files may be stale; handwritten parse errors still
+			// block wiring. Ownership comes from the manifest, with
+			// main.gen.go always tolerated.
 			var parseErrs []packages.Error
 			for _, e := range pkg.Errors {
-				if e.Kind == packages.ParseError && filepath.Base(errorPosition(e).Filename) != "main.gen.go" {
-					parseErrs = append(parseErrs, e)
+				if e.Kind != packages.ParseError {
+					continue
 				}
+				pos := errorPosition(e)
+				if generatedFile(pos.Filename) {
+					continue
+				}
+				parseErrs = append(parseErrs, e)
 			}
 			reportPkgErrors(parseErrs, &res.Diags)
 			warnMainDirectives(pkg, &res.Diags)
@@ -95,7 +103,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		// stale generated declaration would shadow its hand-written
 		// namesake there and hide the very collision being avoided.
 		for _, file := range pkg.Syntax {
-			if filepath.Base(pkg.Fset.Position(file.Pos()).Filename) == "main.gen.go" {
+			if generatedFile(pkg.Fset.Position(file.Pos()).Filename) {
 				continue
 			}
 			for _, decl := range file.Decls {
@@ -280,6 +288,21 @@ func warnMainDirectives(pkg *packages.Package, ds *diag.Diagnostics) {
 }
 
 // reportPkgErrors drops duplicates and unpositioned summaries.
+// generatedFile reports whether path is fabrik-generated: main.gen.go
+// or a file the output directory's manifest owns.
+func generatedFile(path string) bool {
+	base := filepath.Base(path)
+	if base == "main.gen.go" {
+		return true
+	}
+	for _, owned := range genfiles.Owned(filepath.Dir(path)) {
+		if owned == base {
+			return true
+		}
+	}
+	return false
+}
+
 func selectMain(mains []*packages.Package) (string, error) {
 	dirOf := func(pkg *packages.Package) string {
 		if len(pkg.GoFiles) == 0 {

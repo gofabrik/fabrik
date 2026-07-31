@@ -210,13 +210,14 @@ func TestResolveEmitEmbeddedNotSupportedYet(t *testing.T) {
 	}
 }
 
-func TestResolveSplitFragmentNotSupportedYet(t *testing.T) {
-	dir := writeModule(t, `generate:
-  split: fragment
-`)
-	_, diags := Resolve(dir, Overrides{})
-	if !containsMsg(diags, "split: fragment is not supported yet") {
-		t.Fatalf("diags = %v, want a not-supported-yet diagnostic", diags)
+func TestResolveSplitFragmentResolves(t *testing.T) {
+	dir := writeModule(t, "generate:\n  split: fragment\n")
+	opts, diags := Resolve(dir, Overrides{})
+	if diags.HasFatal() {
+		t.Fatalf("diags = %v", diags)
+	}
+	if opts.Split != SplitFragment {
+		t.Fatalf("split not resolved: %+v", opts)
 	}
 }
 
@@ -357,13 +358,5 @@ func TestResolveMalformedYAMLCarriesLine(t *testing.T) {
 	}
 	if diags[0].Pos.Line == 0 {
 		t.Fatalf("malformed yaml diagnostic must carry the reported line: %v", diags[0].Pos)
-	}
-}
-
-func TestEngineOptionsMapping(t *testing.T) {
-	o := Options{Comments: gen.CommentsFull, BuildTag: "wired"}
-	eo := o.EngineOptions()
-	if eo.Comments != gen.CommentsFull || eo.BuildTag != "wired" {
-		t.Fatalf("EngineOptions() = %+v", eo)
 	}
 }

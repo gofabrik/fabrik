@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"github.com/gofabrik/fabrik/fabrik/internal/diagfmt"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
 	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
+	"github.com/gofabrik/fabrik/fabrik/internal/genfiles"
 	"github.com/gofabrik/fabrik/gen"
 )
 
@@ -83,7 +83,7 @@ func resolveOptions(dir string, ov genconfig.Overrides) (engine.Options, genconf
 			return engine.Options{}, genconfig.Options{}, errSilent
 		}
 	}
-	return resolved.EngineOptions(), resolved, nil
+	return engine.OptionsFrom(resolved), resolved, nil
 }
 
 func commentLevel(s string) (gen.CommentLevel, error) {
@@ -135,16 +135,20 @@ func wire(dir string) (string, error) {
 }
 
 func wireWith(dir string, opts engine.Options) (string, error) {
-	res, out, err := generate(dir, opts)
+	res, _, err := generate(dir, opts)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(out, res.Src, 0o644); err != nil { // #nosec G306 -- generated Go source is intentionally readable
+	names, pruned, kept, err := genfiles.WriteSet(res.OutDir, res.Files, opts.Split)
+	if err != nil {
 		return "", err
 	}
-	written := []string{out}
+	written := make([]string, 0, len(names))
+	for _, name := range names {
+		written = append(written, filepath.Join(res.OutDir, name))
+	}
 	if res.Graph != nil {
-		sidecars, err := writeGraphSidecars(filepath.Dir(out), res.Graph)
+		sidecars, err := writeGraphSidecars(res.OutDir, res.Graph)
 		if err != nil {
 			return "", err
 		}
@@ -157,7 +161,13 @@ func wireWith(dir string, opts engine.Options) (string, error) {
 			fmt.Printf("fabrik: wrote %s\n", path)
 		}
 	}
-	return filepath.Dir(out), nil
+	for _, name := range pruned {
+		fmt.Printf("fabrik: removed %s\n", name)
+	}
+	for _, name := range kept {
+		fmt.Fprintf(os.Stderr, "fabrik: %s is no longer generated but was edited; not removing it\n", name)
+	}
+	return res.OutDir, nil
 }
 
 func writeGraphSidecars(mainDir string, graph *gen.Graph) ([]string, error) {
@@ -193,24 +203,31 @@ func mainPackageArg(dir, mainDir string) string {
 	return "./" + filepath.ToSlash(rel)
 }
 
-// wireCheck fails when main.gen.go is missing or stale.
+// wireCheck fails when any generated file is missing, stale, or no
+// longer generated.
 func wireCheck(dir string, opts engine.Options) error {
-	res, out, err := generate(dir, opts)
+	res, _, err := generate(dir, opts)
 	if err != nil {
 		return err
 	}
-	disk, err := os.ReadFile(out) // #nosec G304 -- reads an app/workspace-selected path
+	problems, kept, err := genfiles.Check(res.OutDir, res.Files, opts.Split)
 	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "fabrik: %s does not exist; run fabrik wire\n", out)
-			return errSilent
+		return err
+	}
+	for _, name := range kept {
+		problems = append(problems, name+" is no longer generated but was edited; not removing it")
+	}
+	if len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintf(os.Stderr, "fabrik: %s\n", p)
 		}
-		return err
-	}
-	if !bytes.Equal(disk, res.Src) {
-		fmt.Fprintf(os.Stderr, "fabrik: %s is stale; run fabrik wire\n", out)
+		fmt.Fprintln(os.Stderr, "fabrik: run fabrik wire")
 		return errSilent
 	}
-	fmt.Printf("fabrik: main.gen.go up to date\n")
+	if opts.Split {
+		fmt.Printf("fabrik: generated files up to date\n")
+	} else {
+		fmt.Printf("fabrik: main.gen.go up to date\n")
+	}
 	return nil
 }

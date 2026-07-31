@@ -227,7 +227,7 @@ func TestImportGroups(t *testing.T) {
 	g.Import("demo/shared")
 
 	var b bytes.Buffer
-	g.writeImports(&b)
+	g.writeImports(&b, nil)
 	want := `import (
 "fmt"
 "net/http"

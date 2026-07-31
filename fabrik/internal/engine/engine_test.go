@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
+	"github.com/gofabrik/fabrik/fabrik/internal/genfiles"
 	"github.com/gofabrik/fabrik/gen"
 	"golang.org/x/tools/txtar"
 )
@@ -60,7 +62,7 @@ func TestCompileFixtureReportsBuildOutput(t *testing.T) {
 		"github.com/gofabrik/fabrik/config": "/elsewhere",
 		"github.com/gofabrik/fabrik/router": "/local/router",
 	}
-	err := compileFixture(dir, dir, []byte("package main\n\nfunc main() { missing() }\n"), replaces)
+	err := compileFixture(dir, dir, map[string][]byte{"main.gen.go": []byte("package main\n\nfunc main() { missing() }\n")}, replaces)
 	if err == nil || !strings.Contains(err.Error(), "go build failed") || !strings.Contains(err.Error(), "undefined: missing") {
 		t.Fatalf("compileFixture error = %v", err)
 	}
@@ -77,9 +79,11 @@ func TestCompileFixtureReportsBuildOutput(t *testing.T) {
 }
 
 // compileFixture builds generated source against local fabrik modules.
-func compileFixture(dir, mainDir string, src []byte, replaces map[string]string) error {
-	if err := os.WriteFile(filepath.Join(mainDir, "main.gen.go"), src, 0o600); err != nil {
-		return err
+func compileFixture(dir, mainDir string, files map[string][]byte, replaces map[string]string) error {
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(mainDir, name), data, 0o600); err != nil {
+			return err
+		}
 	}
 	modPath := filepath.Join(dir, "go.mod")
 	mod, err := os.ReadFile(modPath) // #nosec G304 -- fixture temp dir
@@ -103,6 +107,11 @@ func compileFixture(dir, mainDir string, src []byte, replaces map[string]string)
 	build.Dir = mainDir
 	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 	if b, err := build.CombinedOutput(); err != nil {
+		var src []byte
+		for _, name := range slices.Sorted(maps.Keys(files)) {
+			src = append(src, []byte("--- "+name+" ---\n")...)
+			src = append(src, files[name]...)
+		}
 		return fmt.Errorf("go build failed: %w\n%s\n--- generated ---\n%s", err, b, src)
 	}
 	return nil
@@ -120,7 +129,7 @@ var fixtureModules = []struct{ token, path, rel string }{
 	{"HTTPSERVERDIR", "github.com/gofabrik/fabrik/httpserver", "../../../httpserver"},
 }
 
-func writeFixtureTree(t *testing.T, dir string, ar *txtar.Archive) (wantGen, wantDiags []byte, hasGen, hasDiags bool, replaces map[string]string) {
+func writeFixtureTree(t *testing.T, dir string, ar *txtar.Archive) (wantGen map[string][]byte, wantDiags []byte, hasGen, hasDiags bool, replaces map[string]string) {
 	t.Helper()
 	subs := map[string]string{}
 	replaces = map[string]string{}
@@ -133,12 +142,16 @@ func writeFixtureTree(t *testing.T, dir string, ar *txtar.Archive) (wantGen, wan
 		replaces[m.path] = abs
 	}
 	for _, f := range ar.Files {
-		switch f.Name {
-		case "want/main.gen.go":
-			wantGen, hasGen = f.Data, true
-			continue
-		case "want/diags":
+		if f.Name == "want/diags" {
 			wantDiags, hasDiags = f.Data, true
+			continue
+		}
+		if name, ok := strings.CutPrefix(f.Name, "want/"); ok && strings.HasSuffix(name, ".gen.go") {
+			if wantGen == nil {
+				wantGen = map[string][]byte{}
+			}
+			wantGen[name] = f.Data
+			hasGen = true
 			continue
 		}
 		path := filepath.Join(dir, f.Name)
@@ -190,7 +203,7 @@ func TestWireOptionsFullComments(t *testing.T) {
 	if strings.Contains(src, dir) {
 		t.Errorf("origin comments leak absolute fixture paths:\n%s", src)
 	}
-	if err := compileFixture(dir, res.MainDir, res.Src, replaces); err != nil {
+	if err := compileFixture(dir, res.MainDir, res.Files, replaces); err != nil {
 		t.Error(err)
 	}
 }
@@ -396,22 +409,37 @@ func runFixture(t *testing.T, fixture string) {
 	}
 	wantGen, wantDiags, hasGen, hasDiags, replaces := writeFixtureTree(t, dir, ar)
 
-	res, err := Wire(dir, nil)
+	opts, cdiags := genconfig.Resolve(dir, genconfig.Overrides{})
+	if cdiags.HasFatal() {
+		t.Fatalf("genconfig: %v", cdiags)
+	}
+	res, err := WireOptions(dir, nil, OptionsFrom(opts))
 	if err != nil {
 		t.Fatalf("Wire: %v", err)
 	}
 	gotDiags := renderDiags(res.Diags, dir)
 
-	if res.Src != nil {
-		again, err := Wire(dir, nil)
+	if len(res.Files) > 0 {
+		// The second run regenerates over the first run's on-disk output
+		// and manifest, pinning that generated files never feed back into
+		// naming or layout.
+		if _, _, _, err := genfiles.WriteSet(res.OutDir, res.Files, OptionsFrom(opts).Split); err != nil {
+			t.Fatalf("WriteSet: %v", err)
+		}
+		again, err := WireOptions(dir, nil, OptionsFrom(opts))
 		if err != nil {
 			t.Fatalf("Wire (second run): %v", err)
 		}
-		if !bytes.Equal(res.Src, again.Src) {
-			t.Errorf("generation is not deterministic:\nfirst:\n%s\nsecond:\n%s", res.Src, again.Src)
+		for name := range res.Files {
+			if !bytes.Equal(res.Files[name], again.Files[name]) {
+				t.Errorf("generation is not deterministic (%s):\nfirst:\n%s\nsecond:\n%s", name, res.Files[name], again.Files[name])
+			}
+		}
+		if len(again.Files) != len(res.Files) {
+			t.Errorf("generation is not deterministic: file sets differ")
 		}
 		if !testing.Short() {
-			if err := compileFixture(dir, res.MainDir, res.Src, replaces); err != nil {
+			if err := compileFixture(dir, res.MainDir, res.Files, replaces); err != nil {
 				t.Error(err)
 			}
 		}
@@ -419,15 +447,29 @@ func runFixture(t *testing.T, fixture string) {
 
 	if *update {
 		if !t.Failed() {
-			updateFixture(t, fixture, ar, res.Src, gotDiags)
+			updateFixture(t, fixture, ar, res.Files, gotDiags)
 		}
 		return
 	}
 
-	if hasGen && !bytes.Equal(res.Src, wantGen) {
-		t.Errorf("main.gen.go mismatch\n--- want ---\n%s--- got ---\n%s", wantGen, res.Src)
+	if hasGen {
+		for _, name := range slices.Sorted(maps.Keys(wantGen)) {
+			got, ok := res.Files[name]
+			if !ok {
+				t.Errorf("missing generated file %s", name)
+				continue
+			}
+			if !bytes.Equal(got, wantGen[name]) {
+				t.Errorf("%s mismatch\n--- want ---\n%s--- got ---\n%s", name, wantGen[name], got)
+			}
+		}
+		for _, name := range slices.Sorted(maps.Keys(res.Files)) {
+			if _, ok := wantGen[name]; !ok {
+				t.Errorf("unexpected generated file %s:\n%s", name, res.Files[name])
+			}
+		}
 	}
-	if !hasGen && res.Src != nil {
+	if !hasGen && len(res.Files) > 0 {
 		t.Errorf("unexpected generated output (no want/main.gen.go in fixture):\n%s", res.Src)
 	}
 	if hasDiags && gotDiags != string(wantDiags) {
@@ -459,15 +501,15 @@ func renderDiags(ds diag.Diagnostics, root string) string {
 	return b.String()
 }
 
-func updateFixture(t *testing.T, fixture string, ar *txtar.Archive, src []byte, diags string) {
+func updateFixture(t *testing.T, fixture string, ar *txtar.Archive, files map[string][]byte, diags string) {
 	var kept []txtar.File
 	for _, f := range ar.Files {
-		if f.Name != "want/main.gen.go" && f.Name != "want/diags" {
+		if f.Name != "want/diags" && !strings.HasPrefix(f.Name, "want/") {
 			kept = append(kept, f)
 		}
 	}
-	if src != nil {
-		kept = append(kept, txtar.File{Name: "want/main.gen.go", Data: src})
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		kept = append(kept, txtar.File{Name: "want/" + name, Data: files[name]})
 	}
 	if diags != "" {
 		kept = append(kept, txtar.File{Name: "want/diags", Data: []byte(diags)})
