@@ -336,6 +336,53 @@ func TestWireOptionsGraph(t *testing.T) {
 	}
 }
 
+func TestWireOptionsOutDirMatchesMainDir(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "kitchen_sink.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+
+	res, err := WireOptions(dir, nil, Options{})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	if res.OutDir != res.MainDir || res.OutDir == "" {
+		t.Errorf("OutDir = %q, MainDir = %q, want them equal and non-empty", res.OutDir, res.MainDir)
+	}
+}
+
+func TestWireOptionsBuildTag(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "kitchen_sink.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+
+	plain, err := WireOptions(dir, nil, Options{})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	if bytes.Contains(plain.Src, []byte("//go:build")) {
+		t.Errorf("no buildtag set, but output carries a build constraint:\n%s", plain.Src)
+	}
+	tagged, err := WireOptions(dir, nil, Options{BuildTag: "e2e"})
+	if err != nil {
+		t.Fatalf("WireOptions(buildtag): %v", err)
+	}
+	if !bytes.HasPrefix(tagged.Src, []byte("//go:build e2e\n\n")) {
+		t.Errorf("output does not start with the build constraint:\n%s", tagged.Src)
+	}
+}
+
 func runFixture(t *testing.T, fixture string) {
 	data, err := os.ReadFile(fixture) // #nosec G304 -- reads a test-selected fixture path
 	if err != nil {

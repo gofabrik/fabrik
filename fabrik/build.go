@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 )
 
 func buildCmd(args []string) error {
@@ -29,20 +31,33 @@ func buildCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	mainDir, err := wire(abs)
+	opts, resolved, err := resolveOptions(abs, genconfig.Overrides{})
+	if err != nil {
+		return err
+	}
+	mainDir, err := wireWith(abs, opts)
 	if err != nil {
 		return err
 	}
 
-	goArgs := []string{"build"}
-	if *out != "" {
-		goArgs = append(goArgs, "-o", *out)
-	}
-	goArgs = append(goArgs, mainPackageArg(abs, mainDir))
+	goArgs := buildArgs(*out, resolved.BuildTag, mainPackageArg(abs, mainDir))
 
 	cmd := exec.Command("go", goArgs...) // #nosec G204 -- launches the go toolchain with controlled args
 	cmd.Dir = abs
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// buildArgs renders the "go build" argument list; buildTag propagates the
+// project's //go:build constraint so the generated file still builds.
+func buildArgs(out, buildTag, pkg string) []string {
+	args := []string{"build"}
+	if out != "" {
+		args = append(args, "-o", out)
+	}
+	if buildTag != "" {
+		args = append(args, "-tags="+buildTag)
+	}
+	return append(args, pkg)
 }

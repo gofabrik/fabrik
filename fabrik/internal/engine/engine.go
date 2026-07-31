@@ -16,6 +16,7 @@ import (
 type Result struct {
 	Src     []byte
 	MainDir string
+	OutDir  string // directory the generated output belongs to; equals MainDir until split/embedded modes relocate it
 	Diags   diag.Diagnostics
 	Graph   *gen.Graph // Non-nil only when Options.Graph is true.
 }
@@ -24,6 +25,7 @@ type Result struct {
 type Options struct {
 	Comments gen.CommentLevel
 	Graph    bool
+	BuildTag string // constrains the generated file with a //go:build line
 }
 
 // Wire generates main.gen.go for the module rooted at dir with default
@@ -51,7 +53,7 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	// Stop before directive checks when package loading is invalid.
 	if res.Diags.HasFatal() {
 		res.Diags.Sort()
-		return &Result{MainDir: res.MainDir, Diags: res.Diags}, nil
+		return &Result{MainDir: res.MainDir, OutDir: res.MainDir, Diags: res.Diags}, nil
 	}
 
 	directives := New()
@@ -100,7 +102,7 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	// Emit only after project-wide Parse and Check pass.
 	if diags.HasFatal() {
 		diags.Sort()
-		return &Result{MainDir: res.MainDir, Diags: diags}, nil
+		return &Result{MainDir: res.MainDir, OutDir: res.MainDir, Diags: diags}, nil
 	}
 
 	g := gen.New()
@@ -109,6 +111,7 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	g.SetTypes(res.Types)
 	g.ReserveOutputIdents(res.MainIdents)
 	g.SetCommentLevel(opts.Comments)
+	g.SetBuildTag(opts.BuildTag)
 	g.SetSourceRoot(res.Root)
 	for _, d := range directives {
 		if h, ok := d.(gen.Hinter); ok {
@@ -207,14 +210,14 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	diags = append(diags, g.ValidateGraph()...)
 	diags.Sort()
 	if diags.HasFatal() {
-		return &Result{MainDir: res.MainDir, Diags: diags}, nil
+		return &Result{MainDir: res.MainDir, OutDir: res.MainDir, Diags: diags}, nil
 	}
 
 	src, err := g.Render()
 	if err != nil {
 		return nil, err
 	}
-	out := &Result{Src: src, MainDir: res.MainDir, Diags: diags}
+	out := &Result{Src: src, MainDir: res.MainDir, OutDir: res.MainDir, Diags: diags}
 	if opts.Graph {
 		// Graph uses import aliases finalized by Render.
 		out.Graph = g.Graph()

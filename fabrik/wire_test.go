@@ -2,13 +2,22 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 	"github.com/gofabrik/fabrik/gen"
 )
+
+func writeGoMod(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestCommentLevelValues(t *testing.T) {
 	cases := []struct {
@@ -38,33 +47,76 @@ func TestWireCmdRejectsInvalidCommentLevel(t *testing.T) {
 }
 
 func TestParseWireArgsThreadsOptions(t *testing.T) {
-	dir, check, opts, err := parseWireArgs([]string{"-check", "-comments", "full", "app"})
+	dir, check, ov, graph, err := parseWireArgs([]string{"-check", "-comments", "full", "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dir != "app" || !check || opts.Comments != gen.CommentsFull {
-		t.Fatalf("parseWireArgs = %q, %v, %+v", dir, check, opts)
+	if dir != "app" || !check || ov.Comments == nil || *ov.Comments != gen.CommentsFull {
+		t.Fatalf("parseWireArgs = %q, %v, %+v", dir, check, ov)
 	}
-	dir, check, opts, err = parseWireArgs(nil)
+	dir, check, ov, graph, err = parseWireArgs(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dir != "." || check || opts.Comments != gen.CommentsSections || opts.Graph {
-		t.Fatalf("defaults = %q, %v, %+v", dir, check, opts)
+	if dir != "." || check || ov.Comments != nil || graph {
+		t.Fatalf("defaults = %q, %v, %+v, %v", dir, check, ov, graph)
 	}
-	dir, check, opts, err = parseWireArgs([]string{"--graph", "app"})
+	dir, check, ov, graph, err = parseWireArgs([]string{"--graph", "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dir != "app" || check || !opts.Graph {
-		t.Fatalf("parseWireArgs(--graph) = %q, %v, %+v", dir, check, opts)
+	if dir != "app" || check || !graph {
+		t.Fatalf("parseWireArgs(--graph) = %q, %v, %v", dir, check, graph)
 	}
 }
 
 func TestParseWireArgsRejectsCheckWithGraph(t *testing.T) {
-	_, _, _, err := parseWireArgs([]string{"-check", "--graph"})
+	_, _, _, _, err := parseWireArgs([]string{"-check", "--graph"})
 	if err == nil || !strings.Contains(err.Error(), "-check") || !strings.Contains(err.Error(), "--graph") {
 		t.Fatalf("parseWireArgs error = %v, want a usage error naming both flags", err)
+	}
+}
+
+func TestResolveOptionsAppliesFabrikYAML(t *testing.T) {
+	dir := t.TempDir()
+	writeGoMod(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "fabrik.yaml"), []byte("generate:\n  buildtag: e2e\n  comments: full\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts, resolved, err := resolveOptions(dir, genconfig.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Comments != gen.CommentsFull || opts.BuildTag != "e2e" || resolved.BuildTag != "e2e" {
+		t.Fatalf("opts = %+v, resolved = %+v", opts, resolved)
+	}
+}
+
+func TestResolveOptionsOverrideBeatsFile(t *testing.T) {
+	dir := t.TempDir()
+	writeGoMod(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "fabrik.yaml"), []byte("generate:\n  comments: off\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	full := gen.CommentsFull
+	opts, _, err := resolveOptions(dir, genconfig.Overrides{Comments: &full})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Comments != gen.CommentsFull {
+		t.Fatalf("opts.Comments = %v, want the override to win", opts.Comments)
+	}
+}
+
+func TestResolveOptionsReportsFatalDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	writeGoMod(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "fabrik.yaml"), []byte("generate:\n  emit: bogus\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := resolveOptions(dir, genconfig.Overrides{})
+	if !errors.Is(err, errSilent) {
+		t.Fatalf("resolveOptions error = %v, want errSilent", err)
 	}
 }
 
@@ -119,5 +171,11 @@ func TestWriteGraphSidecars(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(mmd), "flowchart TB") {
 		t.Errorf("mermaid sidecar:\n%s", mmd)
+	}
+}
+
+func TestParseWireArgsRejectsExplicitEmptyComments(t *testing.T) {
+	if _, _, _, _, err := parseWireArgs([]string{"-comments="}); err == nil {
+		t.Fatal("explicit empty -comments accepted")
 	}
 }

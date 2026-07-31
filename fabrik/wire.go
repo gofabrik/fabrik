@@ -11,11 +11,12 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/fabrik/internal/diagfmt"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 	"github.com/gofabrik/fabrik/gen"
 )
 
 func wireCmd(args []string) error {
-	dir, check, opts, err := parseWireArgs(args)
+	dir, check, ov, graph, err := parseWireArgs(args)
 	if err != nil {
 		return err
 	}
@@ -23,6 +24,11 @@ func wireCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, _, err := resolveOptions(abs, ov)
+	if err != nil {
+		return err
+	}
+	opts.Graph = graph
 	if check {
 		return wireCheck(abs, opts)
 	}
@@ -30,41 +36,65 @@ func wireCmd(args []string) error {
 	return err
 }
 
-func parseWireArgs(args []string) (dir string, check bool, opts engine.Options, err error) {
+func parseWireArgs(args []string) (dir string, check bool, ov genconfig.Overrides, graph bool, err error) {
 	fs := flag.NewFlagSet("wire", flag.ContinueOnError)
 	checkFlag := fs.Bool("check", false, "verify main.gen.go is up to date instead of writing it")
-	comments := fs.String("comments", "sections", "generated comment level: off, sections, or full")
-	graph := fs.Bool("graph", false, "write the structural graph beside main.gen.go")
+	comments := fs.String("comments", "", "generated comment level: off, sections, or full (overrides fabrik.yaml)")
+	graphFlag := fs.Bool("graph", false, "write the structural graph beside main.gen.go")
 	if err := fs.Parse(args); err != nil {
-		return "", false, engine.Options{}, err
+		return "", false, genconfig.Overrides{}, false, err
 	}
-	level, err := commentLevel(*comments)
-	if err != nil {
-		return "", false, engine.Options{}, err
+	commentsSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "comments" {
+			commentsSet = true
+		}
+	})
+	if commentsSet {
+		level, err := commentLevel(*comments)
+		if err != nil {
+			return "", false, genconfig.Overrides{}, false, err
+		}
+		ov.Comments = &level
 	}
-	if *checkFlag && *graph {
-		return "", false, engine.Options{}, fmt.Errorf("-check does not write files; drop --graph to check, or drop -check to write the graph")
+	if *checkFlag && *graphFlag {
+		return "", false, genconfig.Overrides{}, false, fmt.Errorf("-check does not write files; drop --graph to check, or drop -check to write the graph")
 	}
 	dir = "."
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)
 	}
 	if fs.NArg() > 1 {
-		return "", false, engine.Options{}, fmt.Errorf("unexpected argument %q; usage: fabrik wire [-check] [-comments=LEVEL] [--graph] [dir]", fs.Arg(1))
+		return "", false, genconfig.Overrides{}, false, fmt.Errorf("unexpected argument %q; usage: fabrik wire [-check] [-comments=LEVEL] [--graph] [dir]", fs.Arg(1))
 	}
-	return dir, *checkFlag, engine.Options{Comments: level, Graph: *graph}, nil
+	return dir, *checkFlag, ov, *graphFlag, nil
+}
+
+// resolveOptions merges fabrik.yaml with per-invocation overrides into engine
+// options, reporting genconfig diagnostics through the same path as engine
+// diagnostics; a fatal one returns errSilent.
+func resolveOptions(dir string, ov genconfig.Overrides) (engine.Options, genconfig.Options, error) {
+	resolved, diags := genconfig.Resolve(dir, ov)
+	if len(diags) > 0 {
+		if err := emitDiagnostics(diags); err != nil {
+			return engine.Options{}, genconfig.Options{}, err
+		}
+		if diags.HasFatal() {
+			return engine.Options{}, genconfig.Options{}, errSilent
+		}
+	}
+	return resolved.EngineOptions(), resolved, nil
 }
 
 func commentLevel(s string) (gen.CommentLevel, error) {
-	switch s {
-	case "off":
-		return gen.CommentsOff, nil
-	case "sections":
-		return gen.CommentsSections, nil
-	case "full":
-		return gen.CommentsFull, nil
+	if s == "" {
+		return 0, fmt.Errorf("invalid -comments level %q: want off, sections, or full", s)
 	}
-	return 0, fmt.Errorf("invalid -comments level %q: want off, sections, or full", s)
+	level, err := genconfig.ParseCommentLevel(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid -comments level %q: want off, sections, or full", s)
+	}
+	return level, nil
 }
 
 // generate reports diagnostics and returns errSilent on fatal ones.
@@ -86,7 +116,7 @@ func generate(dir string, opts engine.Options) (res *engine.Result, out string, 
 			return nil, "", errSilent
 		}
 	}
-	return res, filepath.Join(res.MainDir, "main.gen.go"), nil
+	return res, filepath.Join(res.OutDir, "main.gen.go"), nil
 }
 
 func emitDiagnostics(diags diag.Diagnostics) error {

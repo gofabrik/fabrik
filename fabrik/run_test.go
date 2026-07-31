@@ -34,6 +34,22 @@ func TestModuleRoot_ErrorsWithoutGoMod(t *testing.T) {
 	}
 }
 
+func TestRunArgs_PropagatesBuildTag(t *testing.T) {
+	got := runArgs("e2e", ".", []string{"serve"})
+	want := []string{"run", "-tags=e2e", ".", "serve"}
+	if !slices.Equal(got, want) {
+		t.Errorf("runArgs = %v, want %v", got, want)
+	}
+}
+
+func TestRunArgs_OmitsTagsWhenUnset(t *testing.T) {
+	got := runArgs("", ".", nil)
+	want := []string{"run", "."}
+	if !slices.Equal(got, want) {
+		t.Errorf("runArgs = %v, want %v", got, want)
+	}
+}
+
 func TestRunEnv_DefaultsDevelopmentOnlyWhenUnset(t *testing.T) {
 	t.Setenv("FABRIK_ENV", "production")
 	if env := runEnv(); env != nil {

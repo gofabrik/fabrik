@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 )
 
 func runCmd(args []string) error {
@@ -38,15 +40,30 @@ func runCommand(dir string, passthrough []string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	mainDir, err := wire(root)
+	opts, resolved, err := resolveOptions(root, genconfig.Overrides{})
 	if err != nil {
 		return nil, err
 	}
-	goArgs := append([]string{"run", mainPackageArg(root, mainDir)}, passthrough...)
+	mainDir, err := wireWith(root, opts)
+	if err != nil {
+		return nil, err
+	}
+	goArgs := runArgs(resolved.BuildTag, mainPackageArg(root, mainDir), passthrough)
 	cmd := exec.Command("go", goArgs...) // #nosec G204 G702 -- launches the go toolchain with controlled args and no shell
 	cmd.Dir = root
 	cmd.Env = runEnv()
 	return cmd, nil
+}
+
+// runArgs renders the "go run" argument list; buildTag propagates the
+// project's //go:build constraint so the generated file still builds.
+func runArgs(buildTag, pkg string, passthrough []string) []string {
+	args := []string{"run"}
+	if buildTag != "" {
+		args = append(args, "-tags="+buildTag)
+	}
+	args = append(args, pkg)
+	return append(args, passthrough...)
 }
 
 // runEnv defaults FABRIK_ENV to development unless it is already present, including with an empty value.
