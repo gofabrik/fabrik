@@ -134,9 +134,32 @@ func (g *Gen) Node(n Node) {
 	if b.Origin.Directive == "" {
 		b.Origin.Directive = g.current
 	}
+	if sel, ok := n.(*Select); ok {
+		stampSelectPhases(sel)
+	}
 	if sc := g.scope; sc != nil {
 		sc.nodes = append(sc.nodes, n)
 		return
 	}
 	g.nodes = append(g.nodes, n)
+}
+
+// stampSelectPhases gives every unset child of a select its parent's
+// phase; rendering ignores child phases, so the stamp only makes the
+// documented inheritance observable to validation.
+func stampSelectPhases(sel *Select) {
+	for ci := range sel.Cases {
+		c := &sel.Cases[ci]
+		for _, child := range c.Body {
+			if child.base().Phase == 0 {
+				child.base().Phase = sel.Phase
+			}
+			if nested, ok := child.(*Select); ok {
+				stampSelectPhases(nested)
+			}
+		}
+		if c.Result.Phase == 0 {
+			c.Result.Phase = sel.Phase
+		}
+	}
 }

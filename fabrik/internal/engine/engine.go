@@ -199,6 +199,7 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	}
 	// Scope passes register binds too; drain conflicts they recorded.
 	diags = append(diags, g.BindConflicts()...)
+	diags = append(diags, g.ValidateGraph()...)
 	diags.Sort()
 	if diags.HasFatal() {
 		return &Result{MainDir: res.MainDir, Diags: diags}, nil
