@@ -11,14 +11,45 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 )
 
-// ValidateGraph checks the emitted node graph before rendering: unique
-// definitions per flow, Uses entries that name real variables, per-phase
-// dependency cycles, Raw metadata consistent with its parsed lines, and
-// Select children carrying their parent's phase. Rendering trusts these
-// invariants; a violation would otherwise surface as invalid Go or a
-// silent misorder.
+// ValidateGraph checks definition, dependency, Raw metadata, and Select phase invariants.
+// Rendering assumes these checks pass.
 func (g *Gen) ValidateGraph() diag.Diagnostics {
 	var ds diag.Diagnostics
+	if g.fragmentMode() {
+		// Positionless nodes inherit their materialization ancestor or flow position.
+		ancestor := map[Node]token.Position{}
+		var mark func(n Node, pos token.Position)
+		mark = func(n Node, pos token.Position) {
+			ancestor[n] = pos
+			if sel, ok := n.(*Select); ok {
+				for ci := range sel.Cases {
+					for _, child := range sel.Cases[ci].Body {
+						mark(child, pos)
+					}
+					mark(&sel.Cases[ci].Result, pos)
+				}
+			}
+		}
+		for _, sn := range g.frag.nodes {
+			if sn.pos.IsValid() {
+				mark(sn.n, sn.pos)
+			}
+		}
+		flowPos := token.Position{}
+		validate := func(nodes []Node, declPos token.Position) {
+			g.validateFlowWith(&ds, nodes, func(n Node) token.Position {
+				if p, ok := ancestor[n]; ok {
+					return p
+				}
+				return declPos
+			})
+		}
+		validate(g.flowNodes("default"), flowPos)
+		for _, s := range g.scopes {
+			validate(g.flowNodes(s.fn), s.pos)
+		}
+		return ds
+	}
 	g.validateFlow(&ds, g.nodes, token.Position{})
 	for _, s := range g.scopes {
 		g.validateFlow(&ds, s.nodes, s.pos)
@@ -27,11 +58,15 @@ func (g *Gen) ValidateGraph() diag.Diagnostics {
 }
 
 func (g *Gen) validateFlow(ds *diag.Diagnostics, nodes []Node, fallback token.Position) {
+	g.validateFlowWith(ds, nodes, func(Node) token.Position { return fallback })
+}
+
+func (g *Gen) validateFlowWith(ds *diag.Diagnostics, nodes []Node, fallbackFor func(Node) token.Position) {
 	nodePos := func(n Node) token.Position {
 		if p := n.base().Origin.Pos; p.IsValid() {
 			return p
 		}
-		return fallback
+		return fallbackFor(n)
 	}
 
 	defined := map[string]token.Position{}
@@ -111,9 +146,7 @@ func (g *Gen) validateFlow(ds *diag.Diagnostics, nodes []Node, fallback token.Po
 	g.validatePhaseCycles(ds, nodes, nodePos)
 }
 
-// validatePhaseCycles reports dependency cycles within one phase of one
-// flow, with the chain, each node's directive, and which edges came
-// from declared Uses.
+// validatePhaseCycles reports dependency cycles within one phase of one flow.
 func (g *Gen) validatePhaseCycles(ds *diag.Diagnostics, nodes []Node, nodePos func(Node) token.Position) {
 	for _, pl := range phaseLabels {
 		var phase []Node
@@ -226,7 +259,7 @@ func validateRawMetadata(ds *diag.Diagnostics, r *Raw, pos token.Position, known
 	src := "package p\nfunc _() {\n" + strings.Join(r.Lines, "\n") + "\n}"
 	f, err := parser.ParseFile(token.NewFileSet(), "", src, 0)
 	if err != nil {
-		// validateExprFields owns unparsable lines.
+		// validateExprFields reports unparsable lines.
 		return
 	}
 	body := f.Decls[0].(*ast.FuncDecl).Body
@@ -264,7 +297,7 @@ func validateRawMetadata(ds *diag.Diagnostics, r *Raw, pos token.Position, known
 		}
 	}
 	for _, u := range r.Uses {
-		// Unknown entries are the unknown-uses check's report.
+		// Unknown Uses entries are reported separately.
 		if !known(u) {
 			continue
 		}

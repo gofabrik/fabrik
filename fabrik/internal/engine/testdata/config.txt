@@ -99,22 +99,21 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		fabrikConfigOpts := []config.Option{
+		configOpts := []config.Option{
 			config.FileOptional("config.yaml"),
 			config.File("config." + fabrikEnv + ".yaml"),
 		}
 		if fabrikEnv == "development" {
-			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+			configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 		}
-		sharedConfig, err := config.Load[shared.Config](append(fabrikConfigOpts,
-			config.KnownSections("http", "store", "unused"),
+		configOpts = append(configOpts, config.KnownSections("http", "store", "unused"))
+		sharedConfig, err := config.Load[shared.Config](append(configOpts,
 			config.Section("http"),
 		)...)
 		if err != nil {
 			return err
 		}
-		storeConfig, err := config.Load[store.Config](append(fabrikConfigOpts,
-			config.KnownSections("http", "store", "unused"),
+		storeConfig, err := config.Load[store.Config](append(configOpts,
 			config.Section("store"),
 		)...)
 		if err != nil {

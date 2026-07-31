@@ -148,7 +148,7 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	t.registered = true
-	g.BindLazyPath(setPath, func() (string, diag.Diagnostics) {
+	g.BindLazyPathAt(setPath, nd.pos, func() (string, diag.Diagnostics) {
 		decls := t.sortedDecls()
 		for _, d := range decls {
 			if !g.InValidationScope() {

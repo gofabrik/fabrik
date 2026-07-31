@@ -75,7 +75,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"os/signal"
 	"syscall"
@@ -106,29 +105,19 @@ func run() int {
 			{
 				Name: "migrate-db",
 				Run: func(ctx cli.Context) (err error) {
-					db, dialect, sources, err := buildMigrateDB(ctx)
+					sharedSqlDB, err := shared.NewDB()
 					if err != nil {
 						return err
 					}
-					return shared.MigrateDB(ctx, db, dialect, sources)
+					sharedMigrationsDialect := shared.NewDialect()
+					migrationSources := migrations.Sources{
+						{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
+						{Stream: "todos", FS: todos.Migrations, Dir: "migrations"},
+					}
+					return shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildMigrateDB(ctx context.Context) (*sql.DB, migrations.Dialect, migrations.Sources, error) {
-	// Providers
-	sharedSqlDB, err := shared.NewDB()
-	if err != nil {
-		return nil, 0, nil, err
-	}
-
-	sharedMigrationsDialect := shared.NewDialect()
-	migrationSources := migrations.Sources{
-		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
-		{Stream: "todos", FS: todos.Migrations, Dir: "migrations"},
-	}
-	return sharedSqlDB, sharedMigrationsDialect, migrationSources, nil
 }

@@ -145,7 +145,7 @@ func (w *Web) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	}
 	if !w.registered {
 		w.registered = true
-		g.BindLazyPath(adapterPath, func() (string, diag.Diagnostics) {
+		g.BindLazyPathAt(adapterPath, nd.pos, func() (string, diag.Diagnostics) {
 			var ds diag.Diagnostics
 			webPkg := g.Import(webPath)
 			var args []string

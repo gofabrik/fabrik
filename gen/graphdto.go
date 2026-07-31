@@ -86,7 +86,7 @@ type GraphEdge struct {
 func (g *Gen) Graph() *Graph {
 	gr := &Graph{Version: graphSchemaVersion, Module: g.module}
 	seen := map[GraphEdge]bool{}
-	gr.addFlow(g, "default", "run", emissionOrdered(g.nodes), nil, seen)
+	gr.addFlow(g, "default", "run", emissionOrdered(g.flowNodes("default")), nil, seen)
 	used := map[string]bool{"default": true}
 	for _, s := range g.scopes {
 		// A command named "default" uses its build function name to avoid the reserved flow id.
@@ -98,7 +98,7 @@ func (g *Gen) Graph() *Graph {
 			id = fmt.Sprintf("%s@%d", s.fn, n)
 		}
 		used[id] = true
-		gr.addFlow(g, id, s.fn, emissionOrdered(s.nodes), s, seen)
+		gr.addFlow(g, id, s.fn, emissionOrdered(g.scopeFlowNodes(s)), s, seen)
 	}
 	sort.Slice(gr.Edges, func(i, j int) bool {
 		if gr.Edges[i].From != gr.Edges[j].From {
@@ -236,7 +236,7 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 		}
 	}
 	var order []string
-	if s != nil {
+	if s != nil && !g.fragmentMode() {
 		order = s.bindOrder
 		for key, byName := range s.binds {
 			for name, expr := range byName {
@@ -245,6 +245,38 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 		}
 		for path, expr := range s.pathExprs {
 			if !slices.Contains(pathsByExpr[expr], path) {
+				pathsByExpr[expr] = append(pathsByExpr[expr], path)
+			}
+		}
+	} else if s != nil {
+		// Bind state is global under fragment emission; a flow lists the
+		// bindings whose expressions its nodes can satisfy or that its
+		// roots reference.
+		relevant := func(expr string) bool {
+			for _, e := range s.rootExprs {
+				if e == expr {
+					return true
+				}
+			}
+			ok := len(owner) == 0
+			freeIdents(expr, func(name string) {
+				if owner[name] != "" {
+					ok = true
+				}
+			})
+			return ok
+		}
+		order = g.bindOrder
+		g.binds.Iterate(func(t types.Type, v any) {
+			key := types.TypeString(t, nil)
+			for name, expr := range v.(map[string]string) {
+				if relevant(expr) {
+					addType(expr, t, key, name)
+				}
+			}
+		})
+		for path, expr := range g.pathExprs {
+			if relevant(expr) && !slices.Contains(pathsByExpr[expr], path) {
 				pathsByExpr[expr] = append(pathsByExpr[expr], path)
 			}
 		}

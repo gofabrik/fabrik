@@ -186,7 +186,7 @@ func (mg *Migrations) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	mg.registered = true
-	g.BindLazyPath(sourcesPath, func() (string, diag.Diagnostics) {
+	g.BindLazyPathAt(sourcesPath, nd.pos, func() (string, diag.Diagnostics) {
 		ds := mg.resolveStreams(g)
 		if ds.HasFatal() {
 			return "", ds

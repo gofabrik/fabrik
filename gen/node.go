@@ -137,6 +137,14 @@ func (g *Gen) Node(n Node) {
 	if sel, ok := n.(*Select); ok {
 		stampSelectPhases(sel)
 	}
+	if sc := g.scope; sc != nil && sc.validation {
+		sc.nodes = append(sc.nodes, n)
+		return
+	}
+	if g.fragmentMode() {
+		g.frag.nodes = append(g.frag.nodes, storeNode{n: n, demand: g.frag.currentDemand(), flow: g.frag.flow, pos: g.frag.currentPos()})
+		return
+	}
 	if sc := g.scope; sc != nil {
 		sc.nodes = append(sc.nodes, n)
 		return

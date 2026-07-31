@@ -175,8 +175,8 @@ func (j *Jobs) Check(n any, t gen.Typed) diag.Diagnostics {
 }
 
 func (j *Jobs) Emit(n any, g *gen.Gen) diag.Diagnostics {
-	if n.(*jobNode).fn != "" {
-		j.b.ensure(g)
+	if nd := n.(*jobNode); nd.fn != "" {
+		j.b.ensure(g, nd.pos)
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func (j *Jobs) Finish(g *gen.Gen) diag.Diagnostics {
 	if len(j.b.jobs) == 0 && len(j.b.crons) == 0 {
 		return nil
 	}
-	j.b.ensure(g)
+	j.b.ensure(g, token.Position{})
 	return nil
 }
 
@@ -301,18 +301,18 @@ func (c *Cron) Check(n any, t gen.Typed) diag.Diagnostics {
 }
 
 func (c *Cron) Emit(n any, g *gen.Gen) diag.Diagnostics {
-	if n.(*cronNode).fn != "" {
-		c.b.ensure(g)
+	if nd := n.(*cronNode); nd.fn != "" {
+		c.b.ensure(g, nd.pos)
 	}
 	return nil
 }
 
-func (b *builder) ensure(g *gen.Gen) {
+func (b *builder) ensure(g *gen.Gen, pos token.Position) {
 	if b.registered {
 		return
 	}
 	b.registered = true
-	g.BindLazyPath(managerPath, func() (string, diag.Diagnostics) { return b.build(g) })
+	g.BindLazyPathAt(managerPath, pos, func() (string, diag.Diagnostics) { return b.build(g) })
 	if rt, ok := g.LookupType(jobsPath, "Runner"); ok {
 		g.BindLazy(types.NewPointer(rt), "", func() (string, diag.Diagnostics) {
 			var ds diag.Diagnostics

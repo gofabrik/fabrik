@@ -199,10 +199,10 @@ func (as *Assets) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	servePath := compiledPath
 	if as.switchMode {
 		servePath = serverPath
-		g.BindLazyPath(serverPath, as.emitSwitch(g))
+		g.BindLazyPathAt(serverPath, nd.pos, as.emitSwitch(g))
 	} else {
-		g.BindLazyPath(compiledPath, as.emitBuild(g))
-		g.BindLazyPath(serverPath, func() (string, diag.Diagnostics) {
+		g.BindLazyPathAt(compiledPath, nd.pos, as.emitBuild(g))
+		g.BindLazyPathAt(serverPath, nd.pos, func() (string, diag.Diagnostics) {
 			expr, ds, ok := g.InstancePath(compiledPath)
 			if !ok {
 				return "", ds
@@ -235,6 +235,7 @@ func (as *Assets) emitBuild(g *gen.Gen) func() (string, diag.Diagnostics) {
 		decls := as.sortedDecls()
 		amPkg := g.Import(assetmapperPath)
 		v := g.Var("assetCompiled")
+		g.DeclareVarType(v, amPkg+".Server", "nil")
 		g.Node(&gen.Call{
 			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
 			Var:  v,
@@ -263,6 +264,7 @@ func (as *Assets) emitSwitch(g *gen.Gen) func() (string, diag.Diagnostics) {
 		amPkg := g.Import(assetmapperPath)
 		kind := g.Var("assetKind")
 		v := g.Var("assetServer")
+		g.DeclareVarType(v, amPkg+".Server", "nil")
 		g.Node(&gen.Call{
 			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: decls[0].pos}},
 			Var:  kind,

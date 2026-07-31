@@ -33,6 +33,7 @@ type Scope struct {
 	bindSeen    map[string]bool
 	pathExprs   map[string]string
 	singletons  map[string]string
+	onceVals    map[string]string
 	nodes       []Node
 	running     map[*lazyBind]bool
 	imports     map[string]string // isolated validation aliases
@@ -107,6 +108,7 @@ func (g *Gen) enterScope(s *Scope, validation bool) {
 	s.bindSeen = map[string]bool{}
 	s.pathExprs = map[string]string{}
 	s.singletons = map[string]string{}
+	s.onceVals = map[string]string{}
 	s.running = map[*lazyBind]bool{}
 	s.validation = validation
 	if validation {

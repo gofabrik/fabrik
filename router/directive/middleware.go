@@ -54,7 +54,6 @@ type mwNode struct {
 	errResult bool
 	result    types.Type
 	params    []ctorParam
-	varNames  map[any]string // scope-local constructor variables
 }
 
 // ctorParam is one binding-resolved constructor parameter.
@@ -142,7 +141,7 @@ func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	m.host.record(func(g *gen.Gen) diag.Diagnostics {
-		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		r := routerSingleton(g)
 		expr, ds := m.expr(g, nd)
 		g.Node(&gen.Call{
 			Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
@@ -159,49 +158,49 @@ func (m *Middleware) expr(g *gen.Gen, nd *mwNode) (string, diag.Diagnostics) {
 	if !nd.ctor {
 		return g.ImportPkg(nd.pkg) + "." + nd.fn, nil
 	}
-	if nd.varNames == nil {
-		nd.varNames = map[any]string{}
-	}
-	if v, ok := nd.varNames[g.ScopeID()]; ok {
-		return v, nil
-	}
 	var ds diag.Diagnostics
-	args := make([]string, 0, len(nd.params))
-	for _, pr := range nd.params {
-		name := g.SelectedName(nd.obj, pr.ident)
-		expr, ids, ok := g.Instance(pr.t, name)
-		ds = append(ds, ids...)
-		if !ok && len(ids) == 0 {
-			msg, help := g.MissingBinding(pr.t, name, func() (string, string) {
-				help := "declare a //fabrik:provider for it"
-				if h, hinted := g.MissingHint(pr.t); hinted {
-					help = h
-				}
-				return "no provider or binding supplies this middleware constructor parameter", help
-			})
-			ds.Error(pr.pos, msg, help)
+	v := g.OnceValue(mwOnceKey(nd), func() string {
+		args := make([]string, 0, len(nd.params))
+		for _, pr := range nd.params {
+			name := g.SelectedName(nd.obj, pr.ident)
+			expr, ids, ok := g.Instance(pr.t, name)
+			ds = append(ds, ids...)
+			if !ok && len(ids) == 0 {
+				msg, help := g.MissingBinding(pr.t, name, func() (string, string) {
+					help := "declare a //fabrik:provider for it"
+					if h, hinted := g.MissingHint(pr.t); hinted {
+						help = h
+					}
+					return "no provider or binding supplies this middleware constructor parameter", help
+				})
+				ds.Error(pr.pos, msg, help)
+			}
+			args = append(args, expr)
 		}
-		args = append(args, expr)
-	}
-	base := nd.name
-	if base == "" {
-		base = gen.LowerFirst(nd.fn)
-	}
-	v := g.Var(base + "MW")
-	errStyle := gen.ErrNone
-	if nd.errResult {
-		errStyle = gen.ErrReturn
-	}
-	g.Node(&gen.Call{
-		Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
-		Var:  v,
-		Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
-		Args: args,
-		Err:  errStyle,
-		Type: nd.result,
+		base := nd.name
+		if base == "" {
+			base = gen.LowerFirst(nd.fn)
+		}
+		v := g.Var(base + "MW")
+		errStyle := gen.ErrNone
+		if nd.errResult {
+			errStyle = gen.ErrReturn
+		}
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
+			Var:  v,
+			Fn:   g.ImportPkg(nd.pkg) + "." + nd.fn,
+			Args: args,
+			Err:  errStyle,
+			Type: nd.result,
+		})
+		return v
 	})
-	nd.varNames[g.ScopeID()] = v
 	return v, ds
+}
+
+func mwOnceKey(nd *mwNode) string {
+	return "middleware:" + nd.pkg.Path() + "." + nd.fn + "#" + nd.name
 }
 
 // Validate warns about unreferenced named middleware.

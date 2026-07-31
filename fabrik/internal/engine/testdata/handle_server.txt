@@ -72,23 +72,12 @@ func run() int {
 			{
 				Name: "serve",
 				Run: func(ctx cli.Context) (err error) {
-					server, err := buildServe(ctx)
-					if err != nil {
-						return err
-					}
-					return shared.Serve(ctx, server)
+					r := router.New()
+					r.Handle("/files", shared.Files())
+					return shared.Serve(ctx, httpserver.New(r, nil))
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildServe(ctx context.Context) (*httpserver.Server, error) {
-	// Providers
-	r := router.New()
-
-	// Register
-	r.Handle("/files", shared.Files())
-	return httpserver.New(r, nil), nil
 }

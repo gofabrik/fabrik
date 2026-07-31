@@ -68,36 +68,18 @@ func run() int {
 			{
 				Name: "boot",
 				Run: func(ctx cli.Context) (err error) {
-					store, err := buildBoot(ctx)
-					if err != nil {
-						return err
-					}
-					return shared.Boot(ctx, store)
+					sharedStoreArchive := shared.NewArchiveStore()
+					return shared.Boot(ctx, sharedStoreArchive)
 				},
 			},
 			{
 				Name: "check",
 				Run: func(ctx cli.Context) (err error) {
-					store, err := buildCheck(ctx)
-					if err != nil {
-						return err
-					}
-					return shared.Check(ctx, store)
+					sharedStore := shared.NewStore()
+					return shared.Check(ctx, sharedStore)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildBoot(ctx context.Context) (*shared.Store, error) {
-	// Providers
-	sharedStoreArchive := shared.NewArchiveStore()
-	return sharedStoreArchive, nil
-}
-
-func buildCheck(ctx context.Context) (*shared.Store, error) {
-	// Providers
-	sharedStore := shared.NewStore()
-	return sharedStore, nil
 }

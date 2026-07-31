@@ -110,12 +110,13 @@ func (s *Static) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	}
 
 	s.host.record(func(g *gen.Gen) diag.Diagnostics {
-		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		r := routerSingleton(g)
 		httpPkg := g.Import("net/http")
 		fsExpr := g.ImportPkg(nd.pkg) + "." + nd.varName
 		if nd.dir != "" {
 			fsPkg := g.Import("io/fs")
 			v := g.Var(nd.pkg.Name() + nd.varName)
+			g.DeclareVarType(v, fsPkg+".FS", "nil")
 			g.Node(&gen.Call{
 				Base: gen.Base{
 					Phase:  gen.PhaseWire,

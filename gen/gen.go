@@ -60,6 +60,7 @@ type Gen struct {
 	lazyByPath  map[string]*lazyBind
 	pathExprs   map[string]string // materialized path bindings, for InstancePath
 	singletons  map[string]string // singleton key -> var name
+	onceVals    map[string]string // OnceValue cache
 	nodes       []Node
 	ctxNeeded   bool   // context.Background assignment is needed
 	ctxPkg      string // context import alias, registered at request time
@@ -95,8 +96,14 @@ type Gen struct {
 	conflictSeen  map[string]bool // survives BindConflicts drains
 	rendered      bool
 
-	demands      map[demandKey]map[string]bool
-	callbackSeen map[string]bool // epilogue diagnostics already reported
+	demands         map[demandKey]map[string]bool
+	demandEdges     map[demandKey]map[demandKey]bool
+	callbackSeen    map[string]bool // epilogue diagnostics already reported
+	frag            *fragmentStore  // non-nil in fragment emission mode
+	fragPlan        *regionPlan
+	varTypes        map[string]varInfo
+	regionConsumers map[string][]regionConsumer
+	outputIdents    map[string]bool // output-package declarations
 }
 
 // New returns an empty Gen.
@@ -107,6 +114,7 @@ func New() *Gen {
 		lazyByPath:  map[string]*lazyBind{},
 		pathExprs:   map[string]string{},
 		singletons:  map[string]string{},
+		onceVals:    map[string]string{},
 		aliasIdents: map[string]bool{},
 		bindSeen:    map[string]bool{},
 	}
@@ -191,6 +199,17 @@ func (g *Gen) nodeLines(n Node, ec *errCtx) []string {
 
 // SetTypes supplies type-checked packages for [Gen.LookupType].
 func (g *Gen) SetTypes(m map[string]*types.Package) { g.types = m }
+
+// ReserveOutputIdents reserves identifiers declared in the output
+// package so generated declarations never collide with them.
+func (g *Gen) ReserveOutputIdents(names []string) {
+	if g.outputIdents == nil {
+		g.outputIdents = map[string]bool{}
+	}
+	for _, n := range names {
+		g.outputIdents[n] = true
+	}
+}
 
 // LookupType returns a named type from a type-checked imported package.
 func (g *Gen) LookupType(pkgPath, name string) (types.Type, bool) {
@@ -312,6 +331,7 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		}
 		m[name] = expr
 		sc.bindOrigins[key][name] = owner
+		g.noteVarType(expr, t)
 		g.recordBindExpr(expr)
 		return
 	}
@@ -334,6 +354,7 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 	}
 	m[name] = expr
 	origins[name] = owner
+	g.noteVarType(expr, t)
 	g.recordBindExpr(expr)
 }
 
@@ -479,6 +500,7 @@ func (g *Gen) BindLazyAt(t types.Type, name string, pos token.Position, build fu
 // BindPath publishes an expression while its lazy path binding is materializing.
 func (g *Gen) BindPath(path, expr string) {
 	g.checkBindRegistration()
+	g.noteVarPathType(expr, path)
 	if sc := g.scope; sc != nil {
 		sc.pathExprs[path] = expr
 		g.recordBindExpr(expr)
@@ -490,15 +512,22 @@ func (g *Gen) BindPath(path, expr string) {
 
 // BindLazyPath registers a lazy binding matched by a printed type path.
 func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics)) {
+	g.BindLazyPathAt(path, token.Position{}, build)
+}
+
+// BindLazyPathAt is BindLazyPath with the registering annotation's
+// position; positionless emissions during the build inherit it in
+// diagnostics.
+func (g *Gen) BindLazyPathAt(path string, pos token.Position, build func() (string, diag.Diagnostics)) {
 	g.checkBindRegistration()
 	if first, dup := g.lazyByPath[path]; dup {
-		g.recordBindConflict(token.Position{}, fmt.Sprintf(
+		g.recordBindConflict(pos, fmt.Sprintf(
 			"duplicate lazy bind for path %s: directive %q conflicts with directive %q",
 			path, g.current, first.owner,
 		), first.pos)
 		return
 	}
-	g.lazyByPath[path] = &lazyBind{build: build, owner: g.current}
+	g.lazyByPath[path] = &lazyBind{build: build, owner: g.current, pos: pos}
 }
 
 // Instance resolves (t, name) with scope-local state and shared lazy definitions.
@@ -517,8 +546,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 				return expr, nil, true
 			}
 			if lb, ok := g.lazyByPath[key]; ok {
-				g.recordDemand(demandKey{kind: demandPath, key: key})
-				expr, ds, ok := g.materialize(t, name, lb)
+				expr, ds, ok := g.materialize(t, name, lb, demandKey{kind: demandPath, key: key})
 				if ok && len(ds) == 0 {
 					sc.pathExprs[key] = expr
 					g.recordBindExpr(expr)
@@ -528,26 +556,42 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 		}
 		if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
 			if lb, ok := m[name]; ok {
-				g.recordDemand(demandKey{kind: demandType, key: key, name: name})
-				return g.materialize(t, name, lb)
+				return g.materialize(t, name, lb, demandKey{kind: demandType, key: key, name: name})
 			}
 		}
 		return "", nil, false
 	}
 	if m, _ := g.binds.At(t).(map[string]string); m != nil {
 		if expr, ok := m[name]; ok {
+			if g.fragmentMode() {
+				key := types.TypeString(t, nil)
+				if lm, _ := g.lazy.At(t).(map[string]*lazyBind); lm != nil {
+					if _, lazyDef := lm[name]; lazyDef {
+						g.recordDemand(demandKey{kind: demandType, key: key, name: name})
+					}
+				}
+				// A path-bound value reached through the typed cache still
+				// accumulates its path demand.
+				if name == "" {
+					if _, pathDef := g.lazyByPath[key]; pathDef {
+						g.recordDemand(demandKey{kind: demandPath, key: key})
+					}
+				}
+			}
 			return expr, nil, true
 		}
 	}
 	if path := types.TypeString(t, nil); name == "" {
 		if expr, ok := g.pathExprs[path]; ok {
+			if g.fragmentMode() {
+				g.recordDemand(demandKey{kind: demandPath, key: path})
+			}
 			// Bind the concrete type on first type-keyed lookup.
 			g.Bind(t, name, expr)
 			return expr, nil, true
 		}
 		if lb, ok := g.lazyByPath[path]; ok {
-			g.recordDemand(demandKey{kind: demandPath, key: path})
-			expr, ds, ok := g.materialize(t, name, lb)
+			expr, ds, ok := g.materialize(t, name, lb, demandKey{kind: demandPath, key: path})
 			if ok && len(ds) == 0 {
 				g.pathExprs[path] = expr
 				g.recordBindExpr(expr)
@@ -557,8 +601,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 	}
 	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
 		if lb, ok := m[name]; ok {
-			g.recordDemand(demandKey{kind: demandType, key: types.TypeString(t, nil), name: name})
-			return g.materialize(t, name, lb)
+			return g.materialize(t, name, lb, demandKey{kind: demandType, key: types.TypeString(t, nil), name: name})
 		}
 	}
 	return "", nil, false
@@ -587,6 +630,9 @@ func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
 		return g.materializePath(path)
 	}
 	if expr, ok := g.pathExprs[path]; ok {
+		if g.fragmentMode() {
+			g.recordDemand(demandKey{kind: demandPath, key: path})
+		}
 		return expr, nil, true
 	}
 	return g.materializePath(path)
@@ -604,6 +650,10 @@ func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok
 	if g.lazyRunning(lb) {
 		return "", diag.Diagnostics{g.cycleDiag(path)}, false
 	}
+	popDemand := g.pushDemand(demandKey{kind: demandPath, key: path})
+	defer popDemand()
+	popPos := g.pushNodePos(lb.pos)
+	defer popPos()
 	g.setLazyRunning(lb, true)
 	g.materializing = append(g.materializing, path)
 	prev := g.current
@@ -618,16 +668,16 @@ func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok
 			expr = ""
 			ok = false
 			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
-			if g.scope != nil && !g.InValidationScope() {
+			if (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
 				lb.diagnosed = true
 				lb.diagnosedExpr = ""
 			}
 		}
 	}()
 	expr, ds = lb.build()
-	// Scope passes report a broken path once across flows; direct calls
+	// Flow walks report a broken path once across flows; direct calls
 	// stay retryable (a diagnosed path build is not a cycle).
-	if ds.HasFatal() && g.scope != nil && !g.InValidationScope() {
+	if ds.HasFatal() && (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
 		lb.diagnosed = true
 		lb.diagnosedExpr = expr
 	}
@@ -652,7 +702,7 @@ func (g *Gen) setLazyRunning(lb *lazyBind, v bool) {
 	lb.running = v
 }
 
-func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string, ds diag.Diagnostics, ok bool) {
+func (g *Gen) materialize(t types.Type, name string, lb *lazyBind, dk demandKey) (expr string, ds diag.Diagnostics, ok bool) {
 	if lb.diagnosed {
 		// Same contract a same-flow consumer gets from the bind cache.
 		if !g.typeBound(t, name) {
@@ -673,7 +723,12 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string,
 	g.materializing = append(g.materializing, chainKey)
 	prev := g.current
 	g.current = lb.owner
+	g.recordDemand(dk)
+	popDemand := g.pushDemand(dk)
+	popPos := g.pushNodePos(lb.pos)
 	defer func() {
+		popPos()
+		popDemand()
 		g.current = prev
 		g.materializing = g.materializing[:len(g.materializing)-1]
 		g.setLazyRunning(lb, false)
@@ -685,7 +740,7 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string,
 			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
 			// Panics never reach the bind cache, so only the scope passes
 			// need the cross-flow dedup; direct consumers retry as before.
-			if g.scope != nil && !g.InValidationScope() {
+			if (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
 				lb.diagnosed = true
 				lb.diagnosedExpr = ""
 			}
@@ -743,6 +798,26 @@ func (g *Gen) cycleDiag(key string) diag.Diagnostic {
 	}
 }
 
+// OnceValue runs build once per key and caches its result. The active
+// scope owns the cache, so the validation scope's replays stay
+// isolated and the shared store sees exactly one emission.
+func (g *Gen) OnceValue(key string, build func() string) string {
+	if sc := g.scope; sc != nil {
+		if v, ok := sc.onceVals[key]; ok {
+			return v
+		}
+		v := build()
+		sc.onceVals[key] = v
+		return v
+	}
+	if v, ok := g.onceVals[key]; ok {
+		return v
+	}
+	v := build()
+	g.onceVals[key] = v
+	return v
+}
+
 // Singleton returns the shared variable for key, emitting it on first use.
 func (g *Gen) Singleton(key, varName, ctor string) string {
 	return g.SingletonIn(PhaseWire, key, varName, ctor)
@@ -750,6 +825,11 @@ func (g *Gen) Singleton(key, varName, ctor string) string {
 
 // SingletonIn emits one variable per key in the default flow or active scope.
 func (g *Gen) SingletonIn(phase Phase, key, varName, ctor string) string {
+	g.recordDemand(demandKey{kind: demandSingleton, key: key})
+	if g.fragmentMode() {
+		done := g.pushDemand(demandKey{kind: demandSingleton, key: key})
+		defer done()
+	}
 	if sc := g.scope; sc != nil {
 		if v, ok := sc.singletons[key]; ok {
 			return v
@@ -839,11 +919,24 @@ func (g *Gen) Render() ([]byte, error) {
 			return nil, err
 		}
 	}
+	if g.fragmentMode() {
+		storeNodes := make([]Node, 0, len(g.frag.nodes))
+		for _, sn := range g.frag.nodes {
+			storeNodes = append(storeNodes, sn.n)
+		}
+		if err := validateExprFields(storeNodes); err != nil {
+			return nil, err
+		}
+	}
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
 	if hasCmd {
 		g.Context()
 	}
-	needsCtx := hasCmd || usesCtx(g.nodes, g.ctxVar)
+	runNodes := g.nodes
+	if g.fragmentMode() {
+		runNodes = g.defaultInlineNodes()
+	}
+	needsCtx := hasCmd || usesCtx(runNodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
 	// lateAliases must include every alias registered here.
@@ -875,7 +968,11 @@ func (g *Gen) Render() ([]byte, error) {
 	g.writeImports(&b)
 
 	g.writeRun(&b, needsCtx, ctxPkg)
-	g.writeScopeFuncs(&b)
+	if g.fragmentMode() {
+		g.writeRegionFuncs(&b)
+	} else {
+		g.writeScopeFuncs(&b)
+	}
 
 	src, err := format.Source(b.Bytes())
 	if err != nil {
@@ -899,7 +996,11 @@ func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
 		fmt.Fprintf(b, "%s := %s.Background()\n", g.ctxVar, ctxPkg)
 	}
 	b.WriteString("if err := func() (err error) {\n")
-	g.emitPhaseNodes(b, g.nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister)
+	nodes := g.nodes
+	if g.fragmentMode() {
+		nodes = g.defaultInlineNodes()
+	}
+	g.emitPhaseNodes(b, nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister)
 	b.WriteString("return nil\n")
 	b.WriteString("}(); err != nil {\n")
 	fmt.Fprintf(b, "%s.Fprintln(%s.Stderr, %q, err)\n", fmtp, osp, appName(g.module)+":")
@@ -1079,6 +1180,10 @@ func (g *Gen) writeCommandNode(b *bytes.Buffer, clip string, n *commandNode) {
 }
 
 func (g *Gen) writeCommandWrapper(b *bytes.Buffer, c CommandFunc) {
+	if g.fragmentMode() {
+		g.writeRegionBody(b, c)
+		return
+	}
 	s := c.Scope
 	if len(s.nodes) == 0 {
 		args := append([]string{"ctx"}, s.rootExprs...)

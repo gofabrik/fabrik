@@ -77,29 +77,17 @@ func run() int {
 			{
 				Name: "serve",
 				Run: func(ctx cli.Context) (err error) {
-					server, err := buildServe(ctx)
+					r := router.New()
+					// embedded Static, served under /static
+					sharedStatic, err := fs.Sub(shared.Static, "static")
 					if err != nil {
 						return err
 					}
-					return shared.Serve(ctx, server)
+					r.Handle("/static/", http.StripPrefix("/static", http.FileServerFS(sharedStatic)))
+					return shared.Serve(ctx, httpserver.New(r, nil))
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildServe(ctx context.Context) (*httpserver.Server, error) {
-	// Providers
-	// embedded Static, served under /static
-	sharedStatic, err := fs.Sub(shared.Static, "static")
-	if err != nil {
-		return nil, err
-	}
-
-	r := router.New()
-
-	// Register
-	r.Handle("/static/", http.StripPrefix("/static", http.FileServerFS(sharedStatic)))
-	return httpserver.New(r, nil), nil
 }

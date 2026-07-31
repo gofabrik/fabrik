@@ -34,6 +34,10 @@ type Result struct {
 	// type like jobs.Store by path even when no annotated signature names
 	// it).
 	Types map[string]*types.Package
+	// MainIdents lists package main's hand-written top-level identifiers;
+	// generated declarations must not collide with them. The generated
+	// file's own declarations are excluded so regeneration is stable.
+	MainIdents []string
 }
 
 // Load type-checks the module rooted at dir and collects //fabrik: annotations.
@@ -83,6 +87,38 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		return nil, err
 	}
 	res.MainDir = mainDir
+	for _, pkg := range mains {
+		if len(pkg.GoFiles) == 0 || filepath.Dir(pkg.GoFiles[0]) != mainDir {
+			continue
+		}
+		// Names come from the hand-written syntax, not the type scope: a
+		// stale generated declaration would shadow its hand-written
+		// namesake there and hide the very collision being avoided.
+		for _, file := range pkg.Syntax {
+			if filepath.Base(pkg.Fset.Position(file.Pos()).Filename) == "main.gen.go" {
+				continue
+			}
+			for _, decl := range file.Decls {
+				switch d := decl.(type) {
+				case *ast.FuncDecl:
+					if d.Recv == nil && d.Name != nil {
+						res.MainIdents = append(res.MainIdents, d.Name.Name)
+					}
+				case *ast.GenDecl:
+					for _, spec := range d.Specs {
+						switch sp := spec.(type) {
+						case *ast.TypeSpec:
+							res.MainIdents = append(res.MainIdents, sp.Name.Name)
+						case *ast.ValueSpec:
+							for _, name := range sp.Names {
+								res.MainIdents = append(res.MainIdents, name.Name)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 
 	res.Types = map[string]*types.Package{}
 	for _, pkg := range pkgs {

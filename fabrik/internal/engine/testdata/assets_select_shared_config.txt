@@ -87,15 +87,15 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		fabrikConfigOpts := []config.Option{
+		configOpts := []config.Option{
 			config.FileOptional("config.yaml"),
 			config.File("config." + fabrikEnv + ".yaml"),
 		}
 		if fabrikEnv == "development" {
-			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+			configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 		}
-		assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
-			config.KnownSections("assets"),
+		configOpts = append(configOpts, config.KnownSections("assets"))
+		assetmapperOptions, err := config.Load[assetmapper.Options](append(configOpts,
 			config.Section("assets"),
 		)...)
 		if err != nil {

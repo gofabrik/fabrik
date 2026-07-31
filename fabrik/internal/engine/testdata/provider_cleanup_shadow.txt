@@ -72,41 +72,19 @@ func run() int {
 			{
 				Name: "ping",
 				Run: func(ctx cli.Context) (err error) {
-					db, cleanup, err := buildPing(ctx)
+					cleanupsDB, cleanupsDBClose, err := cleanups.NewDB()
 					if err != nil {
 						return err
 					}
-					defer func() {
-						err = errors.Join(err, cleanup())
-					}()
-					return shared.Ping(ctx, db)
+					if cleanupsDBClose != nil {
+						defer func() {
+							err = errors.Join(err, cleanupsDBClose())
+						}()
+					}
+					return shared.Ping(ctx, cleanupsDB)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildPing(ctx context.Context) (*cleanups.DB, func() error, error) {
-	var cleanupsDBClose func() error
-	unwind := func(err error) error {
-		if cleanupsDBClose != nil {
-			err = errors.Join(err, cleanupsDBClose())
-		}
-		return err
-	}
-	// Providers
-	cleanupsDB, cleanupsDBClose, err := cleanups.NewDB()
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if cleanupsDBClose != nil {
-			errs = append(errs, cleanupsDBClose())
-		}
-		return errors.Join(errs...)
-	}
-	return cleanupsDB, cleanup, nil
 }

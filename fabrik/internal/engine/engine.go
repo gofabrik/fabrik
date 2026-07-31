@@ -104,8 +104,10 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	}
 
 	g := gen.New()
+	g.FragmentMode()
 	g.SetModule(res.ModulePath)
 	g.SetTypes(res.Types)
+	g.ReserveOutputIdents(res.MainIdents)
 	g.SetCommentLevel(opts.Comments)
 	g.SetSourceRoot(res.Root)
 	for _, d := range directives {
@@ -166,12 +168,12 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 		}
 	}
 	diags = append(diags, g.BindConflicts()...)
-	// Scopes materialize first so demand usage exists; the validation
-	// pass then sweeps only the bindings no flow reached. Prior fatal
-	// diagnostics skip materialization, leaving the sweep complete.
+	// Flows walk first so demand usage exists; the validation pass then
+	// sweeps only the bindings no flow reached. Prior fatal diagnostics
+	// skip the walk, leaving the sweep complete.
 	if g.ScopeCount() > 0 {
 		if !diags.HasFatal() {
-			scopeDiags, err := guardedScopePass("materialization", g.MaterializeScopes)
+			scopeDiags, err := guardedScopePass("materialization", g.WalkFlows)
 			if err != nil {
 				return nil, err
 			}
@@ -199,6 +201,9 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	}
 	// Scope passes register binds too; drain conflicts they recorded.
 	diags = append(diags, g.BindConflicts()...)
+	if !diags.HasFatal() {
+		diags = append(diags, g.PlanFragments()...)
+	}
 	diags = append(diags, g.ValidateGraph()...)
 	diags.Sort()
 	if diags.HasFatal() {

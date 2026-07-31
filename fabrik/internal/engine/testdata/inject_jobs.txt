@@ -95,47 +95,33 @@ func run() int {
 			{
 				Name: "boot",
 				Run: func(ctx cli.Context) (err error) {
-					manager, err := buildBoot(ctx)
+					sharedJobsStore, err := shared.NewJobStore()
 					if err != nil {
 						return err
 					}
-					return shared.Boot(ctx, manager)
+					jobsManager, err := jobs.New(sharedJobsStore, jobs.Config{})
+					if err != nil {
+						return err
+					}
+					sharedStoreArchive := shared.NewArchiveStore()
+					// Jobs
+					if err := jobs.Register[mail.Welcome](jobsManager, "mail.Welcome"); err != nil {
+						return err
+					}
+					if err := jobs.On[mail.Welcome](jobsManager, "SendWelcome", func(c jobs.Context, m mail.Welcome) error {
+						return mail.SendWelcome(c, sharedStoreArchive, m)
+					}); err != nil {
+						return err
+					}
+					if err := jobs.RegisterCron(jobsManager, "nightly", "0 3 * * *", func(c jobs.Context) error {
+						return mail.Nightly(c, sharedStoreArchive)
+					}); err != nil {
+						return err
+					}
+					return shared.Boot(ctx, jobsManager)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildBoot(ctx context.Context) (*jobs.Manager, error) {
-	// Providers
-	sharedJobsStore, err := shared.NewJobStore()
-	if err != nil {
-		return nil, err
-	}
-	jobsManager, err := jobs.New(sharedJobsStore, jobs.Config{})
-	if err != nil {
-		return nil, err
-	}
-
-	sharedStoreArchive := shared.NewArchiveStore()
-
-	// Register
-	// Jobs
-	if err := jobs.Register[mail.Welcome](jobsManager, "mail.Welcome"); err != nil {
-		return nil, err
-	}
-
-	if err := jobs.On[mail.Welcome](jobsManager, "SendWelcome", func(c jobs.Context, m mail.Welcome) error {
-		return mail.SendWelcome(c, sharedStoreArchive, m)
-	}); err != nil {
-		return nil, err
-	}
-
-	if err := jobs.RegisterCron(jobsManager, "nightly", "0 3 * * *", func(c jobs.Context) error {
-		return mail.Nightly(c, sharedStoreArchive)
-	}); err != nil {
-		return nil, err
-	}
-	return jobsManager, nil
 }

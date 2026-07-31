@@ -67,23 +67,14 @@ func run() int {
 			{
 				Name: "migrate",
 				Run: func(ctx cli.Context) (err error) {
-					store, err := buildMigrate(ctx)
+					dataStore, err := data.NewStore(ctx)
 					if err != nil {
 						return err
 					}
-					return data.Migrate(ctx, store)
+					return data.Migrate(ctx, dataStore)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildMigrate(ctx context.Context) (*data.Store, error) {
-	// Providers
-	dataStore, err := data.NewStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return dataStore, nil
 }
