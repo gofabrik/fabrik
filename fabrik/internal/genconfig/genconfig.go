@@ -159,6 +159,7 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 	}
 
 	var dirNode, packageNode, emitNode, entrypointsKey *yaml.Node
+	var dirSeen, emitInvalid bool
 	scalar := func(key, val *yaml.Node) bool {
 		if val.Kind == yaml.ScalarNode && val.Tag != "!!null" && val.Value != "" {
 			return true
@@ -177,6 +178,7 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 		switch key.Value {
 		case "emit":
 			if !scalar(key, val) {
+				emitInvalid = true
 				continue
 			}
 			emitNode = val
@@ -187,9 +189,11 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 			case "embedded":
 				opts.Emit = EmitEmbedded
 			default:
+				emitInvalid = true
 				diags.Error(posAt(path, val), fmt.Sprintf("invalid emit %q", val.Value), "want standalone or embedded")
 			}
 		case "dir":
+			dirSeen = true
 			if !scalar(key, val) {
 				continue
 			}
@@ -279,11 +283,21 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 		}
 	}
 
-	if opts.Emit == EmitEmbedded && opts.Dir == "" {
+	// A rejected emit or dir already carries its own diagnostic; checks
+	// that depend on the missing value would only compound it.
+	if opts.Emit == EmitEmbedded && opts.Dir == "" && !dirSeen {
 		diags.Error(posAt(path, emitNode), "emit: embedded requires dir", "set generate.dir to the output package directory")
 	}
-	if entrypointsKey != nil && opts.Emit != EmitEmbedded {
+	if entrypointsKey != nil && opts.Emit != EmitEmbedded && !emitInvalid {
 		diags.Error(posAt(path, entrypointsKey), "entrypoints requires emit: embedded", "")
+	}
+	if opts.Emit != EmitEmbedded && !emitInvalid {
+		if dirNode != nil {
+			diags.Warn(posAt(path, dirNode), "dir is ignored unless emit: embedded", "")
+		}
+		if packageNode != nil {
+			diags.Warn(posAt(path, packageNode), "package is ignored unless emit: embedded", "")
+		}
 	}
 
 	return diags

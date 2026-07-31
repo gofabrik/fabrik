@@ -253,3 +253,61 @@ func TestCheckReportsPendingJournalWithoutWriting(t *testing.T) {
 		t.Fatal("check must not publish staged files")
 	}
 }
+
+func TestCheckReportsDriftedOrphansAsKept(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string][]byte{
+		"main.gen.go":              []byte("package main\n"),
+		"fragments_builddb.gen.go": []byte("package main\n\nfunc buildDb() {}\n"),
+	}
+	if _, _, _, err := WriteSet(dir, files, true); err != nil {
+		t.Fatalf("WriteSet: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fragments_builddb.gen.go"), []byte("package main // edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	smaller := map[string][]byte{"main.gen.go": files["main.gen.go"]}
+	problems, kept, err := Check(dir, smaller, true)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(kept) != 1 || kept[0] != "fragments_builddb.gen.go" {
+		t.Fatalf("kept = %v, want the edited orphan", kept)
+	}
+	joined := strings.Join(problems, "\n")
+	if strings.Contains(joined, "fragments_builddb.gen.go is no longer generated;") {
+		t.Fatalf("problems = %v, want the edited orphan reported only through kept", problems)
+	}
+}
+
+func TestRollForwardAbandonsUnrecoverableJournal(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string][]byte{"main.gen.go": []byte("package main\n")}
+	if err := stage(dir, files, true); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	// Corrupt the staged temp: the journal can never complete.
+	j, ok, err := readJournal(dir)
+	if err != nil || !ok {
+		t.Fatalf("readJournal: %v, %v", ok, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, j.Temps["main.gen.go"]), []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RollForward(dir); err != nil {
+		t.Fatalf("RollForward: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, journalName)); !os.IsNotExist(err) {
+		t.Fatal("abandon must remove the journal")
+	}
+	if _, err := os.Stat(filepath.Join(dir, j.Temps["main.gen.go"])); !os.IsNotExist(err) {
+		t.Fatal("abandon must remove staged temps")
+	}
+	// The next write starts clean and succeeds.
+	if _, _, _, err := WriteSet(dir, files, true); err != nil {
+		t.Fatalf("WriteSet after abandon: %v", err)
+	}
+	if read(t, filepath.Join(dir, "main.gen.go")) != "package main\n" {
+		t.Fatal("recovery write missed the file")
+	}
+}

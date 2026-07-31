@@ -100,6 +100,7 @@ func TestResolvePackageNotDerivableDiagnoses(t *testing.T) {
 
 func TestResolveExplicitPackageWinsOverDerivation(t *testing.T) {
 	dir := writeModule(t, `generate:
+  emit: embedded
   dir: 123bad
   package: valid
 `)
@@ -395,5 +396,55 @@ func TestResolveOverlayBeatsDisk(t *testing.T) {
 	opts, diags := ResolveOverlay(dir, nil, Overrides{})
 	if len(diags) != 0 || opts.Emit != EmitStandalone {
 		t.Fatalf("opts = %+v, diags = %v, want the on-disk file without overlay", opts, diags)
+	}
+}
+
+func TestResolveRejectedDirSuppressesRequiresDir(t *testing.T) {
+	dir := writeModule(t, "generate:\n  emit: embedded\n  dir: ../outside\n")
+	_, diags := Resolve(dir, Overrides{})
+	if !containsMsg(diags, "must stay inside the module") {
+		t.Fatalf("diags = %v, want the containment diagnostic", diags)
+	}
+	if containsMsg(diags, "embedded requires dir") {
+		t.Fatalf("diags = %v, want no cascading requires-dir diagnostic", diags)
+	}
+}
+
+func TestResolveInvalidEmitSuppressesEntrypointsCheck(t *testing.T) {
+	dir := writeModule(t, "generate:\n  emit: bogus\n  entrypoints:\n    - serve\n")
+	_, diags := Resolve(dir, Overrides{})
+	if !containsMsg(diags, `invalid emit "bogus"`) {
+		t.Fatalf("diags = %v, want the invalid-emit diagnostic", diags)
+	}
+	if containsMsg(diags, "entrypoints requires emit: embedded") {
+		t.Fatalf("diags = %v, want no cascading entrypoints diagnostic", diags)
+	}
+}
+
+func TestResolveWarnsIgnoredStandaloneFields(t *testing.T) {
+	dir := writeModule(t, "generate:\n  dir: gen/app\n  package: app\n")
+	_, diags := Resolve(dir, Overrides{})
+	if !containsMsg(diags, "dir is ignored unless emit: embedded") ||
+		!containsMsg(diags, "package is ignored unless emit: embedded") {
+		t.Fatalf("diags = %v, want ignored-field warnings", diags)
+	}
+	if diags.HasFatal() {
+		t.Fatalf("diags = %v, want warnings only", diags)
+	}
+}
+
+func TestResolveMalformedEmitSuppressesEntrypointsCheck(t *testing.T) {
+	for _, body := range []string{
+		"generate:\n  emit:\n  entrypoints:\n    - serve\n",
+		"generate:\n  emit: [a]\n  entrypoints:\n    - serve\n",
+	} {
+		dir := writeModule(t, body)
+		_, diags := Resolve(dir, Overrides{})
+		if !containsMsg(diags, "emit must be a non-empty value") {
+			t.Fatalf("body %q: diags = %v, want the malformed-emit diagnostic", body, diags)
+		}
+		if containsMsg(diags, "entrypoints requires emit: embedded") {
+			t.Fatalf("body %q: diags = %v, want no cascading entrypoints diagnostic", body, diags)
+		}
 	}
 }

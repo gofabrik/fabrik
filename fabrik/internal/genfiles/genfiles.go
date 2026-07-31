@@ -213,7 +213,7 @@ func commit(dir string, j manifest) (pruned, kept []string, err error) {
 					return nil, nil, rerr
 				}
 				if hashOf(data) != j.Files[name] {
-					return nil, nil, fmt.Errorf("staged %s does not match the journal; regenerate with fabrik wire", name)
+					return nil, nil, fmt.Errorf("staged %s does not match the journal: %w", name, errStaleJournal)
 				}
 				if err := os.Rename(tmpPath, filepath.Join(dir, name)); err != nil {
 					return nil, nil, err
@@ -224,7 +224,7 @@ func commit(dir string, j manifest) (pruned, kept []string, err error) {
 		// A missing temp is valid only when an interrupted run installed the expected content.
 		data, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304
 		if err != nil || hashOf(data) != j.Files[name] {
-			return nil, nil, fmt.Errorf("interrupted write left %s incomplete; regenerate with fabrik wire", name)
+			return nil, nil, fmt.Errorf("interrupted write left %s incomplete: %w", name, errStaleJournal)
 		}
 	}
 	for _, name := range sortedNames(j.Prune) {
@@ -306,6 +306,9 @@ func WriteSet(dir string, files map[string][]byte, withManifest bool) (written, 
 
 // RollForward completes an interrupted transaction when a journal
 // exists; kept lists prune candidates preserved because they drifted.
+// A journal whose staged content is lost or altered cannot complete,
+// so it is abandoned: the tree stays as it is and the next write
+// regenerates everything.
 func RollForward(dir string) (kept []string, err error) {
 	j, ok, err := readJournal(dir)
 	if err != nil {
@@ -315,7 +318,31 @@ func RollForward(dir string) (kept []string, err error) {
 		return nil, nil
 	}
 	_, kept, err = commit(dir, j)
+	if errors.Is(err, errStaleJournal) {
+		return kept, abandon(dir, j)
+	}
 	return kept, err
+}
+
+// errStaleJournal marks a journal whose staged content no longer
+// matches it; completion is impossible.
+var errStaleJournal = errors.New("journal cannot be completed")
+
+// abandon discards a transaction: staged temps and the journal are
+// removed, the previous manifest stands.
+func abandon(dir string, j manifest) error {
+	for _, tmp := range j.Temps {
+		if !validTempName(tmp) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, tmp)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, journalName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return syncDir(dir)
 }
 
 // Check reports differences between the intended file set, disk, and manifest.
@@ -345,9 +372,18 @@ func Check(dir string, files map[string][]byte, withManifest bool) (problems, ke
 	}
 	if ok {
 		for _, name := range sortedNames(prev.Files) {
-			if _, still := files[name]; !still {
-				problems = append(problems, name+" is no longer generated; run fabrik wire to prune it")
+			if _, still := files[name]; still {
+				continue
 			}
+			disk, rerr := os.ReadFile(filepath.Join(dir, name)) // #nosec G304
+			if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+				return nil, nil, rerr
+			}
+			if rerr == nil && hashOf(disk) != prev.Files[name] {
+				kept = append(kept, name)
+				continue
+			}
+			problems = append(problems, name+" is no longer generated; run fabrik wire to prune it")
 		}
 	}
 	switch {
