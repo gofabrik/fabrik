@@ -181,7 +181,8 @@ func (i *Input) Meta() gen.Meta {
 				"positional argument, bound to the plain parameter whose name matches " +
 				"(`direction` binds `direction string`). Declaration order is binding " +
 				"order. Optional arguments need `default=`; `values=` restricts and " +
-				"completes; `variadic=true` (type `strings`) collects the tail.\n\n" +
+				"completes; `variadic=true` (type `strings`) collects the tail. " +
+				"Dynamic completion uses the cli library's `Complete` API.\n\n" +
 				"```go\n//fabrik:cli:command\n//fabrik:cli:argument name=direction type=string values=up,down default=up help=\"Migration direction.\"\nfunc Migrate(ctx cli.Context, db *sql.DB, direction string) error { ... }\n```",
 			Example: "//fabrik:cli:argument name=direction type=string default=up",
 			Tier:    gen.TierBind,
@@ -203,7 +204,8 @@ func (i *Input) Meta() gen.Meta {
 			"flag, bound to the plain parameter whose lowerCamel name matches the " +
 			"kebab-case flag (`dry-run` binds `dryRun bool`). The cli library owns " +
 			"parsing, defaults, validation, and completion; `values=` maps to " +
-			"`OneOf` on scalar types.\n\n" +
+			"`OneOf` on scalar types. Dynamic completion uses the cli library's " +
+			"`Complete` API.\n\n" +
 			"```go\n//fabrik:cli:command\n//fabrik:cli:flag name=dry-run short=n type=bool help=\"Print without applying.\"\nfunc Migrate(ctx cli.Context, db *sql.DB, dryRun bool) error { ... }\n```",
 		Example: "//fabrik:cli:flag name=dry-run type=bool",
 		Tier:    gen.TierBind,

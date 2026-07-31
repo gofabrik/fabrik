@@ -1,0 +1,60 @@
+Unused mappings on plain functions, unassembled structs, and context
+parameters report no effect.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- store/store.go --
+package store
+
+import "context"
+
+type DB struct{ Addr string }
+
+//fabrik:provider
+func NewDB() *DB { return &DB{Addr: "primary"} }
+
+//fabrik:provider name=replica
+func NewReplicaDB() *DB { return &DB{Addr: "replica"} }
+
+//fabrik:inject db name=replica
+func Helper(db *DB) *DB { return db }
+
+//fabrik:inject DB name=replica
+type Unused struct {
+	DB *DB
+}
+
+type Pinger struct{}
+
+//fabrik:inject ctx name=replica
+//fabrik:provider
+func NewPinger(ctx context.Context) *Pinger { return &Pinger{} }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	"app/store"
+)
+
+type API struct {
+	DB *store.DB
+}
+
+//fabrik:http GET /api
+func (a *API) Get(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: store/store.go:13:1: //fabrik:inject db has no effect on this declaration
+  help: no generated wiring resolves this declaration by name
+error: store/store.go:16:1: //fabrik:inject DB has no effect on this declaration
+  help: no generated wiring resolves this declaration by name
+error: store/store.go:23:1: //fabrik:inject ctx has no effect on this declaration
+  help: no generated wiring resolves this declaration by name

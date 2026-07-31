@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: fabrik wire can now select named providers with //fabrik:inject and preserve their names in exported dependency graphs.
+issues: [0]

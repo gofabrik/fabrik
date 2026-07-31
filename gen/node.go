@@ -59,6 +59,8 @@ type Call struct {
 	Err  ErrStyle
 	// Type is graph-only metadata consumed after import aliases are final.
 	Type types.Type
+	// BindingName is the provider name recorded in graph metadata.
+	BindingName string
 
 	// Cleanup names the cleanup result; generated calls guard a nil result.
 	Cleanup string

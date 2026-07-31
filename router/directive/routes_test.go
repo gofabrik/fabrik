@@ -305,7 +305,7 @@ func TestDirectRouterFieldReplaysBundleAfterCommandRoot(t *testing.T) {
 	}); ds.HasFatal() {
 		t.Fatalf("EmitHandle: %v", ds)
 	}
-	g.AddScope("buildInspect", pos(2), handlerPtr)
+	g.AddScope("buildInspect", pos(2), gen.ScopeRoot{Type: handlerPtr})
 
 	if ds := g.RunValidationPass(); ds.HasFatal() {
 		t.Fatalf("RunValidationPass: %v", ds)

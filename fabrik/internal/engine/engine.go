@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
 	"github.com/gofabrik/fabrik/fabrik/internal/load"
 	"github.com/gofabrik/fabrik/gen"
 )
@@ -111,6 +112,12 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	for _, d := range directives {
 		if h, ok := d.(gen.Hinter); ok {
 			g.AddMissingHint(h.MissingHint)
+		}
+	}
+	// Directives within a tier may emit in any order.
+	for _, d := range directives {
+		if inj, ok := d.(*core.Inject); ok {
+			g.SeedInjectNames(inj.Mappings())
 		}
 	}
 	emitTierNodes := func(tier gen.EmitTier) error {

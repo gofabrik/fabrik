@@ -10,11 +10,17 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 )
 
+// ScopeRoot selects a command dependency by type and provider name.
+type ScopeRoot struct {
+	Type types.Type
+	Name string
+}
+
 // Scope contains the generated state for one command build function.
 type Scope struct {
 	fn    string
 	pos   token.Position
-	roots []types.Type
+	roots []ScopeRoot
 
 	hasCleanup bool
 
@@ -38,7 +44,7 @@ type Scope struct {
 }
 
 // AddScope registers a build scope for the dependency roots at pos.
-func (g *Gen) AddScope(fn string, pos token.Position, roots ...types.Type) *Scope {
+func (g *Gen) AddScope(fn string, pos token.Position, roots ...ScopeRoot) *Scope {
 	if len(g.scopes) == 0 {
 		// Reserve wrapper identifiers before assigning import aliases.
 		g.Context()
@@ -117,15 +123,19 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 			fn()
 		}
 		for _, root := range s.roots {
-			expr, rds, ok := g.Instance(root, "")
+			expr, rds, ok := g.Instance(root.Type, root.Name)
 			ds = append(ds, rds...)
 			if !ok && len(rds) == 0 {
-				ds.Error(s.pos, "no provider for "+g.TypeExpr(root),
-					"add a //fabrik:provider returning "+g.TypeExpr(root))
+				if msg, help, named := g.MissingBinding(root.Type, root.Name); named {
+					ds.Error(s.pos, msg, help)
+				} else {
+					ds.Error(s.pos, "no provider for "+g.TypeExpr(root.Type),
+						"add a //fabrik:provider returning "+g.TypeExpr(root.Type))
+				}
 			}
 			s.rootExprs = append(s.rootExprs, expr)
-			s.resultTypes = append(s.resultTypes, g.TypeExpr(root))
-			s.zeros = append(s.zeros, zeroExpr(g, root))
+			s.resultTypes = append(s.resultTypes, g.TypeExpr(root.Type))
+			s.zeros = append(s.zeros, zeroExpr(g, root.Type))
 		}
 		for _, fn := range g.epilogues {
 			ds = append(ds, fn()...)

@@ -1,0 +1,53 @@
+Structs constructed by pointer, value, or named providers reject field
+mappings because mappings belong on provider parameters.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- store/store.go --
+package store
+
+type DB struct{ Addr string }
+
+//fabrik:provider
+func NewDB() *DB { return &DB{Addr: "primary"} }
+
+//fabrik:provider name=replica
+func NewReplicaDB() *DB { return &DB{Addr: "replica"} }
+
+//fabrik:inject DB name=replica
+type Deps struct {
+	DB *DB
+}
+
+//fabrik:provider
+func NewDeps(db *DB) *Deps { return &Deps{DB: db} }
+
+//fabrik:inject DB name=replica
+type Wiring struct {
+	DB *DB
+}
+
+//fabrik:provider
+func NewWiring(db *DB) Wiring { return Wiring{DB: db} }
+
+//fabrik:inject DB name=replica
+type Spare struct {
+	DB *DB
+}
+
+//fabrik:provider name=spare
+func NewSpare(db *DB) *Spare { return &Spare{DB: db} }
+-- want/diags --
+error: store/store.go:11:1: type app/store.Deps is constructed by its provider
+  help: a provided value receives no field injection; put //fabrik:inject on the provider's parameters instead
+error: store/store.go:19:1: type app/store.Wiring is constructed by its provider
+  help: a provided value receives no field injection; put //fabrik:inject on the provider's parameters instead
+error: store/store.go:27:1: type app/store.Spare is constructed by its provider
+  help: a provided value receives no field injection; put //fabrik:inject on the provider's parameters instead

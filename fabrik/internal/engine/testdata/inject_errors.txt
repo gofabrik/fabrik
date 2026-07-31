@@ -1,0 +1,72 @@
+Inject declarations validate targets, selectors, provider names, and duplicates.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- web/web.go --
+package web
+
+type DB struct{}
+
+//fabrik:provider
+func NewDB() *DB { return &DB{} }
+
+//fabrik:inject db name=replica
+type Notifier interface{ Notify() }
+
+//fabrik:inject Missing name=replica
+//fabrik:inject log name=replica
+//fabrik:inject DB name=replica
+//fabrik:inject DB name=audit
+type Deps struct {
+	DB  *DB
+	log string
+}
+
+//fabrik:inject dbx name=replica
+func NewAPI(db *DB) *DB { return db }
+
+//fabrik:inject _ name=replica
+func NewOne(db *DB) *DB { return db }
+
+//fabrik:inject db name=Read_Only
+func NewTwo(db *DB) *DB { return db }
+
+//fabrik:inject db name=
+func NewThree(db *DB) *DB { return db }
+
+//fabrik:inject db
+func NewFour(db *DB) *DB { return db }
+
+//fabrik:inject name=replica
+func NewFive(db *DB) *DB { return db }
+
+//fabrik:inject x name=replica
+var Debug = false
+-- want/diags --
+error: web/web.go:8:1: //fabrik:inject must be on a function or struct type declaration
+error: web/web.go:11:1: unknown field "Missing"
+  help: known: DB
+error: web/web.go:12:1: field log of Deps is unexported
+  help: inject selectors must name an exported field
+error: web/web.go:14:1: duplicate //fabrik:inject for "DB"
+  help: first declared at $WORK/web/web.go:13:1
+error: web/web.go:20:1: unknown parameter "dbx"
+  help: known: db
+error: web/web.go:23:17: inject selector must not be the blank identifier
+  help: name a parameter or an exported field
+error: web/web.go:26:25: provider name "Read_Only" is invalid
+  help: names are a lowercase letter followed by lowercase letters or digits: [a-z][a-z0-9]*
+error: web/web.go:29:25: name= must not be empty
+  help: example: //fabrik:inject db name=replica
+error: web/web.go:32:1: //fabrik:inject requires name=
+  help: example: //fabrik:inject db name=replica
+error: web/web.go:35:1: //fabrik:inject requires PARAM-OR-FIELD
+  help: example: //fabrik:inject db name=replica
+error: web/web.go:38:1: //fabrik:inject must be on a function or struct type declaration

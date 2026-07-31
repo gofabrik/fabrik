@@ -68,6 +68,7 @@ var _database struct{}
 
 // Apply pending database migrations.
 //
+//fabrik:inject db name=database
 //fabrik:cli:command path="database migrate"
 //fabrik:cli:flag name=dry-run short=n type=bool help="Print what would run without applying migrations."
 func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources, dryRun bool) error {

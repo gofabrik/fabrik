@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"regexp"
 	"strings"
 
 	cfgdir "github.com/gofabrik/fabrik/config/directive"
@@ -14,7 +15,7 @@ import (
 
 // Provider is the //fabrik:provider directive.
 type Provider struct {
-	seen      map[string]token.Position
+	seen      map[string]map[string]token.Position // first declaration by type and provider name
 	nodes     []*node
 	caseNodes []*node
 	groups    map[string]*selGroup
@@ -23,7 +24,7 @@ type Provider struct {
 
 // NewProvider returns a Provider directive for one run.
 func NewProvider(cfg *cfgdir.Config) *Provider {
-	return &Provider{seen: map[string]token.Position{}, cfg: cfg}
+	return &Provider{seen: map[string]map[string]token.Position{}, cfg: cfg}
 }
 
 func (*Provider) Name() string { return "provider" }
@@ -31,7 +32,7 @@ func (*Provider) Name() string { return "provider" }
 func (*Provider) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Constructor wired by return type",
-		Doc: "**`//fabrik:provider [case=kind]`**\n\n" +
+		Doc: "**`//fabrik:provider [name=token] [case=kind]`**\n\n" +
 			"Marks a constructor whose return value is available to generated " +
 			"app code by matching types. Parameters resolve to other " +
 			"providers; `context.Context` parameters receive the shared " +
@@ -44,14 +45,26 @@ func (*Provider) Meta() gen.Meta {
 			"still runs but its errors cannot be reported; cleanups must not " +
 			"panic. A provider returning an " +
 			"error owns its partial " +
-			"teardown. Cleanup returns are not allowed on `case=` providers. " +
-			"With `case=<kind>`, the constructor is instead one selectable " +
+			"teardown.\n\n" +
+			"Without `name=`, the constructor is the unnamed provider for its " +
+			"return type. A type may have one unnamed provider and any number " +
+			"of distinctly named providers. Names must match " +
+			"`[a-z][a-z0-9]*`. Named providers resolve only where a dependency " +
+			"selects one with `//fabrik:inject`; unmapped dependencies use the " +
+			"unnamed provider. `name=` and `case=` are mutually exclusive.\n\n" +
+			"`//fabrik:inject` may select providers for constructor parameters. " +
+			"A provider can assemble several named values into one container " +
+			"dependency. Provider-constructed types do not accept field " +
+			"mappings; map the provider's parameters instead.\n\n" +
+			"Cleanup returns are not allowed on `case=` providers. With " +
+			"`case=<kind>`, the constructor is instead one selectable " +
 			"implementation for a `//fabrik:provider:select` interface, " +
 			"matched by its return type and constructed only when the " +
 			"configuration names its kind.\n\n" +
 			"```go\n//fabrik:provider\nfunc NewGreeter() *Greeter { ... }\n```",
 		Example: "//fabrik:provider",
 		Attrs: []gen.AttrSpec{
+			{Key: "name", Kind: gen.KindFreeform},
 			{Key: "case", Kind: gen.KindFreeform},
 		},
 		Tier: gen.TierBind,
@@ -59,16 +72,20 @@ func (*Provider) Meta() gen.Meta {
 }
 
 type param struct {
-	t   types.Type
-	pos token.Position
+	t     types.Type
+	pos   token.Position
+	ident string
+	name  string // selected provider name, empty for the unnamed binding
 }
 
 type node struct {
 	pos token.Position
 
 	caseVal string // case= value: this provider is one candidate in a provider:select group, chosen by return type
+	name    string // name= value, empty for the unnamed provider
 
 	fn             string
+	obj            types.Object
 	pkg            *types.Package
 	returns        []types.Type
 	returnsErr     bool
@@ -78,6 +95,9 @@ type node struct {
 	built          bool
 }
 
+// nameRE excludes spellings that exportish would map to the same identifier.
+var nameRE = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
+
 func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 	args, ds := gen.ParseArgs(a, p.Meta())
 	nd := &node{pos: a.Pos}
@@ -86,6 +106,20 @@ func (p *Provider) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 		if nd.caseVal == "" {
 			ds.Error(a.ArgPos(caseA.Col), "case= must not be empty",
 				"example: //fabrik:provider case=memory")
+		}
+	}
+	if nameA, hasName := args.Attr["name"]; hasName {
+		nd.name = nameA.Text
+		switch {
+		case nd.name == "":
+			ds.Error(a.ArgPos(nameA.Col), "name= must not be empty",
+				"example: //fabrik:provider name=replica")
+		case !nameRE.MatchString(nd.name):
+			ds.Error(a.ArgPos(nameA.Col), fmt.Sprintf("provider name %q is invalid", nd.name),
+				"names are a lowercase letter followed by lowercase letters or digits: [a-z][a-z0-9]*")
+		case nd.caseVal != "":
+			ds.Error(a.ArgPos(nameA.Col), "name= cannot be combined with case=",
+				"a case provider is selected by its group's config key")
 		}
 	}
 	if ds.HasFatal() {
@@ -150,12 +184,13 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	}
 
 	nd.fn = fn.Name()
+	nd.obj = fn
 	nd.pkg = fn.Pkg()
 	nd.returns = []types.Type{types.Unalias(results.At(0).Type())}
 	nd.fset = t.Fset
 	for i := 0; i < sig.Params().Len(); i++ {
 		v := sig.Params().At(i)
-		nd.params = append(nd.params, param{t: v.Type(), pos: t.Fset.Position(v.Pos())})
+		nd.params = append(nd.params, param{t: v.Type(), pos: t.Fset.Position(v.Pos()), ident: v.Name()})
 	}
 
 	if nd.caseVal != "" {
@@ -165,9 +200,14 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	}
 
 	key := types.TypeString(nd.returns[0], nil)
-	if first, dup := p.seen[key]; dup {
-		ds.Error(nd.pos, fmt.Sprintf("multiple providers for type %s", key),
-			fmt.Sprintf("only one //fabrik:provider per type is supported; first declared at %s", first))
+	if first, dup := p.seen[key][nd.name]; dup {
+		if nd.name != "" {
+			ds.Error(nd.pos, fmt.Sprintf("multiple providers for type %s named %q", key, nd.name),
+				fmt.Sprintf("only one //fabrik:provider per (type, name) is supported; first declared at %s", first))
+		} else {
+			ds.Error(nd.pos, fmt.Sprintf("multiple providers for type %s", key),
+				fmt.Sprintf("only one //fabrik:provider per type is supported; first declared at %s", first))
+		}
 		return ds
 	}
 	if _, grouped := p.groups[key]; grouped {
@@ -175,7 +215,10 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 			"a type is either provided directly or selected between implementations, not both")
 		return ds
 	}
-	p.seen[key] = nd.pos
+	if p.seen[key] == nil {
+		p.seen[key] = map[string]token.Position{}
+	}
+	p.seen[key][nd.name] = nd.pos
 	return ds
 }
 
@@ -187,12 +230,23 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		// Selected providers bind through their interface group.
 		return nil
 	}
-	g.BindLazy(nd.returns[0], "", func() (string, diag.Diagnostics) {
+	for i := range nd.params {
+		pr := &nd.params[i]
+		if gen.IsContext(pr.t) {
+			// Context mappings stay pending because provider lookup is bypassed.
+			continue
+		}
+		if name, ok := g.InjectName(nd.obj, pr.ident); ok {
+			pr.name = name
+			g.ConsumeInject(nd.obj, pr.ident)
+		}
+	}
+	g.BindLazy(nd.returns[0], nd.name, func() (string, diag.Diagnostics) {
 		if !g.InValidationScope() {
 			nd.built = true
 		}
 		args, ds := p.resolveParams(g, nd.params)
-		v := g.Var(varBase(nd.pkg, nd.returns[0]))
+		v := g.Var(varBase(nd.pkg, nd.returns[0]) + exportish(nd.name))
 		var closeVar string
 		if nd.returnsCleanup {
 			closeVar = g.Var(v + "Close")
@@ -206,14 +260,15 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			errsPkg = g.Import("errors")
 		}
 		g.Node(&gen.Call{
-			Base:    gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
-			Var:     v,
-			Fn:      g.ImportPkg(nd.pkg) + "." + nd.fn,
-			Args:    args,
-			Err:     errStyle,
-			Type:    nd.returns[0],
-			Cleanup: closeVar,
-			ErrsPkg: errsPkg,
+			Base:        gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
+			Var:         v,
+			Fn:          g.ImportPkg(nd.pkg) + "." + nd.fn,
+			Args:        args,
+			Err:         errStyle,
+			Type:        nd.returns[0],
+			BindingName: nd.name,
+			Cleanup:     closeVar,
+			ErrsPkg:     errsPkg,
 		})
 		return v, ds
 	})
@@ -232,9 +287,13 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 			if types.TypeString(types.Unalias(pr.t), nil) == "context.Context" {
 				continue
 			}
-			if !g.HasBinding(pr.t, "") {
-				ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-					missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
+			if !g.HasBinding(pr.t, pr.name) {
+				if msg, help, named := g.MissingBinding(pr.t, pr.name); named {
+					ds.Error(pr.pos, msg, help)
+				} else {
+					ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+						missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
+				}
 			}
 		}
 	}
@@ -244,11 +303,14 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 func (p *Provider) resolveParams(g *gen.Gen, params []param) ([]string, diag.Diagnostics) {
 	return resolveArgs(g, p.cfg, params,
 		func(pr param) (string, diag.Diagnostics, bool) {
-			return g.Instance(pr.t, "")
+			return g.Instance(pr.t, pr.name)
 		},
-		func(pr param) (string, string) {
+		func(pr param) (string, string, bool) {
+			if msg, help, named := g.MissingBinding(pr.t, pr.name); named {
+				return msg, help, true
+			}
 			return fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))
+				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)), false
 		})
 }
 

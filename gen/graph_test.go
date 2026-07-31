@@ -332,6 +332,33 @@ func TestInstancePathDiagnosedBuildIsNotACycle(t *testing.T) {
 	}
 }
 
+func TestCycleChainRendersBindingNames(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type A struct{}
+type B struct{}
+`)
+	aT := types.NewPointer(pkg.Scope().Lookup("A").Type())
+	bT := types.NewPointer(pkg.Scope().Lookup("B").Type())
+	g := New()
+	g.BindLazy(aT, "primary", func() (string, diag.Diagnostics) {
+		_, ds, _ := g.Instance(bT, "secondary")
+		return "a", ds
+	})
+	g.BindLazy(bT, "secondary", func() (string, diag.Diagnostics) {
+		_, ds, _ := g.Instance(aT, "primary")
+		return "b", ds
+	})
+	_, ds, ok := g.Instance(aT, "primary")
+	if !ok || len(ds) != 1 {
+		t.Fatalf("cycle = %v %v", ds, ok)
+	}
+	want := "provider cycle: *app.A (primary) -> *app.B (secondary) -> *app.A (primary)"
+	if ds[0].Message != want {
+		t.Fatalf("message = %q, want %q", ds[0].Message, want)
+	}
+}
+
 func TestPanickingBuildLeavesStateClean(t *testing.T) {
 	g := New()
 	g.SetDirective("outer")

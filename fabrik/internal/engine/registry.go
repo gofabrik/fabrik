@@ -39,6 +39,7 @@ func New() []gen.Directive {
 		provider,
 		core.NewSelect(provider, cfg),
 		core.NewHook(cfg),
+		core.NewInject(),
 		routerdir.NewHTTP(host),
 		routerdir.NewHandle(host),
 		routerdir.NewStatic(host),

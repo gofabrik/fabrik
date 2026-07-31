@@ -43,6 +43,7 @@ type commandNode struct {
 	decl       ast.Node
 
 	fn     string
+	obj    types.Object
 	pkg    *types.Package
 	params []param // parameters after ctx, classified at Emit
 }
@@ -50,11 +51,23 @@ type commandNode struct {
 type param struct {
 	name string
 	typ  types.Type
+	pos  token.Position
 }
 
 // Command implements cli:command and associates inputs and examples at Emit.
 type Command struct {
 	fam *family
+	// CLI input parameters are rechecked after all providers register.
+	values []valueParam
+}
+
+type valueParam struct {
+	fn    string
+	obj   types.Object
+	param string
+	tok   string
+	typ   types.Type
+	pos   token.Position
 }
 
 func (*Command) Name() string { return "cli:command" }
@@ -177,9 +190,10 @@ func (c *Command) Check(n any, t gen.Typed) diag.Diagnostics {
 			"want func(ctx cli.Context, deps...) error")
 		return ds
 	}
+	nd.obj = fn
 	// Defer classification until sibling input directives have registered.
 	for i := 1; i < p.Len(); i++ {
-		nd.params = append(nd.params, param{name: p.At(i).Name(), typ: p.At(i).Type()})
+		nd.params = append(nd.params, param{name: p.At(i).Name(), typ: p.At(i).Type(), pos: t.Fset.Position(p.At(i).Pos())})
 	}
 
 	if len(nd.path) == 0 {
@@ -268,7 +282,7 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	// After ctx, dependencies precede CLI values, and matching names always bind inputs.
 	bound := map[string]*param{}
-	var depTypes []types.Type
+	var roots []gen.ScopeRoot
 	var valueOrder []visible
 	firstValue := -1
 	for i := range nd.params {
@@ -282,9 +296,15 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 					"order is ctx, dependencies, then CLI values")
 				return ds
 			}
-			depTypes = append(depTypes, pr.typ)
+			depName := ""
+			if n, ok := g.InjectName(nd.obj, pr.name); ok {
+				depName = n
+				g.ConsumeInject(nd.obj, pr.name)
+			}
+			roots = append(roots, gen.ScopeRoot{Type: pr.typ, Name: depName})
 			continue
 		}
+		c.values = append(c.values, valueParam{fn: nd.fn, obj: nd.obj, param: pr.name, tok: tok, typ: pr.typ, pos: pr.pos})
 		if prev, dup := bound[tok]; dup {
 			ds.Error(nd.pos, fmt.Sprintf("parameters %q and %q both bind CLI input %q", prev.name, pr.name, tok),
 				"rename one parameter")
@@ -349,7 +369,7 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return ds
 	}
 	pkgAlias := g.ImportPkg(nd.pkg)
-	scope := g.AddScope(commandScopeName(pkgAlias, nd.fn, c.fam.commandFunctionCount(nd.fn) > 1), nd.pos, depTypes...)
+	scope := g.AddScope(commandScopeName(pkgAlias, nd.fn, c.fam.commandFunctionCount(nd.fn) > 1), nd.pos, roots...)
 	g.AddCommandFunc(gen.CommandFunc{
 		Name:       nd.name,
 		Path:       nd.path,
@@ -373,6 +393,20 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 func (c *Command) Finish(g *gen.Gen) diag.Diagnostics {
 	ds := c.fam.validateChains()
 	ds = append(ds, c.fam.validateSiblingTokens()...)
+	// Provider registration is complete, so this check is emission-order independent.
+	for _, vp := range c.values {
+		name := ""
+		if n, ok := g.InjectName(vp.obj, vp.param); ok {
+			name = n
+			ds.Error(vp.pos, fmt.Sprintf("inject selector %q is a CLI input on %s, not a dependency", vp.param, vp.fn),
+				"CLI values come from flags and arguments; only dependency parameters take named providers")
+			g.RejectInject(vp.obj, vp.param)
+		}
+		if g.HasBinding(vp.typ, name) {
+			ds.Error(vp.pos, fmt.Sprintf("parameter %q matches CLI input %q and a provider for %s", vp.param, vp.tok, g.TypeExpr(vp.typ)),
+				"rename the parameter or the input; wiring never resolves this silently")
+		}
+	}
 	for _, in := range c.fam.order {
 		if !c.fam.consumed[in.decl] {
 			name := "cli:flag"

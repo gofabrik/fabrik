@@ -1,0 +1,83 @@
+Named providers validate names, reject case combinations and duplicates, and
+cannot target selected types.
+-- go.mod --
+module app
+
+go 1.26
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- cache/cache.go --
+package cache
+
+//fabrik:config cache
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+}
+
+type Mem struct{}
+
+func (*Mem) Get(string) string { return "" }
+
+//fabrik:provider name=warmpool
+func NewWarmPool() Cache { return &Mem{} }
+
+//fabrik:provider:select cache.kind
+type Cache interface{ Get(string) string }
+-- store/store.go --
+package store
+
+//fabrik:config store
+type Config struct {
+	Kind string `yaml:"kind" default:"memory"`
+}
+
+//fabrik:provider:select store.kind
+type Store interface{ Get(string) string }
+
+type Memory struct{}
+
+func (*Memory) Get(string) string { return "" }
+
+//fabrik:provider case=memory
+func NewMemory() *Memory { return &Memory{} }
+
+//fabrik:provider name=backup
+func NewBackup() Store { return &Memory{} }
+-- web/web.go --
+package web
+
+type DB struct{}
+
+//fabrik:provider name=Read_Only
+func NewBadToken() *DB { return &DB{} }
+
+//fabrik:provider name=
+func NewEmpty() *DB { return &DB{} }
+
+//fabrik:provider name=spare case=memory
+func NewBoth() *DB { return &DB{} }
+
+type Cache struct{}
+
+//fabrik:provider name=warm
+func NewWarm() *Cache { return &Cache{} }
+
+//fabrik:provider name=warm
+func NewWarm2() *Cache { return &Cache{} }
+-- want/diags --
+error: cache/cache.go:15:1: type app/cache.Cache already has a plain provider
+  help: a type is either provided directly or selected between implementations, not both
+error: store/store.go:18:1: type app/store.Store is provided by conditional implementations
+  help: a type is either provided directly or selected between implementations, not both
+error: web/web.go:5:24: provider name "Read_Only" is invalid
+  help: names are a lowercase letter followed by lowercase letters or digits: [a-z][a-z0-9]*
+error: web/web.go:8:24: name= must not be empty
+  help: example: //fabrik:provider name=replica
+error: web/web.go:11:24: name= cannot be combined with case=
+  help: a case provider is selected by its group's config key
+error: web/web.go:19:1: multiple providers for type *app/web.Cache named "warm"
+  help: only one //fabrik:provider per (type, name) is supported; first declared at $WORK/web/web.go:16:1

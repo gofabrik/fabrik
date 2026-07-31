@@ -101,7 +101,7 @@ func renderScopes(t *testing.T, g *Gen) string {
 
 func TestScopeBuildsItsSubtree(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildPing", token.Position{}, w.cache)
+	w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.cache})
 	src := renderScopes(t, w.g)
 
 	want := `func buildPing(ctx context.Context) (*app.Cache, func() error, error) {
@@ -138,8 +138,8 @@ func TestScopeBuildsItsSubtree(t *testing.T) {
 
 func TestScopesConstructIndependently(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildA", token.Position{}, w.store)
-	w.g.AddScope("buildB", token.Position{}, w.store)
+	w.g.AddScope("buildA", token.Position{}, ScopeRoot{Type: w.store})
+	w.g.AddScope("buildB", token.Position{}, ScopeRoot{Type: w.store})
 	src := renderScopes(t, w.g)
 
 	if got := strings.Count(src, "app.NewStore(ctx)"); got != 2 {
@@ -165,7 +165,7 @@ func TestScopeWithoutCleanupOmitsSlot(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/flag") + ".Parse"})
 		return v, nil
 	})
-	g.AddScope("buildFlags", token.Position{}, flags)
+	g.AddScope("buildFlags", token.Position{}, ScopeRoot{Type: flags})
 	src := renderScopes(t, g)
 
 	buildFlags := strings.Index(src, "func buildFlags(ctx context.Context) (*flag.Flags, error) {")
@@ -179,7 +179,7 @@ func TestScopeWithoutCleanupOmitsSlot(t *testing.T) {
 
 func TestScopeContextBindsToParam(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildPing", token.Position{}, w.store)
+	w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.store})
 	src := renderScopes(t, w.g)
 
 	if !strings.Contains(src, "app.NewStore(ctx)") {
@@ -373,7 +373,7 @@ func TestScopeSelfPublishingLazyBind(t *testing.T) {
 		}
 		return expr, nil
 	})
-	g.AddScope("buildSrv", token.Position{}, srv)
+	g.AddScope("buildSrv", token.Position{}, ScopeRoot{Type: srv})
 	src := renderScopes(t, g)
 	if strings.Contains(src, "func buildSrv") {
 		t.Fatalf("nodeless scope must not emit a build function:\n%s", src)
@@ -469,7 +469,7 @@ func TestScopeVarAndImportAliasDoNotCollide(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/conn") + ".NewPool"})
 		return v, nil
 	})
-	g.AddScope("buildPool", token.Position{}, pool)
+	g.AddScope("buildPool", token.Position{}, ScopeRoot{Type: pool})
 	src := renderScopes(t, g)
 	if !strings.Contains(src, "conn2 \"example.com/conn\"") {
 		t.Fatalf("import alias should rename around the scope var:\n%s", src)
@@ -536,7 +536,7 @@ func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 			Var: v, Fn: g.Import("example.com/ind") + ".NewC", Args: []string{xv, yv}, Err: ErrReturn})
 		return v, nil
 	})
-	g.AddScope("buildC", token.Position{}, cT)
+	g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
 	src := renderScopes(t, g)
 
 	yPos := strings.Index(src, "y, yClose, err := ind.NewY()")
@@ -568,7 +568,7 @@ func TestCleanupWithoutErrorSitesOmitsUnwind(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/pure") + ".New", Cleanup: g.Var(v + "Close")})
 		return v, nil
 	})
-	g.AddScope("buildP", token.Position{}, pT)
+	g.AddScope("buildP", token.Position{}, ScopeRoot{Type: pT})
 	src := renderScopes(t, g)
 	if strings.Contains(src, "unwind") {
 		t.Fatalf("no error sites, unwind must not be declared:\n%s", src)
@@ -612,7 +612,7 @@ func TestScopeMultiCleanupReverseOrder(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/two") + ".NewC", Args: []string{bv}, Err: ErrReturn})
 		return v, ds
 	})
-	g.AddScope("buildC", token.Position{}, cT)
+	g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
 	src := renderScopes(t, g)
 
 	slots := `	var aClose, bClose func() error
@@ -716,8 +716,8 @@ func TestScopePathBindings(t *testing.T) {
 	if builds != 1 {
 		t.Fatalf("default flow built %d times, want 1", builds)
 	}
-	g.AddScope("buildU1", token.Position{}, uT)
-	g.AddScope("buildU2", token.Position{}, uT)
+	g.AddScope("buildU1", token.Position{}, ScopeRoot{Type: uT})
+	g.AddScope("buildU2", token.Position{}, ScopeRoot{Type: uT})
 	src := renderScopes(t, g)
 	if builds != 3 {
 		t.Fatalf("manager built %d times, want the default plus once per scope", builds)

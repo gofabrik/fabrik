@@ -175,9 +175,9 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 				seenConfigs[key] = true
 				return g.Instance(ct, "")
 			},
-			func(param) (string, string) {
+			func(param) (string, string, bool) {
 				return "a setup wire hook's parameters are context.Context then //fabrik:config structs; providers do not exist yet",
-					"construct the resource in a //fabrik:provider and inject it into a command"
+					"construct the resource in a //fabrik:provider and inject it into a command", false
 			})
 		g.Node(&gen.Call{
 			// Scoped replay runs under the consuming directive; name the

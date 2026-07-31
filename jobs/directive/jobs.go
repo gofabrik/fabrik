@@ -33,14 +33,15 @@ type builder struct {
 }
 
 type jobNode struct {
-	pos      token.Position
-	name     string // handler-id: name= or the function name
-	kind     string // kind= override, resolved otherwise
-	fn       string
-	pkg      *types.Package
-	fset     *token.FileSet
-	msgType  types.Type
-	depTypes []types.Type
+	pos     token.Position
+	name    string // name= value, or the function name by default
+	kind    string // kind= value, or inferred
+	fn      string
+	pkg     *types.Package
+	fset    *token.FileSet
+	msgType types.Type
+	obj     types.Object
+	deps    []dep
 }
 
 type cronNode struct {
@@ -50,7 +51,13 @@ type cronNode struct {
 	fn       string
 	pkg      *types.Package
 	fset     *token.FileSet
-	depTypes []types.Type
+	obj      types.Object
+	deps     []dep
+}
+
+type dep struct {
+	t     types.Type
+	ident string
 }
 
 func (b *builder) pos() token.Position {
@@ -139,8 +146,9 @@ func (j *Jobs) Check(n any, t gen.Typed) diag.Diagnostics {
 			"generated code refers to it as a package-qualified type; name it and capitalize")
 		return ds
 	}
+	nd.obj = fn
 	for i := 1; i < p.Len()-1; i++ {
-		nd.depTypes = append(nd.depTypes, p.At(i).Type())
+		nd.deps = append(nd.deps, dep{t: p.At(i).Type(), ident: p.At(i).Name()})
 	}
 	if nd.name == "" {
 		nd.name = fn.Name()
@@ -268,8 +276,9 @@ func (c *Cron) Check(n any, t gen.Typed) diag.Diagnostics {
 			"want func(ctx context.Context, deps...) error")
 		return ds
 	}
+	nd.obj = fn
 	for i := 1; i < p.Len(); i++ {
-		nd.depTypes = append(nd.depTypes, p.At(i).Type())
+		nd.deps = append(nd.deps, dep{t: p.At(i).Type(), ident: p.At(i).Name()})
 	}
 	if err := validIdent("name", nd.name); err != nil {
 		ds.Error(nd.pos, err.Error(), "give the cron a name: //fabrik:cron name=nightly schedule=\"0 3 * * *\"")
@@ -385,7 +394,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 		})
 	}
 	for _, jn := range b.jobs {
-		deps, dds := resolveDeps(g, jn.pos, jn.depTypes)
+		deps, dds := resolveDeps(g, jn.pos, jn.obj, jn.deps)
 		ds = append(ds, dds...)
 		call := callExpr(g, jn.pkg, jn.fn, deps, true)
 		msg := g.TypeExpr(jn.msgType)
@@ -398,7 +407,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 		})
 	}
 	for _, cn := range b.crons {
-		deps, dds := resolveDeps(g, cn.pos, cn.depTypes)
+		deps, dds := resolveDeps(g, cn.pos, cn.obj, cn.deps)
 		ds = append(ds, dds...)
 		call := callExpr(g, cn.pkg, cn.fn, deps, false)
 		register(&gen.Call{
@@ -448,15 +457,24 @@ func callExpr(g *gen.Gen, pkg *types.Package, fn string, deps []string, withMsg 
 	return g.ImportPkg(pkg) + "." + fn + "(" + strings.Join(args, ", ") + ")"
 }
 
-func resolveDeps(g *gen.Gen, pos token.Position, depTypes []types.Type) ([]string, diag.Diagnostics) {
+func resolveDeps(g *gen.Gen, pos token.Position, obj types.Object, deps []dep) ([]string, diag.Diagnostics) {
 	var ds diag.Diagnostics
-	out := make([]string, 0, len(depTypes))
-	for _, dt := range depTypes {
-		e, dds, ok := g.Instance(dt, "")
+	out := make([]string, 0, len(deps))
+	for _, d := range deps {
+		name := ""
+		if n, ok := g.InjectName(obj, d.ident); ok {
+			name = n
+			g.ConsumeInject(obj, d.ident)
+		}
+		e, dds, ok := g.Instance(d.t, name)
 		ds = append(ds, dds...)
 		if !ok {
-			ds.Error(pos, fmt.Sprintf("no provider for %s", g.TypeExpr(dt)),
-				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(dt)))
+			if msg, help, named := g.MissingBinding(d.t, name); named {
+				ds.Error(pos, msg, help)
+			} else {
+				ds.Error(pos, fmt.Sprintf("no provider for %s", g.TypeExpr(d.t)),
+					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(d.t)))
+			}
 			out = append(out, "nil")
 			continue
 		}

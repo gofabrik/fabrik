@@ -76,6 +76,8 @@ type Gen struct {
 	scope       *Scope          // active scope; nil uses default state
 	aliasIdents map[string]bool // import aliases reserved by new scopes
 
+	inject map[injectKey]*injectEntry
+
 	comments CommentLevel
 	srcRoot  string
 
@@ -552,11 +554,15 @@ func (g *Gen) setLazyRunning(lb *lazyBind, v bool) {
 func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string, ds diag.Diagnostics, ok bool) {
 	// Avoid adding imports while formatting cycle diagnostics.
 	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
+	chainKey := key
+	if name != "" {
+		chainKey += " (" + name + ")"
+	}
 	if g.lazyRunning(lb) {
-		return "", diag.Diagnostics{g.cycleDiag(key)}, false
+		return "", diag.Diagnostics{g.cycleDiag(chainKey)}, false
 	}
 	g.setLazyRunning(lb, true)
-	g.materializing = append(g.materializing, key)
+	g.materializing = append(g.materializing, chainKey)
 	prev := g.current
 	g.current = lb.owner
 	defer func() {
@@ -1040,7 +1046,7 @@ func wrapperVars(g *Gen, s *Scope) []string {
 	}
 	out := make([]string, 0, len(s.roots))
 	for _, r := range s.roots {
-		base := depVarBase(r)
+		base := depVarBase(r.Type)
 		name := base
 		for n := 2; taken[name]; n++ {
 			name = fmt.Sprintf("%s%d", base, n)
