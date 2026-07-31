@@ -68,11 +68,15 @@ func TestResolvePackageDerivedFromDirBase(t *testing.T) {
   entrypoints: ["migrate"]
 `)
 	opts, diags := Resolve(dir, Overrides{})
+	if diags.HasFatal() {
+		t.Fatalf("diags = %v", diags)
+	}
 	if opts.Package != "app" {
 		t.Fatalf("Package = %q, want %q", opts.Package, "app")
 	}
-	if !containsMsg(diags, "not supported yet") {
-		t.Fatalf("diags = %v, want an embedded not-supported-yet diagnostic", diags)
+	ep := opts.EntrypointPos["migrate"]
+	if len(opts.Entrypoints) != 1 || !ep.IsValid() {
+		t.Fatalf("entrypoints = %v with pos %v", opts.Entrypoints, opts.EntrypointPos)
 	}
 }
 
@@ -199,17 +203,25 @@ func TestResolveDuplicateEntrypointsDiagnoses(t *testing.T) {
 	}
 }
 
-func TestResolveEmitEmbeddedNotSupportedYet(t *testing.T) {
-	dir := writeModule(t, `generate:
-  emit: embedded
-  package: app
-`)
-	_, diags := Resolve(dir, Overrides{})
-	if !containsMsg(diags, "emit: embedded is not supported yet") {
-		t.Fatalf("diags = %v, want a not-supported-yet diagnostic", diags)
+func TestResolveEmitEmbeddedResolves(t *testing.T) {
+	dir := writeModule(t, "generate:\n  emit: embedded\n  dir: appwire\n")
+	opts, diags := Resolve(dir, Overrides{})
+	if diags.HasFatal() {
+		t.Fatalf("diags = %v", diags)
+	}
+	emitPos := opts.EmitPos
+	if opts.Emit != EmitEmbedded || opts.Package != "appwire" || !emitPos.IsValid() {
+		t.Fatalf("embedded not resolved: %+v", opts)
 	}
 }
 
+func TestResolveEmbeddedRequiresDir(t *testing.T) {
+	dir := writeModule(t, "generate:\n  emit: embedded\n")
+	_, diags := Resolve(dir, Overrides{})
+	if !diags.HasFatal() || !strings.Contains(diags[0].Message, "requires dir") {
+		t.Fatalf("diags = %v, want dir requirement", diags)
+	}
+}
 func TestResolveSplitFragmentResolves(t *testing.T) {
 	dir := writeModule(t, "generate:\n  split: fragment\n")
 	opts, diags := Resolve(dir, Overrides{})
@@ -358,5 +370,30 @@ func TestResolveMalformedYAMLCarriesLine(t *testing.T) {
 	}
 	if diags[0].Pos.Line == 0 {
 		t.Fatalf("malformed yaml diagnostic must carry the reported line: %v", diags[0].Pos)
+	}
+}
+
+func TestResolveDirEscapingModuleDiagnoses(t *testing.T) {
+	for _, dir := range []string{"../outside", "gen/../../outside", "/abs"} {
+		root := writeModule(t, "generate:\n  emit: embedded\n  dir: "+dir+"\n")
+		_, diags := Resolve(root, Overrides{})
+		if !containsMsg(diags, "must stay inside the module") {
+			t.Fatalf("dir %q: diags = %v, want a containment diagnostic", dir, diags)
+		}
+	}
+}
+
+func TestResolveOverlayBeatsDisk(t *testing.T) {
+	dir := writeModule(t, "generate:\n  emit: standalone\n")
+	overlay := map[string][]byte{
+		filepath.Join(dir, "fabrik.yaml"): []byte("generate:\n  emit: bogus\n"),
+	}
+	_, diags := ResolveOverlay(dir, overlay, Overrides{})
+	if !containsMsg(diags, `invalid emit "bogus"`) {
+		t.Fatalf("diags = %v, want the overlay content diagnosed", diags)
+	}
+	opts, diags := ResolveOverlay(dir, nil, Overrides{})
+	if len(diags) != 0 || opts.Emit != EmitStandalone {
+		t.Fatalf("opts = %+v, diags = %v, want the on-disk file without overlay", opts, diags)
 	}
 }

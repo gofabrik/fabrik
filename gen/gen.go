@@ -110,6 +110,9 @@ type Gen struct {
 
 	batchID  string // active order-sensitive emission batch
 	batchSeq int
+
+	embedded  bool
+	outputPkg string
 }
 
 // New returns an empty Gen.
@@ -161,6 +164,14 @@ func (g *Gen) SetCommentLevel(l CommentLevel) { g.comments = l }
 
 // SetSourceRoot makes origin positions relative to dir.
 func (g *Gen) SetSourceRoot(dir string) { g.srcRoot = dir }
+
+// EmbeddedOutput switches rendering to entry constructors in the
+// named non-main package: no run(), no CLI tree, no signal handling;
+// the host owns lifecycle.
+func (g *Gen) EmbeddedOutput(pkg string) {
+	g.embedded = true
+	g.outputPkg = pkg
+}
 
 // SetBuildTag constrains the generated file with a //go:build line; empty leaves it unconstrained.
 func (g *Gen) SetBuildTag(tag string) { g.buildTag = tag }
@@ -684,8 +695,7 @@ func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok
 		}
 	}()
 	expr, ds = lb.build()
-	// Flow walks report a broken path once across flows; direct calls
-	// stay retryable (a diagnosed path build is not a cycle).
+	// Flow walks deduplicate diagnostics across flows; direct calls remain retryable.
 	if ds.HasFatal() && (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
 		lb.diagnosed = true
 		lb.diagnosedExpr = expr
@@ -713,7 +723,7 @@ func (g *Gen) setLazyRunning(lb *lazyBind, v bool) {
 
 func (g *Gen) materialize(t types.Type, name string, lb *lazyBind, dk demandKey) (expr string, ds diag.Diagnostics, ok bool) {
 	if lb.diagnosed {
-		// Same contract a same-flow consumer gets from the bind cache.
+		// Populate the bind cache for consumers after the initial diagnostic.
 		if !g.typeBound(t, name) {
 			g.Bind(t, name, lb.diagnosedExpr)
 		}
@@ -747,8 +757,7 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind, dk demandKey)
 			expr = ""
 			ok = false
 			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
-			// Panics never reach the bind cache, so only the scope passes
-			// need the cross-flow dedup; direct consumers retry as before.
+			// Deduplicate panics across scope passes while leaving direct calls retryable.
 			if (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
 				lb.diagnosed = true
 				lb.diagnosedExpr = ""
@@ -807,9 +816,7 @@ func (g *Gen) cycleDiag(key string) diag.Diagnostic {
 	}
 }
 
-// BeginBatch marks subsequent emissions as one order-sensitive
-// sequence; the layout keeps their relative order. The returned
-// function ends the batch.
+// BeginBatch preserves the order of subsequent emissions until the returned function is called.
 func (g *Gen) BeginBatch(id string) func() {
 	prevID, prevSeq := g.batchID, g.batchSeq
 	g.batchID = id
@@ -817,9 +824,7 @@ func (g *Gen) BeginBatch(id string) func() {
 	return func() { g.batchID, g.batchSeq = prevID, prevSeq }
 }
 
-// OnceValue runs build once per key and caches its result. The active
-// scope owns the cache, so the validation scope's replays stay
-// isolated and the shared store sees exactly one emission.
+// OnceValue runs build once per key in the active scope and caches its result.
 func (g *Gen) OnceValue(key string, build func() string) string {
 	if sc := g.scope; sc != nil {
 		if v, ok := sc.onceVals[key]; ok {
@@ -948,14 +953,14 @@ func (g *Gen) Render() ([]byte, error) {
 		}
 	}
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
-	if hasCmd {
+	if hasCmd || g.embedded {
 		g.Context()
 	}
 	runNodes := g.nodes
 	if g.fragmentMode() {
 		runNodes = g.defaultInlineNodes()
 	}
-	needsCtx := hasCmd || usesCtx(runNodes, g.ctxVar)
+	needsCtx := hasCmd || g.embedded || usesCtx(runNodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
 	// lateAliases must include every alias registered here.
@@ -963,13 +968,19 @@ func (g *Gen) Render() ([]byte, error) {
 	if needsCtx {
 		ctxPkg = g.Import("context")
 	}
-	g.Import("os")
-	if hasCmd {
-		g.Import("os/signal")
-		g.Import("syscall")
-		g.Import("github.com/gofabrik/fabrik/cli")
+	if g.embedded {
+		if g.entrypointsNeedErrors() {
+			g.Import("errors")
+		}
 	} else {
-		g.Import("fmt")
+		g.Import("os")
+		if hasCmd {
+			g.Import("os/signal")
+			g.Import("syscall")
+			g.Import("github.com/gofabrik/fabrik/cli")
+		} else {
+			g.Import("fmt")
+		}
 	}
 
 	if len(g.scopes) > 0 {
@@ -982,16 +993,32 @@ func (g *Gen) Render() ([]byte, error) {
 		}
 	}
 
+	var body bytes.Buffer
+	if g.embedded {
+		g.writeEntrypoints(&body, ctxPkg)
+	} else {
+		g.writeRun(&body, needsCtx, ctxPkg)
+	}
+	if g.fragmentMode() {
+		g.writeRegionFuncs(&body)
+	} else {
+		g.writeScopeFuncs(&body)
+	}
+
+	var used map[string]bool
+	if g.embedded {
+		// Embedded output drops the CLI shell, so imports registered for
+		// it prune against what the entries actually reference.
+		u, err := usedIdents(body.String())
+		if err != nil {
+			return nil, err
+		}
+		used = u
+	}
 	var b bytes.Buffer
 	g.writeFileHeader(&b)
-	g.writeImports(&b, nil)
-
-	g.writeRun(&b, needsCtx, ctxPkg)
-	if g.fragmentMode() {
-		g.writeRegionFuncs(&b)
-	} else {
-		g.writeScopeFuncs(&b)
-	}
+	g.writeImports(&b, used)
+	b.Write(body.Bytes())
 
 	return g.formatFile(b.Bytes())
 }
@@ -1000,7 +1027,11 @@ func (g *Gen) writeFileHeader(b *bytes.Buffer) {
 	if g.buildTag != "" {
 		b.WriteString("//go:build " + g.buildTag + "\n\n")
 	}
-	b.WriteString("// Code generated by fabrik. DO NOT EDIT.\n// Regenerate with: fabrik wire\n\npackage main\n\n")
+	pkg := g.outputPkg
+	if pkg == "" {
+		pkg = "main"
+	}
+	b.WriteString("// Code generated by fabrik. DO NOT EDIT.\n// Regenerate with: fabrik wire\n\npackage " + pkg + "\n\n")
 }
 
 func (g *Gen) formatFile(src []byte) ([]byte, error) {
@@ -1014,19 +1045,16 @@ func (g *Gen) formatFile(src []byte) ([]byte, error) {
 	return out, nil
 }
 
-// RenderFiles renders the split file set: main.gen.go with run() and
-// the command bodies, plus one file per extracted region carrying
-// exactly the imports its body uses. It must run after the plan
-// exists; outside fragment mode everything stays in main.gen.go.
+// RenderFiles renders the main file and one import-pruned file per extracted region.
+// Outside fragment mode it returns only the main file.
 func (g *Gen) RenderFiles() (map[string][]byte, error) {
 	single, err := g.Render()
 	if err != nil {
 		return nil, err
 	}
 	if !g.fragmentMode() || g.fragPlan == nil || len(g.fragPlan.regions) == 0 {
-		return map[string][]byte{"main.gen.go": single}, nil
+		return map[string][]byte{g.mainFileName(): single}, nil
 	}
-	// Re-render the pieces the single-file pass validated.
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
 	runNodes := g.defaultInlineNodes()
 	needsCtx := hasCmd || usesCtx(runNodes, g.ctxVar)
@@ -1051,12 +1079,16 @@ func (g *Gen) RenderFiles() (map[string][]byte, error) {
 		files[name] = out
 		return nil
 	}
-	if err := emit("main.gen.go", func(b *bytes.Buffer) {
-		g.writeRun(b, needsCtx, ctxPkg)
+	if err := emit(g.mainFileName(), func(b *bytes.Buffer) {
+		if g.embedded {
+			g.writeEntrypoints(b, ctxPkg)
+		} else {
+			g.writeRun(b, needsCtx, ctxPkg)
+		}
 	}); err != nil {
 		return nil, err
 	}
-	taken := map[string]bool{"main.gen.go": true}
+	taken := map[string]bool{g.mainFileName(): true}
 	for _, reg := range g.regionEmitOrder() {
 		reg := reg
 		base := "fragments_" + strings.ToLower(reg.fn)
@@ -1074,10 +1106,7 @@ func (g *Gen) RenderFiles() (map[string][]byte, error) {
 	return files, nil
 }
 
-// usedIdents parses a file body and collects the identifiers standing
-// as package qualifiers, which is what import pruning matches aliases
-// against; a field or declaration sharing an alias's name keeps no
-// import alive.
+// usedIdents returns identifiers used as package qualifiers for import pruning.
 func usedIdents(body string) (map[string]bool, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "split.go", "package main\n\n"+body, 0)

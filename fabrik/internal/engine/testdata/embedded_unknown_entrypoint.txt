@@ -1,0 +1,27 @@
+Entrypoints must name declared commands; unknown entries are positioned
+diagnostics naming the known paths.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- fabrik.yaml --
+generate:
+  emit: embedded
+  dir: appwire
+  entrypoints:
+    - sync
+    - reindex
+-- shared/cli.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:command
+func Sync(ctx cli.Context) error { return nil }
+-- want/diags --
+error: fabrik.yaml:6:7: unknown entrypoint "reindex"
+  help: known: sync

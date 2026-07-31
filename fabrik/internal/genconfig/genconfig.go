@@ -1,7 +1,4 @@
-// Package genconfig resolves fabrik.yaml into the explicit generation
-// options every regeneration surface (wire, wire -check, run, build, new)
-// consumes, so they all resolve options the same way. Absent fabrik.yaml
-// resolves to today's defaults.
+// Package genconfig resolves project generation settings from fabrik.yaml and invocation overrides.
 package genconfig
 
 import (
@@ -45,19 +42,28 @@ type Options struct {
 	BuildTag    string
 	Entrypoints []string
 	Comments    gen.CommentLevel
+
+	// Positions anchor engine diagnostics in fabrik.yaml.
+	EmitPos       token.Position
+	DirPos        token.Position
+	EntrypointPos map[string]token.Position
 }
 
-// Overrides carries per-invocation flag values that beat fabrik.yaml.
+// Overrides contains invocation settings that take precedence over fabrik.yaml.
 type Overrides struct {
 	Comments *gen.CommentLevel
 }
 
 const fileName = "fabrik.yaml"
 
-// Resolve loads fabrik.yaml beside go.mod, walking up from dir to find it,
-// and applies ov on top. A module without fabrik.yaml resolves to the
-// zero-value defaults.
+// Resolve finds fabrik.yaml beside go.mod and applies ov over its settings.
+// A module without fabrik.yaml uses the zero-value defaults.
 func Resolve(dir string, ov Overrides) (Options, diag.Diagnostics) {
+	return ResolveOverlay(dir, nil, ov)
+}
+
+// ResolveOverlay is Resolve with unsaved contents overriding fabrik.yaml on disk.
+func ResolveOverlay(dir string, overlay map[string][]byte, ov Overrides) (Options, diag.Diagnostics) {
 	opts := defaults()
 
 	root, ok := findModuleRoot(dir)
@@ -65,6 +71,10 @@ func Resolve(dir string, ov Overrides) (Options, diag.Diagnostics) {
 		return applyOverrides(opts, ov), nil
 	}
 	path := filepath.Join(root, fileName)
+	if data, ok := overlay[path]; ok {
+		opts, diags := parseFile(path, data, opts)
+		return applyOverrides(opts, ov), diags
+	}
 	data, err := os.ReadFile(path) // #nosec G304 -- reads the module-relative project file
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -170,6 +180,7 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 				continue
 			}
 			emitNode = val
+			opts.EmitPos = posAt(path, val)
 			switch val.Value {
 			case "standalone":
 				opts.Emit = EmitStandalone
@@ -183,6 +194,12 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 				continue
 			}
 			dirNode = val
+			opts.DirPos = posAt(path, val)
+			if !filepath.IsLocal(val.Value) {
+				diags.Error(posAt(path, val), fmt.Sprintf("dir %q must stay inside the module", val.Value),
+					"use a relative path without .. segments")
+				continue
+			}
 			opts.Dir = val.Value
 		case "package":
 			if !scalar(key, val) {
@@ -230,6 +247,10 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 				}
 				seen[item.Value] = true
 				opts.Entrypoints = append(opts.Entrypoints, item.Value)
+				if opts.EntrypointPos == nil {
+					opts.EntrypointPos = map[string]token.Position{}
+				}
+				opts.EntrypointPos[item.Value] = posAt(path, item)
 			}
 		case "comments":
 			if !scalar(key, val) {
@@ -258,18 +279,17 @@ func resolveGenerate(path string, node *yaml.Node, opts *Options) diag.Diagnosti
 		}
 	}
 
+	if opts.Emit == EmitEmbedded && opts.Dir == "" {
+		diags.Error(posAt(path, emitNode), "emit: embedded requires dir", "set generate.dir to the output package directory")
+	}
 	if entrypointsKey != nil && opts.Emit != EmitEmbedded {
 		diags.Error(posAt(path, entrypointsKey), "entrypoints requires emit: embedded", "")
-	}
-
-	if opts.Emit == EmitEmbedded {
-		diags.Error(posAt(path, emitNode), "emit: embedded is not supported yet", "")
 	}
 
 	return diags
 }
 
-// ParseCommentLevel parses the comments field/flag value shared by every surface.
+// ParseCommentLevel parses a comments setting or flag value.
 func ParseCommentLevel(s string) (gen.CommentLevel, error) {
 	switch s {
 	case "", "sections":

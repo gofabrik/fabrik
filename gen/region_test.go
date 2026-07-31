@@ -11,8 +11,7 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 )
 
-// regionWorld drives the generator the way the engine does in fragment
-// mode: lazy binds, command scopes, WalkFlows, PlanFragments, Render.
+// regionWorld builds fragment-mode scenarios for region planning tests.
 type regionWorld struct {
 	g     *Gen
 	store types.Type
@@ -115,8 +114,7 @@ func TestSharedIdentifierRootExtractsAndNames(t *testing.T) {
 	w.addCommand("beta", ScopeRoot{Type: w.cache})
 	src := renderRegions(t, w.g)
 
-	// The shared chain ends in a scope root; the root anchors the
-	// region, orders first, and names it by its result type.
+	// A shared scope root anchors, orders, and names its region.
 	if !strings.Contains(src, "func buildCache() (*app.Cache, error)") {
 		t.Fatalf("identifier scope root must anchor and name the region:\n%s", src)
 	}
@@ -154,8 +152,7 @@ type B struct{}
 	w.addCommand("beta", ScopeRoot{Type: wrapB})
 	src := renderRegions(t, w.g)
 
-	// conn and cache are shared, but no member is a root, hook, named
-	// provider, singleton, or prelude: nothing extracts.
+	// Shared nodes without a content anchor remain inline.
 	if got := strings.Count(src, "app.NewStore()"); got != 2 {
 		t.Fatalf("store constructed %d times, want an inline copy per command:\n%s", got, src)
 	}
@@ -213,9 +210,7 @@ type Q struct{}
 		g.AddCommandFunc(CommandFunc{Name: name,
 			Fn: g.Import("example.com/mix") + ".Run" + upperFirst(name), Scope: s})
 	}
-	// x's builder consumes p, so p inherits x's flows through demand
-	// edges: p and x share one signature and extract together; q stays
-	// a single-node inline, and gamma discards the p it does not use.
+	// Demand propagation groups p with x while leaving the single-node q inline.
 	addCmd("alpha", ScopeRoot{Type: p, Name: "seed"}, ScopeRoot{Type: q})
 	addCmd("beta", ScopeRoot{Type: p, Name: "seed"}, ScopeRoot{Type: q})
 	addCmd("gamma", ScopeRoot{Type: x})
@@ -236,8 +231,7 @@ type Q struct{}
 }
 
 func TestAllDiscardedRegionCallAssigns(t *testing.T) {
-	// A flow that consumes none of a region's results still calls it
-	// for its effects; a short declaration would have no new name.
+	// A flow calls a shared region for effects even when it discards every result.
 	g := New()
 	g.SetModule("demo")
 	g.FragmentMode()
@@ -278,8 +272,7 @@ func TestFlowUniqueWorkStaysInline(t *testing.T) {
 	w.addCommand("beta", ScopeRoot{Type: w.store, Name: "db"})
 	src := renderRegions(t, w.g)
 
-	// Store is shared but cache is alpha-only; only the store could
-	// extract and it is one node, so everything inlines.
+	// A lone shared node remains inline when its consumer is flow-specific.
 	if got := strings.Count(src, "app.NewCache(conn)"); got != 1 {
 		t.Fatalf("cache constructed %d times, want inline in alpha only:\n%s", got, src)
 	}
@@ -319,7 +312,7 @@ func TestHookRegionTakesCalleeName(t *testing.T) {
 	if got := strings.Count(src, "if err := initLog(ctx); err != nil"); got != 2 {
 		t.Fatalf("hook region called %d times, want once per command:\n%s", got, src)
 	}
-	// Hooks run before providers in each command body.
+	// Hooks precede providers in every command body.
 	for _, body := range strings.SplitAfter(src, "Run: func") {
 		hook := strings.Index(body, "initLog(ctx)")
 		prov := strings.Index(body, "buildDb()")
@@ -410,7 +403,7 @@ type E struct{}
 	g.AddCommandFunc(CommandFunc{Name: "beta", Fn: g.Import("example.com/wide") + ".RunBeta", Scope: s2})
 	src := renderRegions(t, g)
 
-	// Four live-outs exceed the width guard; the shared chain inlines.
+	// A region with four live-outs remains inline.
 	if strings.Contains(src, "func build") {
 		t.Fatalf("wide region must not extract:\n%s", src)
 	}
@@ -420,8 +413,7 @@ type E struct{}
 }
 
 func TestPathBindPositionAnchorsDiagnostics(t *testing.T) {
-	// Positionless nodes emitted while materializing a path binding
-	// inherit the registering annotation's position in diagnostics.
+	// Positionless path-binding nodes inherit the registering annotation's position.
 	pkg := typecheckScopePkg(t, "example.com/app", `package app
 
 type Adapter struct{}
@@ -481,9 +473,7 @@ type Adapter struct{}
 }
 
 func TestRegionCleanupFollowsEmittedOrder(t *testing.T) {
-	// The layout reorders two independent cleanup providers by anchor;
-	// the composed cleanup must release in reverse of the emitted
-	// order, not the store order.
+	// Cleanup reverses rendered provider order, not store order.
 	pkg := typecheckScopePkg(t, "example.com/app", `package app
 
 type A struct{}
@@ -572,8 +562,7 @@ func TestRenderFilesSplitsRegionsWithPrunedImports(t *testing.T) {
 	if !strings.Contains(string(frag), "func buildDb()") || strings.Contains(string(main), "func buildDb()") {
 		t.Fatalf("region function must live in its own file")
 	}
-	// The region file needs only the app import; the cli import stays
-	// with the command tree.
+	// Region files include only imports used by their bodies.
 	if strings.Contains(string(frag), `"github.com/gofabrik/fabrik/cli"`) {
 		t.Fatalf("region file carries an unused import:\n%s", frag)
 	}
@@ -592,8 +581,7 @@ func filesNames(m map[string][]byte) []string {
 }
 
 func TestRenderFilesAllocatesDistinctFilenames(t *testing.T) {
-	// buildDB and buildDb lowercase to one filename; the second region
-	// must get its own file instead of overwriting the first.
+	// Colliding lowercase region filenames remain distinct.
 	pkg := typecheckScopePkg(t, "example.com/app", `package app
 
 type DB struct{}
@@ -651,5 +639,74 @@ func TestUsedIdentsMatchesOnlyPackageQualifiers(t *testing.T) {
 	}
 	if used["errors"] {
 		t.Fatal("field name wrongly counted as an import use")
+	}
+}
+
+func TestSelectCommandsFiltersAndDiagnosesUnknown(t *testing.T) {
+	w := newRegionWorld(t, "db")
+	w.addCommand("alpha", ScopeRoot{Type: w.cache})
+	w.addCommand("beta", ScopeRoot{Type: w.cache})
+	g := w.g
+	pos := map[string]token.Position{"gamma": {Filename: "fabrik.yaml", Line: 5, Column: 7}}
+	ds := g.SelectCommands([]string{"gamma"}, pos)
+	if !ds.HasFatal() || !strings.Contains(ds[0].Message, `unknown entrypoint "gamma"`) || ds[0].Pos.Line != 5 {
+		t.Fatalf("ds = %v, want positioned unknown-entrypoint error", ds)
+	}
+	if ds := g.SelectCommands([]string{"alpha"}, nil); ds.HasFatal() {
+		t.Fatalf("SelectCommands alpha: %v", ds)
+	}
+	if g.CommandCount() != 1 || len(g.scopes) != 1 {
+		t.Fatalf("selection kept %d commands, %d scopes", g.CommandCount(), len(g.scopes))
+	}
+}
+
+func TestEmbeddedEntrypointRendering(t *testing.T) {
+	w := newRegionWorld(t, "db")
+	w.addCommand("alpha", ScopeRoot{Type: w.cache})
+	w.addCommand("beta", ScopeRoot{Type: w.cache})
+	w.g.EmbeddedOutput("appwire")
+	src := renderRegions(t, w.g)
+	if !strings.Contains(src, "package appwire") {
+		t.Fatalf("wrong package:\n%s", src)
+	}
+	for _, want := range []string{
+		"func NewAlpha(ctx context.Context) (*app.Cache, error)",
+		"func NewBeta(ctx context.Context) (*app.Cache, error)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("missing %q:\n%s", want, src)
+		}
+	}
+	for _, absent := range []string{"func run(", "cli.Command", "signal.Notify"} {
+		if strings.Contains(src, absent) {
+			t.Fatalf("embedded output must not contain %q:\n%s", absent, src)
+		}
+	}
+}
+
+func TestEmbeddedHookOnlyCommandOmitsUnusedErr(t *testing.T) {
+	// A hook-only command checks errors without an outer err declaration.
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type Marker struct{}
+`)
+	marker := types.NewPointer(pkg.Scope().Lookup("Marker").Type())
+	g := New()
+	g.SetModule("demo")
+	g.FragmentMode()
+	g.EmbeddedOutput("appwire")
+	g.BindLazy(marker, "", func() (string, diag.Diagnostics) {
+		g.Node(&Call{Base: Base{Phase: PhaseSetup},
+			Fn: g.Import("example.com/app") + ".Warm", Args: []string{g.Context()}, Err: ErrInline})
+		return "nil", nil
+	})
+	s := g.AddScope("buildWarm", token.Position{}, ScopeRoot{Type: marker})
+	g.AddCommandFunc(CommandFunc{Name: "warm", Fn: "app.RunWarm", Scope: s})
+	src := renderRegions(t, g)
+	if strings.Contains(src, "var err error") {
+		t.Fatalf("unused outer err declared:\n%s", src)
+	}
+	if !strings.Contains(src, "if err := app.Warm(ctx); err != nil") {
+		t.Fatalf("hook not emitted with shadowed err:\n%s", src)
 	}
 }

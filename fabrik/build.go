@@ -35,6 +35,10 @@ func buildCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	if resolved.Emit == genconfig.EmitEmbedded {
+		return fmt.Errorf("fabrik build does not build embedded output; the host project builds it")
+	}
 	mainDir, err := wireWith(abs, opts)
 	if err != nil {
 		return err
@@ -49,8 +53,7 @@ func buildCmd(args []string) error {
 	return cmd.Run()
 }
 
-// buildArgs renders the "go build" argument list; buildTag propagates the
-// project's //go:build constraint so the generated file still builds.
+// buildArgs includes the configured build tag in the go build arguments.
 func buildArgs(out, buildTag, pkg string) []string {
 	args := []string{"build"}
 	if out != "" {

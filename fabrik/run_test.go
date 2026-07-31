@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +66,18 @@ func TestRunEnv_DefaultsDevelopmentOnlyWhenUnset(t *testing.T) {
 	env := runEnv()
 	if !slices.Contains(env, "FABRIK_ENV=development") {
 		t.Errorf("unset FABRIK_ENV: injected env %v is missing FABRIK_ENV=development", env)
+	}
+}
+
+func TestRunCommandRefusesEmbeddedOutput(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fabrik.yaml"), []byte("generate:\n  emit: embedded\n  dir: appwire\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runCommand(dir, nil); err == nil || !strings.Contains(err.Error(), "embedded") {
+		t.Fatalf("err = %v, want embedded refusal", err)
 	}
 }

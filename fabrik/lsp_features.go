@@ -59,13 +59,15 @@ func (s *lspServer) publishTyped(uri string, gen int) {
 	}
 	s.mu.Unlock()
 
-	cfg, cdiags := genconfig.Resolve(root, genconfig.Overrides{})
-	if cdiags.HasFatal() {
-		return
-	}
-	res, err := engine.WireOptions(root, overlay, engine.OptionsFrom(cfg))
-	if err != nil {
-		return
+	// A broken fabrik.yaml suppresses only the typed pass.
+	cfg, cdiags := genconfig.ResolveOverlay(root, overlay, genconfig.Overrides{})
+	diags := cdiags
+	if !cdiags.HasFatal() {
+		res, err := engine.WireOptions(root, overlay, engine.OptionsFrom(cfg))
+		if err != nil {
+			return
+		}
+		diags = append(diags, res.Diags...)
 	}
 	// A newer edit may have scheduled a fresh publish while this Wire ran;
 	// publishing now would overwrite current diagnostics with stale ones.
@@ -95,7 +97,7 @@ func (s *lspServer) publishTyped(uri string, gen int) {
 		srcCache[path] = t
 		return t
 	}
-	for _, d := range res.Diags {
+	for _, d := range diags {
 		byFile[d.Pos.Filename] = append(byFile[d.Pos.Filename], lspDiagnostic{
 			Range:    spanRange(srcFor(d.Pos.Filename), d.Pos),
 			Severity: lspSeverity(d.Severity),
@@ -558,7 +560,7 @@ func stripDirective(line string) (int, string, bool) {
 // features skip: main.gen.go and anything the directory's manifest owns.
 func generatedOutputFile(path string) bool {
 	base := filepath.Base(path)
-	if base == "main.gen.go" {
+	if base == "main.gen.go" || base == "fabrik.gen.go" {
 		return true
 	}
 	for _, owned := range genfiles.Owned(filepath.Dir(path)) {

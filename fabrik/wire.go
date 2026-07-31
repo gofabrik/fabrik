@@ -70,9 +70,7 @@ func parseWireArgs(args []string) (dir string, check bool, ov genconfig.Override
 	return dir, *checkFlag, ov, *graphFlag, nil
 }
 
-// resolveOptions merges fabrik.yaml with per-invocation overrides into engine
-// options, reporting genconfig diagnostics through the same path as engine
-// diagnostics; a fatal one returns errSilent.
+// resolveOptions reports configuration diagnostics and returns errSilent for fatal ones.
 func resolveOptions(dir string, ov genconfig.Overrides) (engine.Options, genconfig.Options, error) {
 	resolved, diags := genconfig.Resolve(dir, ov)
 	if len(diags) > 0 {
@@ -116,7 +114,11 @@ func generate(dir string, opts engine.Options) (res *engine.Result, out string, 
 			return nil, "", errSilent
 		}
 	}
-	return res, filepath.Join(res.OutDir, "main.gen.go"), nil
+	mainName := "main.gen.go"
+	if opts.Embedded {
+		mainName = "fabrik.gen.go"
+	}
+	return res, filepath.Join(res.OutDir, mainName), nil
 }
 
 func emitDiagnostics(diags diag.Diagnostics) error {
@@ -137,6 +139,9 @@ func wire(dir string) (string, error) {
 func wireWith(dir string, opts engine.Options) (string, error) {
 	res, _, err := generate(dir, opts)
 	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(res.OutDir, 0o755); err != nil { // #nosec G301 -- generated package directories are conventional source-tree paths
 		return "", err
 	}
 	names, pruned, kept, err := genfiles.WriteSet(res.OutDir, res.Files, opts.Split)
@@ -167,7 +172,17 @@ func wireWith(dir string, opts engine.Options) (string, error) {
 	for _, name := range kept {
 		fmt.Fprintf(os.Stderr, "fabrik: %s is no longer generated but was edited; not removing it\n", name)
 	}
+	for _, path := range res.Stale {
+		fmt.Fprintf(os.Stderr, "fabrik: %s is left over from an earlier output setting; delete it\n", relTo(dir, path))
+	}
 	return res.OutDir, nil
+}
+
+func relTo(dir, path string) string {
+	if rel, err := filepath.Rel(dir, path); err == nil {
+		return rel
+	}
+	return path
 }
 
 func writeGraphSidecars(mainDir string, graph *gen.Graph) ([]string, error) {
@@ -217,6 +232,9 @@ func wireCheck(dir string, opts engine.Options) error {
 	for _, name := range kept {
 		problems = append(problems, name+" is no longer generated but was edited; not removing it")
 	}
+	for _, path := range res.Stale {
+		problems = append(problems, relTo(dir, path)+" is left over from an earlier output setting; delete it")
+	}
 	if len(problems) > 0 {
 		for _, p := range problems {
 			fmt.Fprintf(os.Stderr, "fabrik: %s\n", p)
@@ -224,9 +242,12 @@ func wireCheck(dir string, opts engine.Options) error {
 		fmt.Fprintln(os.Stderr, "fabrik: run fabrik wire")
 		return errSilent
 	}
-	if opts.Split {
+	switch {
+	case opts.Split:
 		fmt.Printf("fabrik: generated files up to date\n")
-	} else {
+	case opts.Embedded:
+		fmt.Printf("fabrik: fabrik.gen.go up to date\n")
+	default:
 		fmt.Printf("fabrik: main.gen.go up to date\n")
 	}
 	return nil

@@ -62,7 +62,7 @@ func TestCompileFixtureReportsBuildOutput(t *testing.T) {
 		"github.com/gofabrik/fabrik/config": "/elsewhere",
 		"github.com/gofabrik/fabrik/router": "/local/router",
 	}
-	err := compileFixture(dir, dir, map[string][]byte{"main.gen.go": []byte("package main\n\nfunc main() { missing() }\n")}, replaces)
+	err := compileFixture(dir, dir, dir, map[string][]byte{"main.gen.go": []byte("package main\n\nfunc main() { missing() }\n")}, replaces)
 	if err == nil || !strings.Contains(err.Error(), "go build failed") || !strings.Contains(err.Error(), "undefined: missing") {
 		t.Fatalf("compileFixture error = %v", err)
 	}
@@ -79,9 +79,12 @@ func TestCompileFixtureReportsBuildOutput(t *testing.T) {
 }
 
 // compileFixture builds generated source against local fabrik modules.
-func compileFixture(dir, mainDir string, files map[string][]byte, replaces map[string]string) error {
+func compileFixture(dir, outDir, mainDir string, files map[string][]byte, replaces map[string]string) error {
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
+		return err
+	}
 	for name, data := range files {
-		if err := os.WriteFile(filepath.Join(mainDir, name), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(outDir, name), data, 0o600); err != nil {
 			return err
 		}
 	}
@@ -102,9 +105,14 @@ func compileFixture(dir, mainDir string, files map[string][]byte, replaces map[s
 			return err
 		}
 	}
+	target, buildDir := ".", mainDir
+	if mainDir == "" || outDir != mainDir {
+		// Embedded output compiles as part of the whole module.
+		target, buildDir = "./...", dir
+	}
 	// #nosec G204 -- the command and all arguments are controlled by this test
-	build := exec.Command("go", "build", "-o", os.DevNull, ".")
-	build.Dir = mainDir
+	build := exec.Command("go", "build", "-o", os.DevNull, target)
+	build.Dir = buildDir
 	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 	if b, err := build.CombinedOutput(); err != nil {
 		var src []byte
@@ -203,7 +211,7 @@ func TestWireOptionsFullComments(t *testing.T) {
 	if strings.Contains(src, dir) {
 		t.Errorf("origin comments leak absolute fixture paths:\n%s", src)
 	}
-	if err := compileFixture(dir, res.MainDir, res.Files, replaces); err != nil {
+	if err := compileFixture(dir, res.OutDir, res.MainDir, res.Files, replaces); err != nil {
 		t.Error(err)
 	}
 }
@@ -420,9 +428,10 @@ func runFixture(t *testing.T, fixture string) {
 	gotDiags := renderDiags(res.Diags, dir)
 
 	if len(res.Files) > 0 {
-		// The second run regenerates over the first run's on-disk output
-		// and manifest, pinning that generated files never feed back into
-		// naming or layout.
+		// Regeneration must not let existing generated files affect naming or layout.
+		if err := os.MkdirAll(res.OutDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
 		if _, _, _, err := genfiles.WriteSet(res.OutDir, res.Files, OptionsFrom(opts).Split); err != nil {
 			t.Fatalf("WriteSet: %v", err)
 		}
@@ -439,7 +448,7 @@ func runFixture(t *testing.T, fixture string) {
 			t.Errorf("generation is not deterministic: file sets differ")
 		}
 		if !testing.Short() {
-			if err := compileFixture(dir, res.MainDir, res.Files, replaces); err != nil {
+			if err := compileFixture(dir, res.OutDir, res.MainDir, res.Files, replaces); err != nil {
 				t.Error(err)
 			}
 		}
@@ -519,4 +528,144 @@ func updateFixture(t *testing.T, fixture string, ar *txtar.Archive, files map[st
 		t.Fatal(err)
 	}
 	t.Logf("updated %s", fixture)
+}
+
+func TestWireOptionsFlagsStaleGeneratedFiles(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "kitchen_sink.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+	leftover := filepath.Join(dir, "shared", "fabrik.gen.go")
+	if err := os.WriteFile(leftover, []byte("package shared\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Detect leftovers excluded from package loading by a build tag.
+	tagged := filepath.Join(dir, "oldgen", "fabrik.gen.go")
+	if err := os.MkdirAll(filepath.Dir(tagged), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tagged, []byte("//go:build e2e\n\npackage oldgen\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generated files owned by a nested module are not leftovers.
+	nested := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module nested\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "main.gen.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := WireOptions(dir, nil, Options{})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	want := map[string]bool{leftover: true, tagged: true}
+	if len(res.Stale) != len(want) {
+		t.Fatalf("Stale = %v, want %v", res.Stale, want)
+	}
+	for _, f := range res.Stale {
+		if !want[f] {
+			t.Errorf("Stale contains unexpected %q", f)
+		}
+	}
+	if res.Diags.HasFatal() {
+		t.Errorf("Diags = %v, want no fatal from the generated-only directory", res.Diags)
+	}
+}
+
+func TestWireOptionsRejectsSymlinkEscapingDir(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "kitchen_sink.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	if r, err := filepath.EvalSymlinks(base); err == nil {
+		base = r
+	}
+	dir := filepath.Join(base, "mod")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{dir, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+	if err := os.Symlink(outside, filepath.Join(dir, "gen")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := WireOptions(dir, nil, Options{Embedded: true, Dir: "gen/app", Package: "app"})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	found := false
+	for _, d := range res.Diags {
+		if strings.Contains(d.Message, "resolves outside the module") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Diags = %v, want the symlink-escape diagnostic", res.Diags)
+	}
+}
+
+func TestResolveDirFollowsInModuleSymlink(t *testing.T) {
+	root := t.TempDir()
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+	}
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, contained, err := resolveDir(root, filepath.Join(root, "link", "app"))
+	if err != nil {
+		t.Fatalf("resolveDir: %v", err)
+	}
+	if !contained || resolved != filepath.Join(real, "app") {
+		t.Errorf("resolveDir = %q, contained %v; want %q inside the module", resolved, contained, filepath.Join(real, "app"))
+	}
+}
+
+func TestEmbeddedCycleDetectedThroughSymlinkedDir(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "embedded_import_cycle.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+	if err := os.Symlink(filepath.Join(dir, "appwire"), filepath.Join(dir, "wirelink")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := WireOptions(dir, nil, Options{Embedded: true, Dir: "wirelink", Package: "appwire"})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	found := false
+	for _, d := range res.Diags {
+		if strings.Contains(d.Message, "imports the output package app/appwire") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Diags = %v, want the cycle reported against the physical output package", res.Diags)
+	}
 }

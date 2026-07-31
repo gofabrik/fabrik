@@ -44,6 +44,10 @@ func runCommand(dir string, passthrough []string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if resolved.Emit == genconfig.EmitEmbedded {
+		return nil, fmt.Errorf("fabrik run does not run embedded output; the host project builds and runs it")
+	}
 	mainDir, err := wireWith(root, opts)
 	if err != nil {
 		return nil, err
@@ -55,8 +59,7 @@ func runCommand(dir string, passthrough []string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// runArgs renders the "go run" argument list; buildTag propagates the
-// project's //go:build constraint so the generated file still builds.
+// runArgs includes the configured build tag in the go run arguments.
 func runArgs(buildTag, pkg string, passthrough []string) []string {
 	args := []string{"run"}
 	if buildTag != "" {

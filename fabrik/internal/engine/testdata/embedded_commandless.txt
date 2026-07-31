@@ -1,0 +1,19 @@
+Embedded output requires command entry points; a commandless app gets a
+diagnostic instead of inferred exports.
+-- go.mod --
+module app
+
+go 1.26
+-- fabrik.yaml --
+generate:
+  emit: embedded
+  dir: appwire
+-- shared/db.go --
+package shared
+
+type DB struct{}
+
+//fabrik:provider
+func NewDB() *DB { return &DB{} }
+-- want/diags --
+error: fabrik.yaml:2:9: embedded output exports command entry points; declare //fabrik:cli:command functions
