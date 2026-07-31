@@ -58,6 +58,7 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		webDB, webDBClose, err := web.NewDB()
 		if err != nil {
 			return err
@@ -82,8 +83,6 @@ func run() int {
 			Cache: webCache,
 			Index: webIndex,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/x", webH.Get)

@@ -65,13 +65,12 @@ func run() int {
 	ctx := context.Background()
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		storeConfig := store.NewConfig()
 		storeDB := store.Open(ctx, storeConfig)
 		webAPI := &web.API{
 			DB: storeDB,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/api", webAPI.Get)

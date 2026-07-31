@@ -126,13 +126,12 @@ func run() int {
 		}
 
 		// Providers
+		r := router.New()
 		storeDB := store.Open(storeConfig)
 		webHandlers := &web.Handlers{
 			Config: sharedConfig,
 			DB:     storeDB,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/", webHandlers.Index)

@@ -78,6 +78,7 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		appTemplates, err := templates.LoadSources([]templates.Source{
 			{FS: shared.Templates, Dir: "templates"},
 			{FS: web.Templates, Dir: "templates"},
@@ -88,8 +89,6 @@ func run() int {
 		webHandlers := &web.Handlers{
 			Templates: appTemplates,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/", webHandlers.Home)

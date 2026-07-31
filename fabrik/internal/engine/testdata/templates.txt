@@ -84,6 +84,7 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		webTemplates, err := templates.Load(web.Templates, "templates", templates.FuncMap{
 			"humanizeAge": web.HumanizeAge,
 			"reverse":     shared.Reverse,
@@ -95,8 +96,6 @@ func run() int {
 		webHandlers := &web.Handlers{
 			Templates: webTemplates,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/", webHandlers.Home)

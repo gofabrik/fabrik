@@ -427,7 +427,8 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 			}
 		}
 		regs[first].Label = "Jobs"
-		for _, c := range regs {
+		for i, c := range regs {
+			c.Batch, c.Seq = "jobs", i+1
 			g.Node(c)
 		}
 	}

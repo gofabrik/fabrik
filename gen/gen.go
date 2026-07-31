@@ -104,6 +104,9 @@ type Gen struct {
 	varTypes        map[string]varInfo
 	regionConsumers map[string][]regionConsumer
 	outputIdents    map[string]bool // output-package declarations
+
+	batchID  string // active order-sensitive emission batch
+	batchSeq int
 }
 
 // New returns an empty Gen.
@@ -798,6 +801,16 @@ func (g *Gen) cycleDiag(key string) diag.Diagnostic {
 	}
 }
 
+// BeginBatch marks subsequent emissions as one order-sensitive
+// sequence; the layout keeps their relative order. The returned
+// function ends the batch.
+func (g *Gen) BeginBatch(id string) func() {
+	prevID, prevSeq := g.batchID, g.batchSeq
+	g.batchID = id
+	g.batchSeq = 0
+	return func() { g.batchID, g.batchSeq = prevID, prevSeq }
+}
+
 // OnceValue runs build once per key and caches its result. The active
 // scope owns the cache, so the validation scope's replays stay
 // isolated and the shared store sees exactly one emission.
@@ -1325,6 +1338,7 @@ func (g *Gen) emitPhaseNodes(b *bytes.Buffer, allNodes []Node, phases ...Phase) 
 		want[p] = true
 	}
 	first := true
+	lc := newLayoutCtx(allNodes)
 	for _, pl := range phaseLabels {
 		if !want[pl.phase] {
 			continue
@@ -1345,9 +1359,9 @@ func (g *Gen) emitPhaseNodes(b *bytes.Buffer, allNodes []Node, phases ...Phase) 
 		if g.comments != CommentsOff {
 			b.WriteString("// " + pl.label + "\n")
 		}
-		clusters := layoutPhase(nodes)
+		clusters := lc.layout(nodes)
 		for ci, cluster := range clusters {
-			if ci > 0 && (spacedCluster(cluster) || spacedCluster(clusters[ci-1])) {
+			if ci > 0 {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {

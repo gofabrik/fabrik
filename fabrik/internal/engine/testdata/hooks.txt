@@ -65,13 +65,12 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		// embedded Assets, served under /assets
 		webAssets, err := fs.Sub(web.Assets, "assets")
 		if err != nil {
 			return err
 		}
-
-		r := router.New()
 
 		// Register
 		r.Handle("/assets/", http.StripPrefix("/assets", http.FileServerFS(webAssets)))

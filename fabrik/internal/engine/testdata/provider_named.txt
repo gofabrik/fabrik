@@ -53,12 +53,11 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		storeDB := store.NewDB()
 		webAPI := &web.API{
 			DB: storeDB,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/api", webAPI.Get)

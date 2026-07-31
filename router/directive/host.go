@@ -46,8 +46,7 @@ func (h *Host) replayDemandedRouterAfterScope(g *gen.Gen) {
 	})
 }
 
-// routerSingleton returns the shared router variable, declaring its
-// type for fragment signatures.
+// routerSingleton returns the shared router and records its fragment-signature type.
 func routerSingleton(g *gen.Gen) string {
 	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
 	g.DeclareVarType(r, "*"+g.Import(routerPath)+".Router", "nil")
@@ -64,9 +63,7 @@ func (h *Host) Router(g *gen.Gen) (string, diag.Diagnostics) {
 	return r, h.FinishBundle(g)
 }
 
-// FinishBundle emits every recorded registration once, in insertion
-// order; the once-cache is scope-aware, so the validation scope's
-// isolated replay stays contained.
+// FinishBundle emits recorded registrations once per scope in insertion order.
 func (h *Host) FinishBundle(g *gen.Gen) diag.Diagnostics {
 	if h.building {
 		return nil
@@ -75,10 +72,11 @@ func (h *Host) FinishBundle(g *gen.Gen) diag.Diagnostics {
 	g.OnceValue(routerPath+":bundle", func() string {
 		h.building = true
 		defer func() { h.building = false }()
-		// Registrations belong to every flow that demands the router,
-		// not to whichever demand happened to build it first.
+		// Attribute registrations to every flow that demands the router.
 		restore := g.SingletonAttribution(routerPath)
 		defer restore()
+		endBatch := g.BeginBatch("router")
+		defer endBatch()
 		for _, fn := range h.deferred {
 			ds = append(ds, fn(g)...)
 		}

@@ -478,3 +478,69 @@ type Adapter struct{}
 		t.Fatalf("a nested select child's diagnostic must inherit the bind position, got %v", ds)
 	}
 }
+
+func TestRegionCleanupFollowsEmittedOrder(t *testing.T) {
+	// The layout reorders two independent cleanup providers by anchor;
+	// the composed cleanup must release in reverse of the emitted
+	// order, not the store order.
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type A struct{}
+
+type B struct{}
+
+type Sink struct{}
+`)
+	ta := types.NewPointer(pkg.Scope().Lookup("A").Type())
+	tb := types.NewPointer(pkg.Scope().Lookup("B").Type())
+	sink := types.NewPointer(pkg.Scope().Lookup("Sink").Type())
+	g := New()
+	g.SetModule("demo")
+	g.FragmentMode()
+	g.BindLazy(ta, "", func() (string, diag.Diagnostics) {
+		v := g.Var("late")
+		cl := g.Var(v + "Close")
+		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "z.go", Line: 2}}},
+			Var: v, Fn: g.Import("example.com/app") + ".NewA", Err: ErrReturn, Cleanup: cl, Type: ta})
+		return v, nil
+	})
+	g.BindLazy(tb, "", func() (string, diag.Diagnostics) {
+		v := g.Var("early")
+		cl := g.Var(v + "Close")
+		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "a.go", Line: 2}}},
+			Var: v, Fn: g.Import("example.com/app") + ".NewB", Err: ErrReturn, Cleanup: cl, Type: tb})
+		return v, nil
+	})
+	g.BindLazy(sink, "seed", func() (string, diag.Diagnostics) {
+		av, ds, ok := g.Instance(ta, "")
+		if !ok {
+			return "", ds
+		}
+		bv, ds2, ok := g.Instance(tb, "")
+		ds = append(ds, ds2...)
+		if !ok {
+			return "", ds
+		}
+		v := g.Var("joined")
+		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "m.go", Line: 2}}},
+			Var: v, Fn: g.Import("example.com/app") + ".Join", Args: []string{av, bv}, Err: ErrReturn, Type: sink})
+		return v, ds
+	})
+	for _, name := range []string{"alpha", "beta"} {
+		s := g.AddScope("build"+upperFirst(name), token.Position{}, ScopeRoot{Type: sink, Name: "seed"})
+		g.AddCommandFunc(CommandFunc{Name: name, Fn: "app.Run" + upperFirst(name), Scope: s})
+	}
+	src := renderRegions(t, g)
+	body := src[strings.Index(src, "func buildSeed"):]
+	emitA := strings.Index(body, "app.NewA")
+	emitB := strings.Index(body, "app.NewB")
+	if emitB > emitA {
+		t.Fatalf("layout kept store order; the regression needs reordering:\n%s", body)
+	}
+	cleanup := body[strings.Index(body, "cleanup := func()"):]
+	relA := strings.Index(cleanup, "lateClose()")
+	relB := strings.Index(cleanup, "earlyClose()")
+	if relA < 0 || relB < 0 || relA > relB {
+		t.Fatalf("cleanup must release in reverse emitted order (late before early):\n%s", cleanup)
+	}
+}

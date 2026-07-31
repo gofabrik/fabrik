@@ -124,7 +124,7 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 		g.enterScope(s, false)
 		for i, fn := range g.prologues {
 			g.recordDemand(demandKey{kind: demandCallback, key: "prologue", ord: i})
-			// Validation reports prologue diagnostics; replay only emits code.
+			// The validation pass owns prologue diagnostics.
 			fn()
 		}
 		for _, root := range s.roots {
@@ -187,7 +187,7 @@ func (g *Gen) RunValidationPass() diag.Diagnostics {
 	})
 	for _, e := range entries {
 		if g.demanded(demandKey{kind: demandType, key: e.key, name: e.name}) {
-			// Real materialization already validated it.
+			// Flow materialization owns this diagnostic.
 			continue
 		}
 		_, eds, _ := g.Instance(e.t, e.name)
@@ -245,6 +245,7 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 	}
 	var sections []section
 	var cleanups []string
+	lc := newLayoutCtx(s.nodes)
 	for _, pl := range phaseLabels {
 		var nodes []phaseNode
 		for i, n := range s.nodes {
@@ -255,7 +256,7 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 		if len(nodes) == 0 {
 			continue
 		}
-		clusters := layoutPhase(nodes)
+		clusters := lc.layout(nodes)
 		sections = append(sections, section{label: pl.label, clusters: clusters})
 		for _, cluster := range clusters {
 			for _, pn := range cluster {
@@ -287,7 +288,7 @@ func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
 			b.WriteString("// " + sec.label + "\n")
 		}
 		for ci, cluster := range sec.clusters {
-			if ci > 0 && (spacedCluster(cluster) || spacedCluster(sec.clusters[ci-1])) {
+			if ci > 0 {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {

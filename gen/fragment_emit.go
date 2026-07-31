@@ -10,9 +10,7 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 )
 
-// varInfo carries what region signatures need about a generated
-// variable: its type when bind time knew it, or the rendered type
-// string for path-bound values.
+// varInfo records type information needed by region signatures.
 type varInfo struct {
 	t        types.Type
 	typeStr  string
@@ -30,8 +28,7 @@ func (g *Gen) noteVarType(expr string, t types.Type) {
 	if v, ok := g.varTypes[expr]; ok && v.t != nil {
 		return
 	}
-	// The rendered string derives lazily at emission so recording a
-	// type never registers imports.
+	// Defer rendering so recording a type does not register imports.
 	g.varTypes[expr] = varInfo{t: t}
 }
 
@@ -155,10 +152,8 @@ func (g *Gen) typeFromPath(path string) types.Type {
 	return t
 }
 
-// DeclareVarType records the rendered type of a generated variable a
-// directive emits outside the bind path (raw defines, singletons),
-// so region signatures can carry it. The type expression must be
-// rendered with this generator's import aliases.
+// DeclareVarType records a generated variable's type for region signatures.
+// typeExpr must use this generator's import aliases.
 func (g *Gen) DeclareVarType(varName, typeExpr, zero string) {
 	if !isIdentifierExpr(varName) {
 		return
@@ -174,18 +169,14 @@ func (g *Gen) DeclareVarType(varName, typeExpr, zero string) {
 	}
 }
 
-// SingletonAttribution returns a scope closure for directive callbacks
-// whose emitted nodes belong to a singleton's demanding flows rather
-// than the flow that happened to run the callback first. The returned
-// function restores the previous attribution.
+// SingletonAttribution attributes callback emissions to a singleton's demanding flows.
+// The returned function restores the previous attribution.
 func (g *Gen) SingletonAttribution(key string) func() {
 	g.recordDemand(demandKey{kind: demandSingleton, key: key})
 	return g.pushDemand(demandKey{kind: demandSingleton, key: key})
 }
 
-// flowNodes returns a flow's nodes for the graph artifact: in fragment
-// mode the store filtered by usage, preserving per-flow occurrence
-// semantics; otherwise the legacy per-flow lists.
+// flowNodes returns the node occurrences used by one flow.
 func (g *Gen) flowNodes(flow string) []Node {
 	if !g.fragmentMode() {
 		return g.nodes
@@ -227,8 +218,7 @@ func (g *Gen) allFlows(usage []string) bool {
 	return total > 0 && n == total
 }
 
-// regionConsumer is one flow-aware use site of a generated variable:
-// inside a region, or nil for a flow body.
+// regionConsumer identifies a variable use in a region or flow body.
 type regionConsumer struct {
 	flow string
 	reg  *region
@@ -319,8 +309,7 @@ func (g *Gen) analyzeRegions(ps *planState, regions []*region) {
 		}
 		reg.needsCtx = usesCtx(memberNodes, g.ctxVar)
 	}
-	// The prelude's product orders first among parameters and stays out
-	// of the width count.
+	// The prelude output is the first parameter and does not count toward the width limit.
 	for _, reg := range regions {
 		if reg.anchorPrelude && len(reg.liveOuts) == 1 {
 			preludeOut = reg.liveOuts[0]
@@ -340,8 +329,7 @@ func (g *Gen) analyzeRegions(ps *planState, regions []*region) {
 	g.regionConsumers = consumers
 }
 
-// typeCheckRegions verifies threaded values carry types; it runs only
-// on the settled partition because rendering a type registers imports.
+// typeCheckRegions verifies threaded values after the partition settles.
 func (g *Gen) typeCheckRegions(regions []*region, ds *diag.Diagnostics) {
 	st := g.frag
 	for _, reg := range regions {
@@ -359,8 +347,7 @@ func (g *Gen) typeCheckRegions(regions []*region, ds *diag.Diagnostics) {
 	}
 }
 
-// regionNarrow applies the width guard: at most 4 ordinary live-ins, 3
-// ordinary live-outs, and no caller discarding more than one value.
+// regionNarrow enforces the signature width and discard limits.
 func (g *Gen) regionNarrow(ps *planState, reg *region) bool {
 	ins := len(reg.liveIns)
 	if reg.optsVar != "" {
@@ -399,12 +386,9 @@ func (g *Gen) consumedIn(v, flow string, self *region) bool {
 	return false
 }
 
-// nameRegions derives names by content: the prelude, a hook, a named
-// provider, an assembled result type, then the flow-set fallback.
+// nameRegions derives names from stable content anchors before falling back to flow names.
 func (g *Gen) nameRegions(st *fragmentStore, regions []*region) {
-	// Reserve exactly what shares the output package's declaration
-	// space: hand-written declarations, import aliases, and the
-	// generated entry point.
+	// Reserve identifiers sharing the output package's declaration space.
 	taken := map[string]bool{"run": true, "main": true}
 	for name := range g.outputIdents {
 		taken[name] = true
@@ -457,8 +441,7 @@ func (g *Gen) nameRegions(st *fragmentStore, regions []*region) {
 	}
 }
 
-// typePkgName extracts the UpperCamel package qualifier of a rendered
-// type for collision qualification.
+// typePkgName returns the UpperCamel package qualifier of a rendered type.
 func typePkgName(t string) string {
 	t = strings.TrimLeft(t, "*")
 	if i := strings.LastIndexByte(t, '.'); i >= 0 {
@@ -467,8 +450,7 @@ func typePkgName(t string) string {
 	return ""
 }
 
-// flowSetName is the last-resort name for an anchored region no
-// declaration names.
+// flowSetName derives a fallback region name from its flows.
 func (g *Gen) flowSetName(usage []string) string {
 	sig := "Shared"
 	if len(usage) == 1 {
@@ -486,8 +468,7 @@ func (g *Gen) flowSetName(usage []string) string {
 	return "build" + sig
 }
 
-// defaultInlineNodes lists the store nodes run() emits inline: needed
-// by the default flow only and owned by no region.
+// defaultInlineNodes returns default-flow nodes not owned by a region.
 func (g *Gen) defaultInlineNodes() []Node {
 	var out []Node
 	for i, sn := range g.frag.nodes {
@@ -502,8 +483,7 @@ func (g *Gen) defaultInlineNodes() []Node {
 	return out
 }
 
-// regionEmitOrder lists regions by first call across the flows in
-// registration order.
+// regionEmitOrder orders regions by their first call across registered flows.
 func (g *Gen) regionEmitOrder() []*region {
 	seen := map[*region]bool{}
 	var out []*region
@@ -518,7 +498,6 @@ func (g *Gen) regionEmitOrder() []*region {
 	return out
 }
 
-// writeRegionFuncs renders one build function per region.
 func (g *Gen) writeRegionFuncs(b *bytes.Buffer) {
 	for _, reg := range g.regionEmitOrder() {
 		g.writeRegionFunc(b, reg)
@@ -570,23 +549,6 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 		}
 	}
 	ec := &errCtx{zeros: g.regionZeros(reg), unwind: hasCleanup && hasErrSite}
-	if hasCleanup {
-		b.WriteString("var " + strings.Join(reg.cleanups, ", ") + " func() error\n")
-		b.WriteString("cleanup := func() error {\n")
-		b.WriteString("var errs []error\n")
-		for i := len(reg.cleanups) - 1; i >= 0; i-- {
-			b.WriteString("if " + reg.cleanups[i] + " != nil {\n")
-			b.WriteString("errs = append(errs, " + reg.cleanups[i] + "())\n")
-			b.WriteString("}\n")
-		}
-		b.WriteString("return " + errsPkg + ".Join(errs...)\n")
-		b.WriteString("}\n")
-		if ec.unwind {
-			b.WriteString("unwind := func(err error) error {\n")
-			b.WriteString("return " + errsPkg + ".Join(err, cleanup())\n")
-			b.WriteString("}\n")
-		}
-	}
 
 	type section struct {
 		label    string
@@ -594,6 +556,14 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 	}
 	var sections []section
 	labeled := false
+	universe := make([]Node, 0, len(st.nodes))
+	for _, sn := range st.nodes {
+		universe = append(universe, sn.n)
+	}
+	lc := newLayoutCtx(universe)
+	// Cleanup composition must release in reverse emission order, which
+	// the layout decides.
+	var cleanups []string
 	for _, pl := range phaseLabels {
 		var nodes []phaseNode
 		for i, m := range reg.members {
@@ -607,9 +577,34 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 		if len(nodes) > 1 {
 			labeled = true
 		}
-		sections = append(sections, section{label: pl.label, clusters: layoutPhase(nodes)})
+		clusters := lc.layout(nodes)
+		sections = append(sections, section{label: pl.label, clusters: clusters})
+		for _, cluster := range clusters {
+			for _, pn := range cluster {
+				if c, ok := pn.n.(*Call); ok && c.Cleanup != "" {
+					cleanups = append(cleanups, c.Cleanup)
+				}
+			}
+		}
 	}
 	labeled = labeled && len(sections) > 1 && g.comments != CommentsOff
+	if hasCleanup {
+		b.WriteString("var " + strings.Join(cleanups, ", ") + " func() error\n")
+		b.WriteString("cleanup := func() error {\n")
+		b.WriteString("var errs []error\n")
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			b.WriteString("if " + cleanups[i] + " != nil {\n")
+			b.WriteString("errs = append(errs, " + cleanups[i] + "())\n")
+			b.WriteString("}\n")
+		}
+		b.WriteString("return " + errsPkg + ".Join(errs...)\n")
+		b.WriteString("}\n")
+		if ec.unwind {
+			b.WriteString("unwind := func(err error) error {\n")
+			b.WriteString("return " + errsPkg + ".Join(err, cleanup())\n")
+			b.WriteString("}\n")
+		}
+	}
 	for si, sec := range sections {
 		if si > 0 {
 			b.WriteString("\n")
@@ -618,7 +613,7 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 			b.WriteString("// " + sec.label + "\n")
 		}
 		for ci, cluster := range sec.clusters {
-			if ci > 0 && (spacedCluster(cluster) || spacedCluster(sec.clusters[ci-1])) {
+			if ci > 0 {
 				b.WriteString("\n")
 			}
 			for _, pn := range cluster {
@@ -643,7 +638,6 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 	b.WriteString("\nreturn " + strings.Join(rets, ", ") + "\n}\n")
 }
 
-// regionZeros renders the early-return zero list for a region.
 func (g *Gen) regionZeros(reg *region) string {
 	var zs []string
 	if reg.primaryVar != "" {
@@ -662,9 +656,7 @@ func (g *Gen) regionZeros(reg *region) string {
 	return z
 }
 
-// writeRegionBody emits a command's Run body: the flow's plan steps in
-// order - region calls with threaded live values, inline nodes - then
-// the epilogue call.
+// writeRegionBody emits region calls, inline nodes, and the command epilogue.
 func (g *Gen) writeRegionBody(b *bytes.Buffer, c CommandFunc) {
 	s := c.Scope
 	steps := g.fragPlan.steps[s.fn]

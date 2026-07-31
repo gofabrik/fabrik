@@ -46,12 +46,11 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		webAPI := web.NewAPI()
 		webConsumer := &web.Consumer{
 			A: webAPI,
 		}
-
-		r := router.New()
 		webAPI2 := &web.API{}
 
 		// Register

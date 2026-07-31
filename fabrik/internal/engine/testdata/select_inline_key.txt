@@ -101,6 +101,7 @@ func run() int {
 		}
 
 		// Providers
+		r := router.New()
 		// store.Store, selected by store.kind
 		var storeStore store.Store
 		switch storeConfig.Group.Kind {
@@ -112,8 +113,6 @@ func run() int {
 		webHandlers := &web.Handlers{
 			Store: storeStore,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/", webHandlers.Index)

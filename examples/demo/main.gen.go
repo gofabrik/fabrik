@@ -271,37 +271,32 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
-	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
-		config.Section("session"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
 	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(configOpts,
 		config.Section("crossorigin"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
+	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
+		config.Section("session"),
+	)...)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	webGreeterConfig, err := config.Load[web.GreeterConfig](append(configOpts,
+		config.Section("greeter"),
+	)...)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(configOpts,
 		config.Section("mailer"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
 	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(configOpts,
 		config.Section("storage"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	webGreeterConfig, err := config.Load[web.GreeterConfig](append(configOpts,
-		config.Section("greeter"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -341,33 +336,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	sharedErrorPages := &shared.ErrorPages{
 		Templates: appTemplates,
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-	webStatus := &web.Status{
-		Templates: appTemplates,
-	}
-
-	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedJobsConfig := shared.NewJobsConfig()
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -381,6 +354,42 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	default:
 		return nil, nil, nil, unwind(fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind))
 	}
+	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedFlash, err := shared.NewFlash(sharedSessionManager)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+
+	sharedJobsConfig := shared.NewJobsConfig()
+	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	// shared.Mailer, selected by mailer.kind
+	var mailTransport shared.Mailer
+	switch sharedMailerConfig.Kind {
+	case "log":
+		mailTransport = shared.NewLogMailer()
+	case "smtp":
+		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
+	default:
+		return nil, nil, nil, unwind(fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind))
+	}
+	sharedMailtemplatesRenderer, err := shared.NewEmailTemplates()
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDBDatabase)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	webCache, err := web.NewGreetingCache(sharedCacheStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -393,9 +402,18 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+	webStatus := &web.Status{
+		Templates: appTemplates,
+	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
+
+	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
+	r := router.New()
+
 	webGreetings := &web.Greetings{
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
@@ -403,43 +421,16 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-
-	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-
-	// shared.Mailer, selected by mailer.kind
-	var mailTransport shared.Mailer
-	switch sharedMailerConfig.Kind {
-	case "log":
-		mailTransport = shared.NewLogMailer()
-	case "smtp":
-		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
-	default:
-		return nil, nil, nil, unwind(fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind))
-	}
-
-	sharedMailtemplatesRenderer, err := shared.NewEmailTemplates()
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
 	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
-
+	webDocs := &web.Docs{
+		Router: r,
+	}
 	sharedStorage, sharedStorageClose, err := shared.NewStorage(sharedStorageConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 	webFiles := &web.Files{
 		Store: sharedStorage,
-	}
-
-	r := router.New()
-	webDocs := &web.Docs{
-		Router: r,
 	}
 
 	// Middleware
@@ -451,7 +442,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
-
 	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -461,18 +451,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-
-	// Jobs
-	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
-		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
-	}); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
 	r.Method("GET", "/uptime", webStatus.Uptime)
@@ -480,25 +458,33 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
 	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update), greetlimitMW)
 	r.Method("GET", "/routes", webDocs.List)
-	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
-	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
-	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
+	// Jobs
+	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
+	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
+	}); err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
 		return web.RecordVisit(c, sharedQueryDB, m)
 	}); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
 	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
 		return web.PurgeGreetings(c, sharedQueryDB)
 	}); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
+	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
+	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
+	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
 	return httpserver.New(r, sharedHttpServer), jobsManager, cleanup, nil
 }

@@ -118,6 +118,7 @@ func run() int {
 		}
 
 		// Providers
+		r := router.New()
 		assetKind, err := assetmapperOptions.Mode()
 		if err != nil {
 			return err
@@ -144,8 +145,6 @@ func run() int {
 			Assets:    assetServer,
 			Templates: webTemplates,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Handle("/assets/", assetServer.Handler())

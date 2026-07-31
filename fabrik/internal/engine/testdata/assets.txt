@@ -100,6 +100,7 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
 			{FS: shared.Assets, Dir: "assets"},
 			{FS: web.Assets, Dir: "assets"},
@@ -114,8 +115,6 @@ func run() int {
 		webHandlers := &web.Handlers{
 			Templates: sharedTemplates,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Handle("/assets/", assetCompiled.Handler())

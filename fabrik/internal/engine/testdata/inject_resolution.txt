@@ -74,6 +74,7 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		storeDB := store.NewDB()
 		storeDBReplica := store.NewReplicaDB()
 		storeReporting := store.NewReporting(storeDBReplica)
@@ -82,8 +83,6 @@ func run() int {
 			Replica:   storeDBReplica,
 			Reporting: storeReporting,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/api", webAPI.Get)
