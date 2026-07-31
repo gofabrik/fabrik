@@ -34,7 +34,6 @@ type Server struct{}
 		cache: types.NewPointer(pkg.Scope().Lookup("Cache").Type()),
 	}
 	w.g.SetModule("demo")
-	w.g.FragmentMode()
 	g := w.g
 	g.BindLazy(w.store, storeName, func() (string, diag.Diagnostics) {
 		v := g.Var("conn")
@@ -100,10 +99,10 @@ func TestNamedProviderRegionExtractsOnce(t *testing.T) {
 	if got := strings.Count(src, "app.NewStore()"); got != 1 {
 		t.Fatalf("store constructed %d times, want one shared region:\n%s", got, src)
 	}
-	if !strings.Contains(src, "func buildDb() (*app.Cache, error)") {
-		t.Fatalf("missing region function named for the provider:\n%s", src)
+	if !strings.Contains(src, "func buildCache() (*app.Cache, error)") {
+		t.Fatalf("missing region function named for the product:\n%s", src)
 	}
-	if got := strings.Count(src, "cache, err := buildDb()"); got != 2 {
+	if got := strings.Count(src, "cache, err := buildCache()"); got != 2 {
 		t.Fatalf("region called %d times, want once per command:\n%s", got, src)
 	}
 }
@@ -172,7 +171,6 @@ type Q struct{}
 `)
 	g := New()
 	g.SetModule("demo")
-	g.FragmentMode()
 	tOf := func(name string) types.Type {
 		return types.NewPointer(pkg.Scope().Lookup(name).Type())
 	}
@@ -234,7 +232,6 @@ func TestAllDiscardedRegionCallAssigns(t *testing.T) {
 	// A flow calls a shared region for effects even when it discards every result.
 	g := New()
 	g.SetModule("demo")
-	g.FragmentMode()
 	reg := &region{
 		usage:    []string{"buildAlpha", "buildBeta"},
 		usageSet: map[string]bool{"buildAlpha": true, "buildBeta": true},
@@ -370,7 +367,6 @@ type E struct{}
 `)
 	g := New()
 	g.SetModule("demo")
-	g.FragmentMode()
 	tOf := func(name string) types.Type {
 		return types.NewPointer(pkg.Scope().Lookup(name).Type())
 	}
@@ -421,7 +417,6 @@ type Adapter struct{}
 	adapter := pkg.Scope().Lookup("Adapter").Type()
 	g := New()
 	g.SetModule("demo")
-	g.FragmentMode()
 	bindPos := token.Position{Filename: "web.go", Line: 7, Column: 1}
 	g.BindLazyPathAt("example.com/app.Adapter", bindPos, func() (string, diag.Diagnostics) {
 		g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "adapter", Expr: "app.New()"})
@@ -450,6 +445,9 @@ type Adapter struct{}
 	g.AddCommandFunc(CommandFunc{Name: "serve", Fn: "app.RunServe", Scope: s})
 	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	if _, pds, ok := g.InstancePath("example.com/app.Picker"); !ok || pds.HasFatal() {
 		t.Fatalf("InstancePath: %v", pds)
@@ -487,7 +485,6 @@ type Sink struct{}
 	sink := types.NewPointer(pkg.Scope().Lookup("Sink").Type())
 	g := New()
 	g.SetModule("demo")
-	g.FragmentMode()
 	g.BindLazy(ta, "", func() (string, diag.Diagnostics) {
 		v := g.Var("late")
 		cl := g.Var(v + "Close")
@@ -555,11 +552,11 @@ func TestRenderFilesSplitsRegionsWithPrunedImports(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing main.gen.go: %v", filesNames(files))
 	}
-	frag, ok := files["fragments_builddb.gen.go"]
+	frag, ok := files["fragments_buildcache.gen.go"]
 	if !ok {
 		t.Fatalf("missing region file: %v", filesNames(files))
 	}
-	if !strings.Contains(string(frag), "func buildDb()") || strings.Contains(string(main), "func buildDb()") {
+	if !strings.Contains(string(frag), "func buildCache()") || strings.Contains(string(main), "func buildCache()") {
 		t.Fatalf("region function must live in its own file")
 	}
 	// Region files include only imports used by their bodies.
@@ -592,7 +589,6 @@ type Db struct{}
 	tdb2 := types.NewPointer(pkg.Scope().Lookup("Db").Type())
 	g := New()
 	g.SetModule("demo")
-	g.FragmentMode()
 	chain := func(tt types.Type, ctor string) {
 		g.BindLazy(tt, "", func() (string, diag.Diagnostics) {
 			v := g.Var(strings.ToLower(ctor))
@@ -693,7 +689,6 @@ type Marker struct{}
 	marker := types.NewPointer(pkg.Scope().Lookup("Marker").Type())
 	g := New()
 	g.SetModule("demo")
-	g.FragmentMode()
 	g.EmbeddedOutput("appwire")
 	g.BindLazy(marker, "", func() (string, diag.Diagnostics) {
 		g.Node(&Call{Base: Base{Phase: PhaseSetup},

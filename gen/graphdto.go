@@ -163,9 +163,6 @@ type graphStore struct {
 }
 
 func (g *Gen) graphStore(byFlow map[string]string) *graphStore {
-	if !g.fragmentMode() {
-		return nil
-	}
 	nodes := g.frag.nodes
 	gs := &graphStore{
 		ordinal:  make(map[Node]int, len(nodes)),
@@ -412,19 +409,7 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 		}
 	}
 	var order []string
-	if s != nil && !g.fragmentMode() {
-		order = s.bindOrder
-		for key, byName := range s.binds {
-			for name, expr := range byName {
-				addType(expr, s.bindTypes[key], key, name)
-			}
-		}
-		for path, expr := range s.pathExprs {
-			if !slices.Contains(pathsByExpr[expr], path) {
-				pathsByExpr[expr] = append(pathsByExpr[expr], path)
-			}
-		}
-	} else if s != nil {
+	if s != nil {
 		// A flow lists bindings satisfied by its nodes or referenced by its roots.
 		relevant := func(expr string) bool {
 			for _, e := range s.rootExprs {

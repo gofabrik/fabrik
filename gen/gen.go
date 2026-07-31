@@ -12,7 +12,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/gofabrik/fabrik/diag"
 	"golang.org/x/tools/go/types/typeutil"
@@ -63,12 +62,11 @@ type Gen struct {
 	pathExprs   map[string]string // materialized path bindings, for InstancePath
 	singletons  map[string]string // singleton key -> var name
 	onceVals    map[string]string // OnceValue cache
-	nodes       []Node
-	ctxNeeded   bool   // context.Background assignment is needed
-	ctxPkg      string // context import alias, registered at request time
-	ctxVar      string // reserved context identifier, usually "ctx"
-	current     string // active directive
-	module      string // module path of the generated app
+	ctxNeeded   bool              // context.Background assignment is needed
+	ctxPkg      string            // context import alias, registered at request time
+	ctxVar      string            // reserved context identifier, usually "ctx"
+	current     string            // active directive
+	module      string            // module path of the generated app
 	hints       []func(types.Type) (string, bool)
 	types       map[string]*types.Package // import path -> package, for LookupType
 
@@ -126,6 +124,7 @@ func New() *Gen {
 		onceVals:    map[string]string{},
 		aliasIdents: map[string]bool{},
 		bindSeen:    map[string]bool{},
+		frag:        &fragmentStore{},
 	}
 }
 
@@ -583,19 +582,17 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 	}
 	if m, _ := g.binds.At(t).(map[string]string); m != nil {
 		if expr, ok := m[name]; ok {
-			if g.fragmentMode() {
-				key := types.TypeString(t, nil)
-				if lm, _ := g.lazy.At(t).(map[string]*lazyBind); lm != nil {
-					if _, lazyDef := lm[name]; lazyDef {
-						g.recordDemand(demandKey{kind: demandType, key: key, name: name})
-					}
+			key := types.TypeString(t, nil)
+			if lm, _ := g.lazy.At(t).(map[string]*lazyBind); lm != nil {
+				if _, lazyDef := lm[name]; lazyDef {
+					g.recordDemand(demandKey{kind: demandType, key: key, name: name})
 				}
-				// A path-bound value reached through the typed cache still
-				// accumulates its path demand.
-				if name == "" {
-					if _, pathDef := g.lazyByPath[key]; pathDef {
-						g.recordDemand(demandKey{kind: demandPath, key: key})
-					}
+			}
+			// A path-bound value reached through the typed cache still
+			// accumulates its path demand.
+			if name == "" {
+				if _, pathDef := g.lazyByPath[key]; pathDef {
+					g.recordDemand(demandKey{kind: demandPath, key: key})
 				}
 			}
 			return expr, nil, true
@@ -603,9 +600,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 	}
 	if path := types.TypeString(t, nil); name == "" {
 		if expr, ok := g.pathExprs[path]; ok {
-			if g.fragmentMode() {
-				g.recordDemand(demandKey{kind: demandPath, key: path})
-			}
+			g.recordDemand(demandKey{kind: demandPath, key: path})
 			// Bind the concrete type on first type-keyed lookup.
 			g.Bind(t, name, expr)
 			return expr, nil, true
@@ -650,9 +645,7 @@ func (g *Gen) InstancePath(path string) (string, diag.Diagnostics, bool) {
 		return g.materializePath(path)
 	}
 	if expr, ok := g.pathExprs[path]; ok {
-		if g.fragmentMode() {
-			g.recordDemand(demandKey{kind: demandPath, key: path})
-		}
+		g.recordDemand(demandKey{kind: demandPath, key: path})
 		return expr, nil, true
 	}
 	return g.materializePath(path)
@@ -688,7 +681,7 @@ func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok
 			expr = ""
 			ok = false
 			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
-			if (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
+			if !g.InValidationScope() {
 				lb.diagnosed = true
 				lb.diagnosedExpr = ""
 			}
@@ -696,7 +689,7 @@ func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok
 	}()
 	expr, ds = lb.build()
 	// Flow walks deduplicate diagnostics across flows; direct calls remain retryable.
-	if ds.HasFatal() && (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
+	if ds.HasFatal() && !g.InValidationScope() {
 		lb.diagnosed = true
 		lb.diagnosedExpr = expr
 	}
@@ -758,7 +751,7 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind, dk demandKey)
 			ok = false
 			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
 			// Deduplicate panics across scope passes while leaving direct calls retryable.
-			if (g.scope != nil || g.fragmentMode()) && !g.InValidationScope() {
+			if !g.InValidationScope() {
 				lb.diagnosed = true
 				lb.diagnosedExpr = ""
 			}
@@ -850,10 +843,8 @@ func (g *Gen) Singleton(key, varName, ctor string) string {
 // SingletonIn emits one variable per key in the default flow or active scope.
 func (g *Gen) SingletonIn(phase Phase, key, varName, ctor string) string {
 	g.recordDemand(demandKey{kind: demandSingleton, key: key})
-	if g.fragmentMode() {
-		done := g.pushDemand(demandKey{kind: demandSingleton, key: key})
-		defer done()
-	}
+	done := g.pushDemand(demandKey{kind: demandSingleton, key: key})
+	defer done()
 	if sc := g.scope; sc != nil {
 		if v, ok := sc.singletons[key]; ok {
 			return v
@@ -935,31 +926,23 @@ func (g *Gen) Render() ([]byte, error) {
 	if err := validateCommandMetadata(g.commandFuncs, g.commandGroups); err != nil {
 		return nil, err
 	}
-	if err := validateExprFields(g.nodes); err != nil {
-		return nil, err
-	}
 	for _, s := range g.scopes {
 		if err := validateExprFields(s.nodes); err != nil {
 			return nil, err
 		}
 	}
-	if g.fragmentMode() {
-		storeNodes := make([]Node, 0, len(g.frag.nodes))
-		for _, sn := range g.frag.nodes {
-			storeNodes = append(storeNodes, sn.n)
-		}
-		if err := validateExprFields(storeNodes); err != nil {
-			return nil, err
-		}
+	storeNodes := make([]Node, 0, len(g.frag.nodes))
+	for _, sn := range g.frag.nodes {
+		storeNodes = append(storeNodes, sn.n)
+	}
+	if err := validateExprFields(storeNodes); err != nil {
+		return nil, err
 	}
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
 	if hasCmd || g.embedded {
 		g.Context()
 	}
-	runNodes := g.nodes
-	if g.fragmentMode() {
-		runNodes = g.defaultInlineNodes()
-	}
+	runNodes := g.defaultInlineNodes()
 	needsCtx := hasCmd || g.embedded || usesCtx(runNodes, g.ctxVar)
 
 	// Imports must be registered before the import block is written.
@@ -986,12 +969,6 @@ func (g *Gen) Render() ([]byte, error) {
 	if len(g.scopes) > 0 {
 		g.Import("context")
 	}
-	for _, s := range g.scopes {
-		if s.hasCleanup {
-			g.Import("errors")
-			break
-		}
-	}
 
 	var body bytes.Buffer
 	if g.embedded {
@@ -999,11 +976,7 @@ func (g *Gen) Render() ([]byte, error) {
 	} else {
 		g.writeRun(&body, needsCtx, ctxPkg)
 	}
-	if g.fragmentMode() {
-		g.writeRegionFuncs(&body)
-	} else {
-		g.writeScopeFuncs(&body)
-	}
+	g.writeRegionFuncs(&body)
 
 	var used map[string]bool
 	if g.embedded {
@@ -1052,7 +1025,7 @@ func (g *Gen) RenderFiles() (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !g.fragmentMode() || g.fragPlan == nil || len(g.fragPlan.regions) == 0 {
+	if g.fragPlan == nil || len(g.fragPlan.regions) == 0 {
 		return map[string][]byte{g.mainFileName(): single}, nil
 	}
 	hasCmd := len(g.commandFuncs) > 0 || len(g.commandGroups) > 0 || g.commandRoot != nil
@@ -1137,10 +1110,7 @@ func (g *Gen) writeRun(b *bytes.Buffer, needsCtx bool, ctxPkg string) {
 		fmt.Fprintf(b, "%s := %s.Background()\n", g.ctxVar, ctxPkg)
 	}
 	b.WriteString("if err := func() (err error) {\n")
-	nodes := g.nodes
-	if g.fragmentMode() {
-		nodes = g.defaultInlineNodes()
-	}
+	nodes := g.defaultInlineNodes()
 	g.emitPhaseNodes(b, nodes, PhaseConfig, PhaseSetup, PhaseWire, PhaseMiddleware, PhaseRegister)
 	b.WriteString("return nil\n")
 	b.WriteString("}(); err != nil {\n")
@@ -1321,35 +1291,7 @@ func (g *Gen) writeCommandNode(b *bytes.Buffer, clip string, n *commandNode) {
 }
 
 func (g *Gen) writeCommandWrapper(b *bytes.Buffer, c CommandFunc) {
-	if g.fragmentMode() {
-		g.writeRegionBody(b, c)
-		return
-	}
-	s := c.Scope
-	if len(s.nodes) == 0 {
-		args := append([]string{"ctx"}, s.rootExprs...)
-		args = append(args, c.ValueExprs...)
-		fmt.Fprintf(b, "return %s(%s)\n", c.Fn, strings.Join(args, ", "))
-		return
-	}
-	vars := wrapperVars(g, s)
-	lhs := append([]string{}, vars...)
-	if s.hasCleanup {
-		lhs = append(lhs, "cleanup")
-	}
-	if len(lhs) == 0 {
-		fmt.Fprintf(b, "if err := %s(ctx); err != nil {\nreturn err\n}\n", s.fn)
-	} else {
-		fmt.Fprintf(b, "%s, err := %s(ctx)\n", strings.Join(lhs, ", "), s.fn)
-		b.WriteString("if err != nil {\nreturn err\n}\n")
-		if s.hasCleanup {
-			// Deferring preserves cleanup on panic; named returns capture its error otherwise.
-			fmt.Fprintf(b, "defer func() {\nerr = %s.Join(err, cleanup())\n}()\n", g.Import("errors"))
-		}
-	}
-	args := append([]string{"ctx"}, vars...)
-	args = append(args, c.ValueExprs...)
-	fmt.Fprintf(b, "return %s(%s)\n", c.Fn, strings.Join(args, ", "))
+	g.writeRegionBody(b, c)
 }
 
 func writeCommandInputs(b *bytes.Buffer, clip string, c CommandFunc) {
@@ -1400,53 +1342,6 @@ func writeInputFields(b *bytes.Buffer, clip string, inputs []CommandInput, use [
 			}
 		}
 		b.WriteString("},\n")
-	}
-}
-
-// wrapperVars avoids locals that shadow imported packages.
-func wrapperVars(g *Gen, s *Scope) []string {
-	taken := map[string]bool{"ctx": true, "cleanup": true, "err": true}
-	for a := range g.aliasIdents {
-		taken[a] = true
-	}
-	out := make([]string, 0, len(s.roots))
-	for _, r := range s.roots {
-		base := depVarBase(r.Type)
-		name := base
-		for n := 2; taken[name]; n++ {
-			name = fmt.Sprintf("%s%d", base, n)
-		}
-		taken[name] = true
-		out = append(out, name)
-	}
-	return out
-}
-
-// depVarBase preserves initialisms: Server -> server, DB -> db, HTTPConfig -> httpConfig.
-func depVarBase(t types.Type) string {
-	tt := types.Unalias(t)
-	if p, ok := tt.(*types.Pointer); ok {
-		tt = types.Unalias(p.Elem())
-	}
-	name := "dep"
-	if n, ok := tt.(*types.Named); ok {
-		name = n.Obj().Name()
-	}
-	if !strings.ContainsFunc(name, unicode.IsLower) {
-		return strings.ToLower(name)
-	}
-	rs := []rune(name)
-	upper := 0
-	for upper < len(rs) && unicode.IsUpper(rs[upper]) {
-		upper++
-	}
-	switch {
-	case upper == len(rs):
-		return strings.ToLower(name)
-	case upper > 1:
-		return strings.ToLower(string(rs[:upper-1])) + string(rs[upper-1:])
-	default:
-		return LowerFirst(name)
 	}
 }
 
@@ -1571,15 +1466,11 @@ func (g *Gen) importLine(path string) string {
 }
 
 func (g *Gen) findUnparsable() (directive, text string, found bool) {
-	if directive, text, found := findUnparsableNodes(g.nodes, nil, ""); found {
-		return directive, text, true
+	storeNodes := make([]Node, 0, len(g.frag.nodes))
+	for _, sn := range g.frag.nodes {
+		storeNodes = append(storeNodes, sn.n)
 	}
-	for _, s := range g.scopes {
-		if directive, text, found := findUnparsableNodes(s.nodes, s.scopeErrCtx(), ""); found {
-			return directive, text, true
-		}
-	}
-	return "", "", false
+	return findUnparsableNodes(storeNodes, nil, "")
 }
 
 func findUnparsableNodes(nodes []Node, ec *errCtx, owner string) (directive, text string, found bool) {

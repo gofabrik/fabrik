@@ -152,15 +152,7 @@ func (g *Gen) Node(n Node) {
 		sc.nodes = append(sc.nodes, n)
 		return
 	}
-	if g.fragmentMode() {
-		g.frag.nodes = append(g.frag.nodes, storeNode{n: n, demand: g.frag.currentDemand(), flow: g.frag.flow, pos: g.frag.currentPos()})
-		return
-	}
-	if sc := g.scope; sc != nil {
-		sc.nodes = append(sc.nodes, n)
-		return
-	}
-	g.nodes = append(g.nodes, n)
+	g.frag.nodes = append(g.frag.nodes, storeNode{n: n, demand: g.frag.currentDemand(), flow: g.frag.flow, pos: g.frag.currentPos()})
 }
 
 // stampSelectPhases makes inherited phases explicit for validation.

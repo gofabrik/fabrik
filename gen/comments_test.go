@@ -68,8 +68,7 @@ func TestScopedEmitterHonorsCommentLevels(t *testing.T) {
 		g.SetDirective("provider")
 		g.SetCommentLevel(level)
 		g.SetSourceRoot("/work/app")
-		s := g.AddScope("buildX", token.Position{})
-		s.nodes = append(s.nodes, &Call{
+		g.Node(&Call{
 			Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider", Pos: token.Position{Filename: "/work/app/shared/db.go", Line: 14}}},
 			Var:  "db", Fn: "shared.NewDB",
 		})

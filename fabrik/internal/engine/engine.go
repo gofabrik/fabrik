@@ -159,7 +159,6 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 	}
 
 	g := gen.New()
-	g.FragmentMode()
 	g.SetModule(res.ModulePath)
 	g.SetTypes(res.Types)
 	if opts.Embedded {

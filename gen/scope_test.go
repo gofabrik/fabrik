@@ -89,8 +89,11 @@ type Cache struct{}
 
 func renderScopes(t *testing.T, g *Gen) string {
 	t.Helper()
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {
@@ -101,36 +104,26 @@ func renderScopes(t *testing.T, g *Gen) string {
 
 func TestScopeBuildsItsSubtree(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.cache})
+	ping := w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.cache})
+	w.g.AddCommandFunc(CommandFunc{Name: "ping", Fn: "app.Ping", Scope: ping})
 	src := renderScopes(t, w.g)
 
-	want := `func buildPing(ctx context.Context) (*app.Cache, func() error, error) {
-	var connClose func() error
-	unwind := func(err error) error {
-		if connClose != nil {
-			err = errors.Join(err, connClose())
-		}
-		return err
-	}
-	// Providers
-	conn, connClose, err := app.NewStore(ctx)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	cache, err := app.NewCache(conn)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if connClose != nil {
-			errs = append(errs, connClose())
-		}
-		return errors.Join(errs...)
-	}
-	return cache, cleanup, nil
-}`
+	want := `Run: func(ctx cli.Context) (err error) {
+					conn, connClose, err := app.NewStore(ctx)
+					if err != nil {
+						return err
+					}
+					if connClose != nil {
+						defer func() {
+							err = errors.Join(err, connClose())
+						}()
+					}
+					cache, err := app.NewCache(conn)
+					if err != nil {
+						return err
+					}
+					return app.Ping(ctx, cache)
+				},`
 	if !strings.Contains(src, want) {
 		t.Fatalf("buildPing shape mismatch.\n--- want ---\n%s\n--- got ---\n%s", want, src)
 	}
@@ -138,19 +131,23 @@ func TestScopeBuildsItsSubtree(t *testing.T) {
 
 func TestScopesConstructIndependently(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildA", token.Position{}, ScopeRoot{Type: w.store})
-	w.g.AddScope("buildB", token.Position{}, ScopeRoot{Type: w.store})
+	sa := w.g.AddScope("buildA", token.Position{}, ScopeRoot{Type: w.store})
+	w.g.AddCommandFunc(CommandFunc{Name: "a", Fn: "app.A", Scope: sa})
+	sb := w.g.AddScope("buildB", token.Position{}, ScopeRoot{Type: w.store})
+	w.g.AddCommandFunc(CommandFunc{Name: "b", Fn: "app.B", Scope: sb})
 	src := renderScopes(t, w.g)
 
 	if got := strings.Count(src, "app.NewStore(ctx)"); got != 2 {
-		t.Fatalf("store constructed %d times, want once per scope:\n%s", got, src)
+		t.Fatalf("store constructed %d times, want once per flow:\n%s", got, src)
 	}
 	if strings.Contains(src, "conn2") {
-		t.Fatalf("scope-local names leaked across scopes:\n%s", src)
+		t.Fatalf("flow-local names leaked across flows:\n%s", src)
 	}
-	if !strings.Contains(src, "func buildA(ctx context.Context) (*app.Store, func() error, error)") ||
-		!strings.Contains(src, "func buildB(ctx context.Context) (*app.Store, func() error, error)") {
-		t.Fatalf("missing scope functions:\n%s", src)
+	if got := strings.Count(src, "return app.A(ctx, conn)"); got != 1 {
+		t.Fatalf("command a consumes its own conn %d times, want 1:\n%s", got, src)
+	}
+	if got := strings.Count(src, "return app.B(ctx, conn)"); got != 1 {
+		t.Fatalf("command b consumes its own conn %d times, want 1:\n%s", got, src)
 	}
 }
 
@@ -165,28 +162,29 @@ func TestScopeWithoutCleanupOmitsSlot(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/flag") + ".Parse"})
 		return v, nil
 	})
-	g.AddScope("buildFlags", token.Position{}, ScopeRoot{Type: flags})
+	sf := g.AddScope("buildFlags", token.Position{}, ScopeRoot{Type: flags})
+	g.AddCommandFunc(CommandFunc{Name: "flags", Fn: "app.Flags", Scope: sf})
 	src := renderScopes(t, g)
 
-	buildFlags := strings.Index(src, "func buildFlags(ctx context.Context) (*flag.Flags, error) {")
-	if buildFlags < 0 {
-		t.Fatalf("cleanup-free scope should omit the cleanup slot:\n%s", src)
+	if !strings.Contains(src, "flags := flag.Parse()") {
+		t.Fatalf("cleanup-free construction should inline as a bare assignment:\n%s", src)
 	}
-	if strings.Contains(src[buildFlags:], "cleanup :=") {
-		t.Fatalf("cleanup composed in a cleanup-free scope:\n%s", src)
+	if strings.Contains(src, "cleanup") {
+		t.Fatalf("cleanup machinery composed in a cleanup-free flow:\n%s", src)
 	}
 }
 
 func TestScopeContextBindsToParam(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.store})
+	ping := w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.store})
+	w.g.AddCommandFunc(CommandFunc{Name: "ping", Fn: "app.Ping", Scope: ping})
 	src := renderScopes(t, w.g)
 
 	if !strings.Contains(src, "app.NewStore(ctx)") {
-		t.Fatalf("scoped Context() should bind to the build param:\n%s", src)
+		t.Fatalf("flow Context() should bind to the command's ctx param:\n%s", src)
 	}
-	if strings.Contains(src, "context.Background()") {
-		t.Fatalf("scope ctx leaked into run():\n%s", src)
+	if got := strings.Count(src, "context.Background()"); got != 1 {
+		t.Fatalf("context.Background() appears %d times, want only the signal shell's:\n%s", got, src)
 	}
 }
 
@@ -469,7 +467,8 @@ func TestScopeVarAndImportAliasDoNotCollide(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/conn") + ".NewPool"})
 		return v, nil
 	})
-	g.AddScope("buildPool", token.Position{}, ScopeRoot{Type: pool})
+	sp := g.AddScope("buildPool", token.Position{}, ScopeRoot{Type: pool})
+	g.AddCommandFunc(CommandFunc{Name: "pool", Fn: "app.Pool", Scope: sp})
 	src := renderScopes(t, g)
 	if !strings.Contains(src, "conn2 \"example.com/conn\"") {
 		t.Fatalf("import alias should rename around the scope var:\n%s", src)
@@ -536,7 +535,10 @@ func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 			Var: v, Fn: g.Import("example.com/ind") + ".NewC", Args: []string{xv, yv}, Err: ErrReturn})
 		return v, nil
 	})
-	g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	c1 := g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "one", Fn: "app.One", Scope: c1})
+	c2 := g.AddScope("buildC2", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "two", Fn: "app.Two", Scope: c2})
 	src := renderScopes(t, g)
 
 	yPos := strings.Index(src, "y, yClose, err := ind.NewY()")
@@ -544,17 +546,22 @@ func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 	if yPos < 0 || xPos < 0 || yPos > xPos {
 		t.Fatalf("layout should emit y before x:\n%s", src)
 	}
-	unwind := `unwind := func(err error) error {
+	shape := `	var yClose, xClose func() error
+	cleanup := func() error {
+		var errs []error
 		if xClose != nil {
-			err = errors.Join(err, xClose())
+			errs = append(errs, xClose())
 		}
 		if yClose != nil {
-			err = errors.Join(err, yClose())
+			errs = append(errs, yClose())
 		}
-		return err
+		return errors.Join(errs...)
+	}
+	unwind := func(err error) error {
+		return errors.Join(err, cleanup())
 	}`
-	if !strings.Contains(src, unwind) {
-		t.Fatalf("unwind must reverse emission order (x released before y):\n%s", src)
+	if !strings.Contains(src, shape) {
+		t.Fatalf("cleanup must release in reverse emission order (x before y):\n%s", src)
 	}
 }
 
@@ -565,16 +572,19 @@ func TestCleanupWithoutErrorSitesOmitsUnwind(t *testing.T) {
 	pT := types.NewPointer(pkg.Scope().Lookup("P").Type())
 	g.BindLazy(pT, "", func() (string, diag.Diagnostics) {
 		v := g.Var("p")
-		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/pure") + ".New", Cleanup: g.Var(v + "Close")})
+		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/pure") + ".New", Cleanup: g.Var(v + "Close"), ErrsPkg: g.Import("errors")})
 		return v, nil
 	})
-	g.AddScope("buildP", token.Position{}, ScopeRoot{Type: pT})
+	p1 := g.AddScope("buildP", token.Position{}, ScopeRoot{Type: pT})
+	g.AddCommandFunc(CommandFunc{Name: "one", Fn: "app.One", Scope: p1})
+	p2 := g.AddScope("buildP2", token.Position{}, ScopeRoot{Type: pT})
+	g.AddCommandFunc(CommandFunc{Name: "two", Fn: "app.Two", Scope: p2})
 	src := renderScopes(t, g)
 	if strings.Contains(src, "unwind") {
 		t.Fatalf("no error sites, unwind must not be declared:\n%s", src)
 	}
-	if !strings.Contains(src, "var pClose func() error") || !strings.Contains(src, "p, pClose := pure.New()") {
-		t.Fatalf("cleanup slot must still be declared and assigned:\n%s", src)
+	if !strings.Contains(src, "p, pClose := pure.New()") || !strings.Contains(src, "err = errors.Join(err, pClose())") {
+		t.Fatalf("cleanup must assign its slot and defer the join:\n%s", src)
 	}
 }
 
@@ -612,30 +622,14 @@ func TestScopeMultiCleanupReverseOrder(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/two") + ".NewC", Args: []string{bv}, Err: ErrReturn})
 		return v, ds
 	})
-	g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	c1 := g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "one", Fn: "app.One", Scope: c1})
+	c2 := g.AddScope("buildC2", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "two", Fn: "app.Two", Scope: c2})
 	src := renderScopes(t, g)
 
-	slots := `	var aClose, bClose func() error
-	unwind := func(err error) error {
-		if bClose != nil {
-			err = errors.Join(err, bClose())
-		}
-		if aClose != nil {
-			err = errors.Join(err, aClose())
-		}
-		return err
-	}`
-	if !strings.Contains(src, slots) {
-		t.Fatalf("unwind helper should pre-declare slots and release b then a:\n%s", src)
-	}
-	collapsed := `	c, err := two.NewC(b)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}`
-	if !strings.Contains(src, collapsed) {
-		t.Fatalf("error site should collapse to unwind(err):\n%s", src)
-	}
-	composed := `	cleanup := func() error {
+	composed := `	var aClose, bClose func() error
+	cleanup := func() error {
 		var errs []error
 		if bClose != nil {
 			errs = append(errs, bClose())
@@ -644,9 +638,19 @@ func TestScopeMultiCleanupReverseOrder(t *testing.T) {
 			errs = append(errs, aClose())
 		}
 		return errors.Join(errs...)
+	}
+	unwind := func(err error) error {
+		return errors.Join(err, cleanup())
 	}`
 	if !strings.Contains(src, composed) {
-		t.Fatalf("composed cleanup should release in reverse:\n%s", src)
+		t.Fatalf("cleanup should pre-declare slots and release b then a:\n%s", src)
+	}
+	collapsed := `	c, err := two.NewC(b)
+	if err != nil {
+		return nil, nil, unwind(err)
+	}`
+	if !strings.Contains(src, collapsed) {
+		t.Fatalf("error site should collapse to unwind(err):\n%s", src)
 	}
 }
 
@@ -678,7 +682,8 @@ func TestValidationPassDeterministicDiagnostics(t *testing.T) {
 	}
 }
 
-// Path bindings cache independently in the default flow and each scope.
+// A path binding materializes once; the demand graph shares it and each
+// demanding flow re-emits the node.
 func TestScopePathBindings(t *testing.T) {
 	w := newScopeWorld(t)
 	g := w.g
@@ -709,21 +714,24 @@ func TestScopePathBindings(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/user") + ".New", Args: []string{mgr}, Err: ErrReturn})
 		return v, ds
 	})
-	// Scopes must not reuse a path expression cached by the default flow.
 	if expr, _, ok := g.InstancePath(mgrPath); !ok || expr == "" {
 		t.Fatalf("default materialization failed")
 	}
 	if builds != 1 {
 		t.Fatalf("default flow built %d times, want 1", builds)
 	}
-	g.AddScope("buildU1", token.Position{}, ScopeRoot{Type: uT})
-	g.AddScope("buildU2", token.Position{}, ScopeRoot{Type: uT})
+	u1 := g.AddScope("buildU1", token.Position{}, ScopeRoot{Type: uT})
+	g.AddCommandFunc(CommandFunc{Name: "u1", Fn: "app.U1", Scope: u1})
+	u2 := g.AddScope("buildU2", token.Position{}, ScopeRoot{Type: uT})
+	g.AddCommandFunc(CommandFunc{Name: "u2", Fn: "app.U2", Scope: u2})
 	src := renderScopes(t, g)
-	if builds != 3 {
-		t.Fatalf("manager built %d times, want the default plus once per scope", builds)
+	// One materialization is shared through the demand graph; each
+	// demanding flow re-emits the node.
+	if builds != 1 {
+		t.Fatalf("manager built %d times, want one shared materialization", builds)
 	}
-	if got := strings.Count(src, "mgr.New()"); got != 3 {
-		t.Fatalf("manager constructed %d times in output, want 3:\n%s", got, src)
+	if got := strings.Count(src, "mgr.New()"); got != 2 {
+		t.Fatalf("manager constructed %d times in output, want once per command flow:\n%s", got, src)
 	}
 }
 

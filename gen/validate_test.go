@@ -136,10 +136,10 @@ func TestValidateGraphScopeFallbackPosition(t *testing.T) {
 	g := New()
 	g.SetDirective("provider")
 	g.AddScope("buildX", vpos("cmd.go", 12))
-	sc := g.scopes[0]
-	sc.nodes = append(sc.nodes,
-		&Assign{Base: Base{Phase: PhaseWire}, Var: "x", Expr: "1"},
-		&Assign{Base: Base{Phase: PhaseWire}, Var: "x", Expr: "2"})
+	g.frag.flow = "buildX"
+	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "x", Expr: "1"})
+	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "x", Expr: "2"})
+	g.frag.flow = ""
 	ds := g.ValidateGraph()
 	if len(ds) != 1 {
 		t.Fatalf("diagnostics = %v, want one", ds)

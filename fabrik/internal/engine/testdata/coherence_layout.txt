@@ -143,7 +143,7 @@ func run() int {
 			{
 				Name: "sync",
 				Run: func(ctx cli.Context) (err error) {
-					sharedReport, sharedOrders, err := buildDb()
+					sharedReport, sharedOrders, err := buildReport()
 					if err != nil {
 						return err
 					}
@@ -157,7 +157,7 @@ func run() int {
 			{
 				Name: "check",
 				Run: func(ctx cli.Context) (err error) {
-					sharedReport, sharedOrders, err := buildDb()
+					sharedReport, sharedOrders, err := buildReport()
 					if err != nil {
 						return err
 					}
@@ -173,7 +173,7 @@ func run() int {
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
-func buildDb() (*shared.Report, *shared.Orders, error) {
+func buildReport() (*shared.Report, *shared.Orders, error) {
 	sharedDBDb, err := shared.NewDB()
 	if err != nil {
 		return nil, nil, err

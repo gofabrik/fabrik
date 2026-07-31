@@ -30,7 +30,7 @@ func TestDemandUsageAcrossFlows(t *testing.T) {
 	s2 := g.AddScope("buildTwo", token.Position{}, ScopeRoot{Type: a})
 	_ = s1
 	_ = s2
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
+	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("materialize: %v", ds)
 	}
 	aKey := demandKey{kind: demandType, key: types.TypeString(a, nil)}
@@ -76,7 +76,7 @@ func TestReducedValidationSkipsDemanded(t *testing.T) {
 	g.BindLazy(a, "", func() (string, diag.Diagnostics) { aBuilds++; return "va", nil })
 	g.BindLazy(c, "", func() (string, diag.Diagnostics) { cBuilds++; return "vc", nil })
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
+	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("materialize: %v", ds)
 	}
 	if ds := g.RunValidationPass(); ds.HasFatal() {
@@ -104,7 +104,7 @@ func TestDiagnosedLazyBuildCachesAcrossFlows(t *testing.T) {
 	})
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: d})
 	g.AddScope("buildTwo", token.Position{}, ScopeRoot{Type: d})
-	ds := g.MaterializeScopes()
+	ds := g.WalkFlows()
 	if builds != 1 {
 		t.Fatalf("builds = %d, want one (diagnosed build cached across flows)", builds)
 	}
@@ -124,7 +124,7 @@ func TestCallbackDemandsRecordFlows(t *testing.T) {
 	ran := 0
 	g.ScopePrologue(func() diag.Diagnostics { ran++; return nil })
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
+	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("materialize: %v", ds)
 	}
 	k := demandKey{kind: demandCallback, key: "prologue", ord: 0}
@@ -145,7 +145,7 @@ func TestPathDemandRecordsFlows(t *testing.T) {
 		return "va(" + e + ")", ds
 	})
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
+	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("materialize: %v", ds)
 	}
 	k := demandKey{kind: demandPath, key: "*jobs.Manager"}
@@ -163,7 +163,7 @@ func TestEpilogueDemandOrdinal(t *testing.T) {
 	g.ScopeEpilogue(func() diag.Diagnostics { return nil })
 	g.ScopeEpilogue(func() diag.Diagnostics { return nil })
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
+	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("materialize: %v", ds)
 	}
 	for ord := 0; ord < 2; ord++ {
@@ -198,7 +198,7 @@ func TestBrokenPathReportsOnceAcrossScopes(t *testing.T) {
 	})
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
 	g.AddScope("buildTwo", token.Position{}, ScopeRoot{Type: b})
-	ds := g.MaterializeScopes()
+	ds := g.WalkFlows()
 	if builds != 1 {
 		t.Fatalf("broken path built %d times, want once across scopes", builds)
 	}
@@ -225,7 +225,7 @@ func TestPanickingBuildReportsOnceAcrossScopes(t *testing.T) {
 	})
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: d})
 	g.AddScope("buildTwo", token.Position{}, ScopeRoot{Type: d})
-	ds := g.MaterializeScopes()
+	ds := g.WalkFlows()
 	if builds != 1 {
 		t.Fatalf("panicking build ran %d times, want once across scopes", builds)
 	}
@@ -253,7 +253,7 @@ func TestEpilogueDiagnosticReportsOnceAcrossFlows(t *testing.T) {
 	})
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
 	g.AddScope("buildTwo", token.Position{}, ScopeRoot{Type: a})
-	all := g.MaterializeScopes()
+	all := g.WalkFlows()
 	all = append(all, g.RunValidationPass()...)
 	count := 0
 	for _, d := range all {
@@ -280,7 +280,7 @@ func TestBuildRegisteredConflictReportsOnceAcrossScopes(t *testing.T) {
 	})
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
 	g.AddScope("buildTwo", token.Position{}, ScopeRoot{Type: a})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
+	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("materialize: %v", ds)
 	}
 	first := g.BindConflicts()
@@ -309,7 +309,7 @@ func TestDistinctCallbacksDoNotCollapse(t *testing.T) {
 	g.ScopeEpilogue(broken)
 	g.ScopeEpilogue(broken)
 	g.AddScope("buildOne", token.Position{}, ScopeRoot{Type: a})
-	all := g.MaterializeScopes()
+	all := g.WalkFlows()
 	count := 0
 	for _, d := range all {
 		if d.Message == "shared message" {

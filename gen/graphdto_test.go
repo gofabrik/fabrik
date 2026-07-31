@@ -53,10 +53,16 @@ type Greeter interface{ Greet() string }
 	})
 
 	s := g.AddScope("buildRun", token.Position{}, ScopeRoot{Type: cache})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
 	}
-	s.nodes = append(s.nodes,
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	// Flow-attributed emission mirrors WalkFlows: nodes land in the
+	// store under the scope's flow.
+	g.frag.flow = s.fn
+	for _, n := range []Node{
 		&Raw{
 			Base:    Base{Phase: PhaseConfig, Origin: Origin{Directive: "config"}},
 			Lines:   []string{`appEnv := "dev"`, "appOpts := []string{appEnv}"},
@@ -93,7 +99,10 @@ type Greeter interface{ Greet() string }
 			Base: Base{Phase: PhaseRegister, Origin: Origin{Directive: "job", Pos: token.Position{Filename: "/work/app/web/visits.go", Line: 18}}},
 			Fn:   "jobs.On[app.Visit]", Args: []string{"conn"}, Err: ErrInline,
 		},
-	)
+	} {
+		g.Node(n)
+	}
+	g.frag.flow = ""
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -180,8 +189,11 @@ type Store struct{}
 		return v, nil
 	})
 	g.AddScope("buildMigrate", token.Position{}, ScopeRoot{Type: store})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -205,7 +217,8 @@ func TestGraphNodesDescribeEveryKind(t *testing.T) {
 
 	conn := nodeByID(t, gr, "run/conn")
 	wantConn := GraphNode{
-		ID: "run/conn", Flow: "run", Kind: "call", Defines: []string{"conn"},
+		ID: "run/conn", Node: "0", Flow: "run", Usage: []string{"run"},
+		Kind: "call", Defines: []string{"conn"},
 		Fn: "app.NewStore", Type: "*app.Store",
 		TypeCanonical: "*example.com/app.Store", Cleanup: "connClose",
 		Directive: "provider", Pos: "shared/db.go:14",
@@ -276,10 +289,12 @@ func TestGraphConsumerArgumentTargetsMatchingBinding(t *testing.T) {
 	// A matching node argument still targets the root-only cache binding.
 	g := graphWorld(t)
 	s := g.scopes[0]
-	s.nodes = append(s.nodes, &Call{
+	g.frag.flow = s.fn
+	g.Node(&Call{
 		Base: Base{Phase: PhaseRegister, Origin: Origin{Directive: "job"}},
 		Fn:   "app.Warm", Args: []string{"app.NewCache(conn)"}, Err: ErrInline,
 	})
+	g.frag.flow = ""
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -381,8 +396,8 @@ func TestGraphRenderings(t *testing.T) {
 	for _, want := range []string{
 		"flowchart TB",
 		`subgraph f1["buildRun"]`,
-		`n3["conn<br/>*app.Store (cleanup)<br/>provider shared/db.go:14"]`,
-		"n0 --> n3",
+		`n5["conn<br/>*app.Store (cleanup)<br/>provider shared/db.go:14"]`,
+		"n2 --> n5",
 		"end",
 	} {
 		if !strings.Contains(mmd, want) {
@@ -509,8 +524,11 @@ type Store struct{}
 		return v, nil
 	})
 	g.AddScope("buildMigrate", token.Position{}, ScopeRoot{Type: store, Name: "replica"})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -589,8 +607,10 @@ func TestGraphDefaultFlowIDIsReserved(t *testing.T) {
 	g := New()
 	g.SetModule("demo")
 	g.SetDirective("cli:command")
-	sc := g.AddScope("buildDefault", token.Position{})
-	sc.nodes = append(sc.nodes, &Assign{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}}, Var: "svc", Expr: "mk()"})
+	g.AddScope("buildDefault", token.Position{})
+	g.frag.flow = "buildDefault"
+	g.Node(&Assign{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}}, Var: "svc", Expr: "mk()"})
+	g.frag.flow = ""
 	gr := g.Graph()
 	var ids []string
 	for _, f := range gr.Flows {
@@ -617,8 +637,11 @@ func TestNodelessScopeFlowNamesNoFunction(t *testing.T) {
 	g.SetDirective("provider")
 	g.BindLazy(vT, "", func() (string, diag.Diagnostics) { return "inline.New()", nil })
 	g.AddScope("buildOnly", token.Position{}, ScopeRoot{Type: vT})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -697,6 +720,12 @@ func TestGraphNamedJSONSpelling(t *testing.T) {
 	g.Bind(db, "replica", "spell.NewReplica()")
 	g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "db", Fn: "spell.NewReplica", BindingName: "replica"})
 	g.AddScope("buildX", token.Position{}, ScopeRoot{Type: db, Name: "replica"})
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
 	if _, err := g.Render(); err != nil {
 		t.Fatal(err)
 	}
@@ -719,6 +748,12 @@ func TestGraphNamedJSONSpelling(t *testing.T) {
 	unnamed.Bind(db, "", "spell.NewDB()")
 	unnamed.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "db", Fn: "spell.NewDB"})
 	unnamed.AddScope("buildX", token.Position{}, ScopeRoot{Type: db})
+	if ds := unnamed.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := unnamed.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
 	if _, err := unnamed.Render(); err != nil {
 		t.Fatal(err)
 	}
@@ -750,7 +785,6 @@ type Greeter interface{ Greet() string }
 
 	g := New()
 	g.SetModule("example.com/app")
-	g.FragmentMode()
 	g.SetDirective("provider")
 	g.BindLazy(store, "db", func() (string, diag.Diagnostics) {
 		v := g.Var("conn")
@@ -899,18 +933,6 @@ func TestGraphListsExtractedFragments(t *testing.T) {
 	}
 }
 
-func TestGraphWithoutFragmentModeOmitsTheNewFields(t *testing.T) {
-	out, err := json.Marshal(graphWorld(t).Graph())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, stray := range []string{`"node":`, `"usage":`, `"fragment":`, `"fragments":`} {
-		if strings.Contains(string(out), stray) {
-			t.Fatalf("legacy graph must omit %s:\n%s", stray, out)
-		}
-	}
-}
-
 func rootField(t *testing.T, out []byte, field string) (string, bool) {
 	t.Helper()
 	var doc struct {
@@ -947,20 +969,22 @@ func TestGraphJSONSpellsTheNewFields(t *testing.T) {
 		}
 	}
 
-	legacy := New()
-	legacy.SetModule("example.com/app")
-	legacy.SetDirective("provider")
-	legacy.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "v", Expr: "app.New()"})
-	if _, err := legacy.Render(); err != nil {
-		t.Fatalf("Render legacy: %v", err)
+	// A graph with no extracted regions spells node and usage but no
+	// fragment assignments.
+	plain := New()
+	plain.SetModule("example.com/app")
+	plain.SetDirective("provider")
+	plain.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "v", Expr: "app.New()"})
+	if _, err := plain.Render(); err != nil {
+		t.Fatalf("Render plain: %v", err)
 	}
-	data, err = json.Marshal(legacy.Graph())
+	data, err = json.Marshal(plain.Graph())
 	if err != nil {
-		t.Fatalf("marshal legacy: %v", err)
+		t.Fatalf("marshal plain: %v", err)
 	}
-	for _, key := range []string{`"node":`, `"usage":`, `"fragment":`, `"fragments":`} {
+	for _, key := range []string{`"fragment":`, `"fragments":`} {
 		if strings.Contains(string(data), key) {
-			t.Fatalf("legacy graph must omit %s:\n%s", key, data)
+			t.Fatalf("region-free graph must omit %s:\n%s", key, data)
 		}
 	}
 }
@@ -1012,7 +1036,6 @@ type B struct{}
 	tb := types.NewPointer(pkg.Scope().Lookup("B").Type())
 	g := New()
 	g.SetModule("example.com/app")
-	g.FragmentMode()
 	g.SetDirective("provider")
 	g.BindLazy(cfg, "", func() (string, diag.Diagnostics) {
 		g.Node(&ConfigLoad{
@@ -1075,7 +1098,6 @@ type Store struct{}
 	store := types.NewPointer(pkg.Scope().Lookup("Store").Type())
 	g := New()
 	g.SetModule("example.com/app")
-	g.FragmentMode()
 	g.SetDirective("provider")
 	g.BindLazy(store, "db", func() (string, diag.Diagnostics) {
 		v := g.Var("conn")

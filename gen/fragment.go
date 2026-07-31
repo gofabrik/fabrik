@@ -49,15 +49,6 @@ func (st *fragmentStore) currentDemand() int {
 	return st.active[len(st.active)-1]
 }
 
-// FragmentMode collects nodes in a shared store and allocates identifiers globally.
-func (g *Gen) FragmentMode() {
-	if g.frag == nil {
-		g.frag = &fragmentStore{}
-	}
-}
-
-func (g *Gen) fragmentMode() bool { return g.frag != nil }
-
 // pushNodePos records a positioned materialization frame; positionless
 // store nodes inherit the innermost frame for diagnostics.
 func (g *Gen) pushNodePos(pos token.Position) func() {
@@ -160,11 +151,27 @@ type region struct {
 	anchorHook        string // hook callee, for naming
 	anchorProvider    string // provider binding name, for naming
 	anchorProviderPkg string // provider callee's package, for qualification
+	anchorProviderVar string // variable the anchor provider defines
 	anchorRoot        string // member-defined scope root variable
 	anchorPrelude     bool
 }
 
 func (r *region) runs(flow string) bool { return r.usageSet[flow] }
+
+// providerNamesProduct reports whether the anchor provider's own result
+// is what callers receive; a provider consumed internally must not name
+// the region after itself.
+func (r *region) providerNamesProduct() bool {
+	if len(r.liveOuts) == 0 {
+		return true
+	}
+	for _, out := range r.liveOuts {
+		if out == r.anchorProviderVar {
+			return true
+		}
+	}
+	return false
+}
 
 type planStep struct {
 	region *region
@@ -600,6 +607,9 @@ func (g *Gen) regionAnchored(ps *planState, reg *region, st *fragmentStore) bool
 			if k.name != "" {
 				if reg.anchorProvider == "" {
 					reg.anchorProvider = k.name
+					if ds := defines(sn.n); len(ds) > 0 {
+						reg.anchorProviderVar = ds[0]
+					}
 					if c, ok := sn.n.(*Call); ok {
 						if i := strings.IndexByte(c.Fn, '.'); i > 0 {
 							reg.anchorProviderPkg = upperFirst(c.Fn[:i])

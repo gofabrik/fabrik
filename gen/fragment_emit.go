@@ -178,9 +178,6 @@ func (g *Gen) SingletonAttribution(key string) func() {
 
 // flowNodes returns the node occurrences used by one flow.
 func (g *Gen) flowNodes(flow string) []Node {
-	if !g.fragmentMode() {
-		return g.nodes
-	}
 	var out []Node
 	for _, sn := range g.frag.nodes {
 		for _, u := range g.nodeUsage(sn) {
@@ -194,9 +191,6 @@ func (g *Gen) flowNodes(flow string) []Node {
 }
 
 func (g *Gen) scopeFlowNodes(s *Scope) []Node {
-	if !g.fragmentMode() {
-		return s.nodes
-	}
 	return g.flowNodes(s.fn)
 }
 
@@ -389,14 +383,16 @@ func (g *Gen) consumedIn(v, flow string, self *region) bool {
 // nameRegions derives names from stable content anchors before falling back to flow names.
 func (g *Gen) nameRegions(st *fragmentStore, regions []*region) {
 	// Reserve identifiers sharing the output package's declaration space.
+	// Reservation is case-insensitive so split file names, which lowercase
+	// the function name, stay one-to-one with the functions.
 	taken := map[string]bool{"run": true, "main": true}
 	for name := range g.outputIdents {
-		taken[name] = true
+		taken[strings.ToLower(name)] = true
 	}
 	for alias := range g.aliasIdents {
-		taken[alias] = true
+		taken[strings.ToLower(alias)] = true
 	}
-	used := func(name string) bool { return taken[name] }
+	used := func(name string) bool { return taken[strings.ToLower(name)] }
 	for _, reg := range regions {
 		base, qualified := "", ""
 		switch {
@@ -416,6 +412,15 @@ func (g *Gen) nameRegions(st *fragmentStore, regions []*region) {
 			if pkg != "" {
 				qualified = lowerFirst(fn) + upperFirst(pkg)
 			}
+		case reg.anchorProvider != "" && reg.providerNamesProduct():
+			base = "build" + upperFirst(reg.anchorProvider)
+			if reg.anchorProviderPkg != "" {
+				qualified = "build" + reg.anchorProviderPkg + upperFirst(reg.anchorProvider)
+			}
+		case len(reg.liveOuts) > 0:
+			ts, _ := g.varTypeStr(reg.liveOuts[0])
+			base = "build" + upperFirst(typeBaseName(ts))
+			qualified = "build" + typePkgName(ts) + upperFirst(typeBaseName(ts))
 		case reg.anchorProvider != "":
 			base = "build" + upperFirst(reg.anchorProvider)
 			if reg.anchorProviderPkg != "" {
@@ -436,7 +441,7 @@ func (g *Gen) nameRegions(st *fragmentStore, regions []*region) {
 		for n := 2; used(name); n++ {
 			name = fmt.Sprintf("%s%d", base, n)
 		}
-		taken[name] = true
+		taken[strings.ToLower(name)] = true
 		reg.fn = name
 	}
 }

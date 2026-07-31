@@ -263,7 +263,6 @@ func TestBundleUsageCoversDirectRouterFlow(t *testing.T) {
 	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
 	g := gen.New()
 	g.SetModule("demo")
-	g.FragmentMode()
 
 	routerPkg := types.NewPackage(routerPath, "router")
 	routerObj := types.NewTypeName(token.NoPos, routerPkg, "Router", nil)
@@ -359,13 +358,17 @@ func TestDirectRouterFieldReplaysBundleAfterCommandRoot(t *testing.T) {
 	}); ds.HasFatal() {
 		t.Fatalf("EmitHandle: %v", ds)
 	}
-	g.AddScope("buildInspect", pos(2), gen.ScopeRoot{Type: handlerPtr})
+	inspect := g.AddScope("buildInspect", pos(2), gen.ScopeRoot{Type: handlerPtr})
+	g.AddCommandFunc(gen.CommandFunc{Name: "inspect", Fn: "web.Inspect", Scope: inspect, Pos: pos(2)})
 
 	if ds := g.RunValidationPass(); ds.HasFatal() {
 		t.Fatalf("RunValidationPass: %v", ds)
 	}
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	src, err := g.Render()
 	if err != nil {
@@ -443,7 +446,6 @@ func TestBundleKeepsRegistrationOrderAgainstAnchors(t *testing.T) {
 	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
 	g := gen.New()
 	g.SetModule("demo")
-	g.FragmentMode()
 
 	routerPkg := types.NewPackage(routerPath, "router")
 	routerObj := types.NewTypeName(token.NoPos, routerPkg, "Router", nil)

@@ -15,50 +15,38 @@ import (
 // Rendering assumes these checks pass.
 func (g *Gen) ValidateGraph() diag.Diagnostics {
 	var ds diag.Diagnostics
-	if g.fragmentMode() {
-		// Positionless nodes inherit their materialization ancestor or flow position.
-		ancestor := map[Node]token.Position{}
-		var mark func(n Node, pos token.Position)
-		mark = func(n Node, pos token.Position) {
-			ancestor[n] = pos
-			if sel, ok := n.(*Select); ok {
-				for ci := range sel.Cases {
-					for _, child := range sel.Cases[ci].Body {
-						mark(child, pos)
-					}
-					mark(&sel.Cases[ci].Result, pos)
+	// Positionless nodes inherit their materialization ancestor or flow position.
+	ancestor := map[Node]token.Position{}
+	var mark func(n Node, pos token.Position)
+	mark = func(n Node, pos token.Position) {
+		ancestor[n] = pos
+		if sel, ok := n.(*Select); ok {
+			for ci := range sel.Cases {
+				for _, child := range sel.Cases[ci].Body {
+					mark(child, pos)
 				}
+				mark(&sel.Cases[ci].Result, pos)
 			}
 		}
-		for _, sn := range g.frag.nodes {
-			if sn.pos.IsValid() {
-				mark(sn.n, sn.pos)
-			}
-		}
-		flowPos := token.Position{}
-		validate := func(nodes []Node, declPos token.Position) {
-			g.validateFlowWith(&ds, nodes, func(n Node) token.Position {
-				if p, ok := ancestor[n]; ok {
-					return p
-				}
-				return declPos
-			})
-		}
-		validate(g.flowNodes("default"), flowPos)
-		for _, s := range g.scopes {
-			validate(g.flowNodes(s.fn), s.pos)
-		}
-		return ds
 	}
-	g.validateFlow(&ds, g.nodes, token.Position{})
+	for _, sn := range g.frag.nodes {
+		if sn.pos.IsValid() {
+			mark(sn.n, sn.pos)
+		}
+	}
+	validate := func(nodes []Node, declPos token.Position) {
+		g.validateFlowWith(&ds, nodes, func(n Node) token.Position {
+			if p, ok := ancestor[n]; ok {
+				return p
+			}
+			return declPos
+		})
+	}
+	validate(g.flowNodes("default"), token.Position{})
 	for _, s := range g.scopes {
-		g.validateFlow(&ds, s.nodes, s.pos)
+		validate(g.flowNodes(s.fn), s.pos)
 	}
 	return ds
-}
-
-func (g *Gen) validateFlow(ds *diag.Diagnostics, nodes []Node, fallback token.Position) {
-	g.validateFlowWith(ds, nodes, func(Node) token.Position { return fallback })
 }
 
 func (g *Gen) validateFlowWith(ds *diag.Diagnostics, nodes []Node, fallbackFor func(Node) token.Position) {

@@ -255,7 +255,7 @@ func TestLazyBindOwnerProvenance(t *testing.T) {
 	if _, _, ok := g.Instance(types.Typ[types.String], "cfg"); !ok {
 		t.Fatal("instance failed")
 	}
-	if got := g.nodes[0].base().Origin.Directive; got != "config" {
+	if got := g.frag.nodes[0].n.base().Origin.Directive; got != "config" {
 		t.Fatalf("lazy node directive = %q, want owner %q", got, "config")
 	}
 	if g.current != "hook" {
@@ -277,8 +277,8 @@ func TestPathBindingAPIs(t *testing.T) {
 	if !ok || len(ds) != 0 || expr != "s" {
 		t.Fatalf("InstancePath = %q %v %v", expr, ds, ok)
 	}
-	n := len(g.nodes)
-	if expr, _, ok := g.InstancePath("*x.Set"); !ok || expr != "s" || len(g.nodes) != n {
+	n := len(g.frag.nodes)
+	if expr, _, ok := g.InstancePath("*x.Set"); !ok || expr != "s" || len(g.frag.nodes) != n {
 		t.Fatal("InstancePath did not cache")
 	}
 	if _, _, ok := g.InstancePath("*x.Other"); ok {
@@ -322,12 +322,13 @@ func TestInstancePathDiagnosedBuildIsNotACycle(t *testing.T) {
 	if _, ds, ok := g.InstancePath("*x.Broken"); !ok || len(ds) != 1 || ds[0].Message != "broken" {
 		t.Fatalf("first = %v %v", ds, ok)
 	}
-	// Diagnosed path builds are retryable.
+	// A diagnosed build reports once; later consumers get the cached
+	// result, not a cycle diagnostic or a duplicate report.
 	_, ds, ok := g.InstancePath("*x.Broken")
-	if !ok || len(ds) != 1 || ds[0].Message != "broken" {
-		t.Fatalf("second = %v %v, want the original diagnostic", ds, ok)
+	if !ok || len(ds) != 0 {
+		t.Fatalf("second = %v %v, want the cached diagnosed result", ds, ok)
 	}
-	if builds != 2 {
+	if builds != 1 {
 		t.Fatalf("builds = %d", builds)
 	}
 }
@@ -380,9 +381,13 @@ func TestPanickingBuildLeavesStateClean(t *testing.T) {
 	if len(g.materializing) != 0 {
 		t.Fatalf("materializing = %v, cycle stack dirty after panic", g.materializing)
 	}
+	// A panicked build is diagnosed once; consumers see the cached result.
 	expr, ds, ok := g.InstancePath("*x.Panicky")
-	if !ok || len(ds) != 0 || expr != "v" {
-		t.Fatalf("retry = %q %v %v", expr, ds, ok)
+	if !ok || len(ds) != 0 || expr != "" {
+		t.Fatalf("after panic = %q %v %v, want the cached diagnosed result", expr, ds, ok)
+	}
+	if !first {
+		_ = expr
 	}
 }
 
@@ -431,22 +436,25 @@ func TestFindUnparsableIncludesScopesAndSelectChildren(t *testing.T) {
 		{
 			name: "global node",
 			configure: func(g *Gen) {
-				g.nodes = append(g.nodes, badRaw("global", "if {"))
+				g.Node(badRaw("global", "if {"))
 			},
 			directive: "global",
 			text:      "if {",
 		},
 		{
-			name: "scope node",
+			name: "flow node",
 			configure: func(g *Gen) {
-				s := g.AddScope("build", token.Position{})
-				s.nodes = append(s.nodes, &Call{
+				g.AddScope("build", token.Position{})
+				g.frag.flow = "build"
+				g.Node(&Call{
 					Base:    Base{Origin: Origin{Directive: "cleanup"}},
 					Var:     "v",
 					Fn:      "makeV",
 					Cleanup: "closeV",
+					ErrsPkg: "errors",
 				})
-				s.nodes = append(s.nodes, badRaw("scoped", "for {"))
+				g.Node(badRaw("scoped", "for {"))
+				g.frag.flow = ""
 			},
 			directive: "scoped",
 			text:      "for {",
@@ -454,7 +462,7 @@ func TestFindUnparsableIncludesScopesAndSelectChildren(t *testing.T) {
 		{
 			name: "select body",
 			configure: func(g *Gen) {
-				g.nodes = append(g.nodes, &Select{
+				g.Node(&Select{
 					Base:    Base{Origin: Origin{Directive: "select"}},
 					Var:     "v",
 					Iface:   "I",
@@ -471,10 +479,11 @@ func TestFindUnparsableIncludesScopesAndSelectChildren(t *testing.T) {
 			text:      "switch {",
 		},
 		{
-			name: "scoped select result",
+			name: "flow select result",
 			configure: func(g *Gen) {
-				s := g.AddScope("build", token.Position{})
-				s.nodes = append(s.nodes, &Select{
+				g.AddScope("build", token.Position{})
+				g.frag.flow = "build"
+				g.Node(&Select{
 					Base:    Base{Origin: Origin{Directive: "select"}},
 					Var:     "v",
 					Iface:   "I",
@@ -485,6 +494,7 @@ func TestFindUnparsableIncludesScopesAndSelectChildren(t *testing.T) {
 						Result: badResult("result"),
 					}},
 				})
+				g.frag.flow = ""
 			},
 			directive: "result",
 			text:      "v-, err := makeV()\nif err != nil {\nreturn err\n}\nv = v-",
@@ -493,7 +503,7 @@ func TestFindUnparsableIncludesScopesAndSelectChildren(t *testing.T) {
 			// Zero-Base body nodes inherit the parent directive.
 			name: "bare select body attributes to parent",
 			configure: func(g *Gen) {
-				g.nodes = append(g.nodes, &Select{
+				g.Node(&Select{
 					Base:    Base{Origin: Origin{Directive: "provider:select"}},
 					Var:     "v",
 					Iface:   "I",
@@ -510,34 +520,10 @@ func TestFindUnparsableIncludesScopesAndSelectChildren(t *testing.T) {
 			text:      "go go go",
 		},
 		{
-			// The probe must match the scope's return arity and unwind path.
-			name: "scoped probe uses the scope error context",
-			configure: func(g *Gen) {
-				s := g.AddScope("build", token.Position{})
-				s.zeros = []string{"nil"}
-				s.hasCleanup = true
-				s.nodes = append(s.nodes, &Call{
-					Base:    Base{Origin: Origin{Directive: "cleanup"}},
-					Var:     "v",
-					Fn:      "makeV",
-					Err:     ErrReturn,
-					Cleanup: "vClose",
-				})
-				s.nodes = append(s.nodes, &Call{
-					Base: Base{Origin: Origin{Directive: "broken"}},
-					Var:  "w-",
-					Fn:   "makeW",
-					Err:  ErrReturn,
-				})
-			},
-			directive: "broken",
-			text:      "w-, err := makeW()\nif err != nil {\nreturn nil, unwind(err)\n}",
-		},
-		{
 			// Zero-Base results inherit the Select directive.
 			name: "bare select result attributes to parent",
 			configure: func(g *Gen) {
-				g.nodes = append(g.nodes, &Select{
+				g.Node(&Select{
 					Base:    Base{Origin: Origin{Directive: "provider:select"}},
 					Var:     "v",
 					Iface:   "I",

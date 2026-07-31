@@ -89,7 +89,7 @@ func run() int {
 				Name: "summarize",
 				Help: "Summarize the report",
 				Run: func(ctx cli.Context) (err error) {
-					sharedReport, err := buildSharedDb()
+					sharedReport, err := buildReport()
 					if err != nil {
 						return err
 					}
@@ -100,7 +100,7 @@ func run() int {
 				Name: "publish",
 				Help: "Publish the report",
 				Run: func(ctx cli.Context) (err error) {
-					sharedReport, err := buildSharedDb()
+					sharedReport, err := buildReport()
 					if err != nil {
 						return err
 					}
@@ -112,7 +112,7 @@ func run() int {
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
-func buildSharedDb() (*shared.Report, error) {
+func buildReport() (*shared.Report, error) {
 	sharedStoreDb, err := shared.NewStore()
 	if err != nil {
 		return nil, err
