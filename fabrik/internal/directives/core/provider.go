@@ -238,7 +238,7 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		}
 		pr.name = g.SelectedName(nd.obj, pr.ident)
 	}
-	g.BindLazy(nd.returns[0], nd.name, func() (string, diag.Diagnostics) {
+	g.BindLazyAt(nd.returns[0], nd.name, nd.pos, func() (string, diag.Diagnostics) {
 		if !g.InValidationScope() {
 			nd.built = true
 		}

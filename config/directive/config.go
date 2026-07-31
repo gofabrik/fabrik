@@ -163,7 +163,7 @@ func (c *Config) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	ptr := types.NewPointer(nd.named)
-	g.BindLazy(ptr, "", func() (string, diag.Diagnostics) {
+	g.BindLazyAt(ptr, "", nd.Pos(), func() (string, diag.Diagnostics) {
 		v, load := c.LoadNode(nd, g, gen.PhaseConfig)
 		g.Node(load)
 		return v, nil

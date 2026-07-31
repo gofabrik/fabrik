@@ -24,19 +24,20 @@ type Scope struct {
 
 	hasCleanup bool
 
-	idents     map[string]bool
-	reserved   map[string]bool
-	binds      map[string]map[string]string // printed type -> name -> expr
-	bindTypes  map[string]types.Type
-	bindOrder  []string
-	bindSeen   map[string]bool
-	pathExprs  map[string]string
-	singletons map[string]string
-	nodes      []Node
-	running    map[*lazyBind]bool
-	imports    map[string]string // isolated validation aliases
-	ctxVar     string
-	validation bool
+	idents      map[string]bool
+	reserved    map[string]bool
+	binds       map[string]map[string]string // printed type -> name -> expr
+	bindOrigins map[string]map[string]string // printed type -> name -> owner
+	bindTypes   map[string]types.Type
+	bindOrder   []string
+	bindSeen    map[string]bool
+	pathExprs   map[string]string
+	singletons  map[string]string
+	nodes       []Node
+	running     map[*lazyBind]bool
+	imports     map[string]string // isolated validation aliases
+	ctxVar      string
+	validation  bool
 
 	rootExprs   []string
 	resultTypes []string
@@ -100,6 +101,7 @@ func (g *Gen) enterScope(s *Scope, validation bool) {
 		s.reserved[a] = true
 	}
 	s.binds = map[string]map[string]string{}
+	s.bindOrigins = map[string]map[string]string{}
 	s.bindTypes = map[string]types.Type{}
 	s.bindOrder = nil
 	s.bindSeen = map[string]bool{}

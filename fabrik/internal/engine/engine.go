@@ -165,6 +165,7 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 			return nil, err
 		}
 	}
+	diags = append(diags, g.BindConflicts()...)
 	// Validate all lazy bindings before materializing command scopes.
 	if g.ScopeCount() > 0 {
 		scopeDiags, err := guardedScopePass("validation", g.RunValidationPass)
@@ -172,6 +173,9 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 			return nil, err
 		}
 		diags = append(diags, scopeDiags...)
+		// Drain before the fatal gate so a conflict found during
+		// validation stops materialization instead of repeating per scope.
+		diags = append(diags, g.BindConflicts()...)
 		if !diags.HasFatal() {
 			scopeDiags, err = guardedScopePass("materialization", g.MaterializeScopes)
 			if err != nil {
@@ -192,6 +196,8 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 			return nil, err
 		}
 	}
+	// Scope passes register binds too; drain conflicts they recorded.
+	diags = append(diags, g.BindConflicts()...)
 	diags.Sort()
 	if diags.HasFatal() {
 		return &Result{MainDir: res.MainDir, Diags: diags}, nil

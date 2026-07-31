@@ -41,26 +41,28 @@ var phaseLabels = []struct {
 type lazyBind struct {
 	build   func() (string, diag.Diagnostics)
 	owner   string
+	pos     token.Position
 	running bool
 }
 
 // Gen assembles main.gen.go from imports, DI bindings, and phased statements.
 type Gen struct {
-	imports    map[string]string // import path -> alias
-	idents     map[string]bool   // taken identifiers: aliases and vars
-	binds      typeutil.Map      // types.Type -> map[string]string (name -> expr)
-	lazy       typeutil.Map      // types.Type -> map[string]*lazyBind
-	lazyByPath map[string]*lazyBind
-	pathExprs  map[string]string // materialized path bindings, for InstancePath
-	singletons map[string]string // singleton key -> var name
-	nodes      []Node
-	ctxNeeded  bool   // context.Background assignment is needed
-	ctxPkg     string // context import alias, registered at request time
-	ctxVar     string // reserved context identifier, usually "ctx"
-	current    string // active directive
-	module     string // module path of the generated app
-	hints      []func(types.Type) (string, bool)
-	types      map[string]*types.Package // import path -> package, for LookupType
+	imports     map[string]string // import path -> alias
+	idents      map[string]bool   // taken identifiers: aliases and vars
+	binds       typeutil.Map      // types.Type -> map[string]string (name -> expr)
+	bindOrigins typeutil.Map      // types.Type -> map[string]string (name -> owner)
+	lazy        typeutil.Map      // types.Type -> map[string]*lazyBind
+	lazyByPath  map[string]*lazyBind
+	pathExprs   map[string]string // materialized path bindings, for InstancePath
+	singletons  map[string]string // singleton key -> var name
+	nodes       []Node
+	ctxNeeded   bool   // context.Background assignment is needed
+	ctxPkg      string // context import alias, registered at request time
+	ctxVar      string // reserved context identifier, usually "ctx"
+	current     string // active directive
+	module      string // module path of the generated app
+	hints       []func(types.Type) (string, bool)
+	types       map[string]*types.Package // import path -> package, for LookupType
 
 	materializing []string // active lazy-bind stack
 
@@ -83,6 +85,9 @@ type Gen struct {
 
 	bindOrder []string // First appearance determines graph binding ordinals.
 	bindSeen  map[string]bool
+
+	bindConflicts diag.Diagnostics
+	rendered      bool
 }
 
 // New returns an empty Gen.
@@ -275,7 +280,9 @@ func (g *Gen) TypeDisplay(t types.Type) string {
 
 // Bind records expr as the wired value for (t, name).
 func (g *Gen) Bind(t types.Type, name, expr string) {
+	g.checkBindRegistration()
 	t = types.Unalias(t)
+	owner := g.current
 	if sc := g.scope; sc != nil {
 		key := types.TypeString(t, nil)
 		m := sc.binds[key]
@@ -284,10 +291,18 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 			sc.binds[key] = m
 			sc.bindTypes[key] = t
 		}
+		if sc.bindOrigins[key] == nil {
+			sc.bindOrigins[key] = map[string]string{}
+		}
 		if _, dup := m[name]; dup {
-			panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
+			g.recordBindConflict(token.Position{}, fmt.Sprintf(
+				"duplicate bind for %s %q: directive %q conflicts with directive %q",
+				t, name, owner, sc.bindOrigins[key][name],
+			), token.Position{})
+			return
 		}
 		m[name] = expr
+		sc.bindOrigins[key][name] = owner
 		g.recordBindExpr(expr)
 		return
 	}
@@ -296,11 +311,42 @@ func (g *Gen) Bind(t types.Type, name, expr string) {
 		m = map[string]string{}
 		g.binds.Set(t, m)
 	}
+	origins, _ := g.bindOrigins.At(t).(map[string]string)
+	if origins == nil {
+		origins = map[string]string{}
+		g.bindOrigins.Set(t, origins)
+	}
 	if _, dup := m[name]; dup {
-		panic(fmt.Sprintf("gen: duplicate bind for %s %q", t, name))
+		g.recordBindConflict(token.Position{}, fmt.Sprintf(
+			"duplicate bind for %s %q: directive %q conflicts with directive %q",
+			t, name, owner, origins[name],
+		), token.Position{})
+		return
 	}
 	m[name] = expr
+	origins[name] = owner
 	g.recordBindExpr(expr)
+}
+
+// BindConflicts returns and clears binding collisions accumulated during registration.
+func (g *Gen) BindConflicts() diag.Diagnostics {
+	ds := g.bindConflicts
+	g.bindConflicts = nil
+	return ds
+}
+
+func (g *Gen) recordBindConflict(pos token.Position, message string, first token.Position) {
+	help := ""
+	if first.IsValid() {
+		help = fmt.Sprintf("first declared at %s", first)
+	}
+	g.bindConflicts.Error(pos, message, help)
+}
+
+func (g *Gen) checkBindRegistration() {
+	if g.rendered {
+		panic("gen: binding registered after Render")
+	}
 }
 
 // CommandFunc describes a generated CLI command and its dependency scope.
@@ -387,20 +433,32 @@ func (g *Gen) CommandCount() int { return len(g.commandFuncs) }
 
 // BindLazy registers a value that is emitted on first resolution.
 func (g *Gen) BindLazy(t types.Type, name string, build func() (string, diag.Diagnostics)) {
+	g.BindLazyAt(t, name, token.Position{}, build)
+}
+
+// BindLazyAt is BindLazy carrying the registering declaration's
+// position for collision diagnostics.
+func (g *Gen) BindLazyAt(t types.Type, name string, pos token.Position, build func() (string, diag.Diagnostics)) {
+	g.checkBindRegistration()
 	t = types.Unalias(t)
 	m, _ := g.lazy.At(t).(map[string]*lazyBind)
 	if m == nil {
 		m = map[string]*lazyBind{}
 		g.lazy.Set(t, m)
 	}
-	if _, dup := m[name]; dup {
-		panic(fmt.Sprintf("gen: duplicate lazy bind for %s %q", t, name))
+	if first, dup := m[name]; dup {
+		g.recordBindConflict(pos, fmt.Sprintf(
+			"duplicate lazy bind for %s %q: directive %q conflicts with directive %q",
+			t, name, g.current, first.owner,
+		), first.pos)
+		return
 	}
-	m[name] = &lazyBind{build: build, owner: g.current}
+	m[name] = &lazyBind{build: build, owner: g.current, pos: pos}
 }
 
 // BindPath publishes an expression while its lazy path binding is materializing.
 func (g *Gen) BindPath(path, expr string) {
+	g.checkBindRegistration()
 	if sc := g.scope; sc != nil {
 		sc.pathExprs[path] = expr
 		g.recordBindExpr(expr)
@@ -412,8 +470,13 @@ func (g *Gen) BindPath(path, expr string) {
 
 // BindLazyPath registers a lazy binding matched by a printed type path.
 func (g *Gen) BindLazyPath(path string, build func() (string, diag.Diagnostics)) {
-	if _, dup := g.lazyByPath[path]; dup {
-		panic(fmt.Sprintf("gen: duplicate lazy bind for path %s", path))
+	g.checkBindRegistration()
+	if first, dup := g.lazyByPath[path]; dup {
+		g.recordBindConflict(token.Position{}, fmt.Sprintf(
+			"duplicate lazy bind for path %s: directive %q conflicts with directive %q",
+			path, g.current, first.owner,
+		), first.pos)
+		return
 	}
 	g.lazyByPath[path] = &lazyBind{build: build, owner: g.current}
 }
@@ -709,6 +772,7 @@ func (g *Gen) HasProviderBinding(t types.Type, name string) bool {
 
 // Render assembles and formats main.gen.go.
 func (g *Gen) Render() ([]byte, error) {
+	g.rendered = true
 	if err := validateCommandMetadata(g.commandFuncs, g.commandGroups); err != nil {
 		return nil, err
 	}
