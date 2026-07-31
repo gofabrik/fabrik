@@ -166,23 +166,24 @@ func WireOptions(dir string, overlay map[string][]byte, opts Options) (*Result, 
 		}
 	}
 	diags = append(diags, g.BindConflicts()...)
-	// Validate all lazy bindings before materializing command scopes.
+	// Scopes materialize first so demand usage exists; the validation
+	// pass then sweeps only the bindings no flow reached. Prior fatal
+	// diagnostics skip materialization, leaving the sweep complete.
 	if g.ScopeCount() > 0 {
+		if !diags.HasFatal() {
+			scopeDiags, err := guardedScopePass("materialization", g.MaterializeScopes)
+			if err != nil {
+				return nil, err
+			}
+			diags = append(diags, scopeDiags...)
+			diags = append(diags, g.BindConflicts()...)
+		}
 		scopeDiags, err := guardedScopePass("validation", g.RunValidationPass)
 		if err != nil {
 			return nil, err
 		}
 		diags = append(diags, scopeDiags...)
-		// Drain before the fatal gate so a conflict found during
-		// validation stops materialization instead of repeating per scope.
 		diags = append(diags, g.BindConflicts()...)
-		if !diags.HasFatal() {
-			scopeDiags, err = guardedScopePass("materialization", g.MaterializeScopes)
-			if err != nil {
-				return nil, err
-			}
-			diags = append(diags, scopeDiags...)
-		}
 	}
 	for _, d := range directives {
 		v, ok := d.(gen.Validator)

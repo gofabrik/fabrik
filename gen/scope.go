@@ -120,8 +120,9 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, s := range g.scopes {
 		g.enterScope(s, false)
-		for _, fn := range g.prologues {
-			// Validation already reports prologue diagnostics; replay only emits code.
+		for i, fn := range g.prologues {
+			g.recordDemand(demandKey{kind: demandCallback, key: "prologue", ord: i})
+			// Validation reports prologue diagnostics; replay only emits code.
 			fn()
 		}
 		for _, root := range s.roots {
@@ -138,8 +139,9 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 			s.resultTypes = append(s.resultTypes, g.TypeExpr(root.Type))
 			s.zeros = append(s.zeros, zeroExpr(g, root.Type))
 		}
-		for _, fn := range g.epilogues {
-			ds = append(ds, fn()...)
+		for i, fn := range g.epilogues {
+			g.recordDemand(demandKey{kind: demandCallback, key: "epilogue", ord: i})
+			ds = append(ds, g.reportCallbackDiags(i, fn())...)
 		}
 		for _, n := range s.nodes {
 			if c, ok := n.(*Call); ok && c.Cleanup != "" {
@@ -182,6 +184,10 @@ func (g *Gen) RunValidationPass() diag.Diagnostics {
 		return entries[i].name < entries[j].name
 	})
 	for _, e := range entries {
+		if g.demanded(demandKey{kind: demandType, key: e.key, name: e.name}) {
+			// Real materialization already validated it.
+			continue
+		}
 		_, eds, _ := g.Instance(e.t, e.name)
 		ds = append(ds, eds...)
 	}
@@ -192,11 +198,14 @@ func (g *Gen) RunValidationPass() diag.Diagnostics {
 	}
 	sort.Strings(paths)
 	for _, p := range paths {
+		if g.demanded(demandKey{kind: demandPath, key: p}) {
+			continue
+		}
 		_, pds, _ := g.InstancePath(p)
 		ds = append(ds, pds...)
 	}
-	for _, fn := range g.epilogues {
-		ds = append(ds, fn()...)
+	for i, fn := range g.epilogues {
+		ds = append(ds, g.reportCallbackDiags(i, fn())...)
 	}
 	return ds
 }

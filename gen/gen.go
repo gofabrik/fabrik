@@ -43,6 +43,11 @@ type lazyBind struct {
 	owner   string
 	pos     token.Position
 	running bool
+
+	// A build that returned fatal diagnostics is cached so later flows
+	// reuse its expression without re-running or re-reporting.
+	diagnosed     bool
+	diagnosedExpr string
 }
 
 // Gen assembles main.gen.go from imports, DI bindings, and phased statements.
@@ -87,7 +92,11 @@ type Gen struct {
 	bindSeen  map[string]bool
 
 	bindConflicts diag.Diagnostics
+	conflictSeen  map[string]bool // survives BindConflicts drains
 	rendered      bool
+
+	demands      map[demandKey]map[string]bool
+	callbackSeen map[string]bool // epilogue diagnostics already reported
 }
 
 // New returns an empty Gen.
@@ -340,6 +349,17 @@ func (g *Gen) recordBindConflict(pos token.Position, message string, first token
 	if first.IsValid() {
 		help = fmt.Sprintf("first declared at %s", first)
 	}
+	// A build re-run by another scope replays the same registration;
+	// one logical conflict reports once, across drains. A different
+	// declaration differs in position or help and stays distinct.
+	key := message + "\x00" + pos.String() + "\x00" + help
+	if g.conflictSeen[key] {
+		return
+	}
+	if g.conflictSeen == nil {
+		g.conflictSeen = map[string]bool{}
+	}
+	g.conflictSeen[key] = true
 	g.bindConflicts.Error(pos, message, help)
 }
 
@@ -497,6 +517,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 				return expr, nil, true
 			}
 			if lb, ok := g.lazyByPath[key]; ok {
+				g.recordDemand(demandKey{kind: demandPath, key: key})
 				expr, ds, ok := g.materialize(t, name, lb)
 				if ok && len(ds) == 0 {
 					sc.pathExprs[key] = expr
@@ -507,6 +528,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 		}
 		if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
 			if lb, ok := m[name]; ok {
+				g.recordDemand(demandKey{kind: demandType, key: key, name: name})
 				return g.materialize(t, name, lb)
 			}
 		}
@@ -524,6 +546,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 			return expr, nil, true
 		}
 		if lb, ok := g.lazyByPath[path]; ok {
+			g.recordDemand(demandKey{kind: demandPath, key: path})
 			expr, ds, ok := g.materialize(t, name, lb)
 			if ok && len(ds) == 0 {
 				g.pathExprs[path] = expr
@@ -534,6 +557,7 @@ func (g *Gen) Instance(t types.Type, name string) (string, diag.Diagnostics, boo
 	}
 	if m, _ := g.lazy.At(t).(map[string]*lazyBind); m != nil {
 		if lb, ok := m[name]; ok {
+			g.recordDemand(demandKey{kind: demandType, key: types.TypeString(t, nil), name: name})
 			return g.materialize(t, name, lb)
 		}
 	}
@@ -573,6 +597,10 @@ func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok
 	if !ok {
 		return "", nil, false
 	}
+	g.recordDemand(demandKey{kind: demandPath, key: path})
+	if lb.diagnosed {
+		return lb.diagnosedExpr, nil, true
+	}
 	if g.lazyRunning(lb) {
 		return "", diag.Diagnostics{g.cycleDiag(path)}, false
 	}
@@ -590,9 +618,19 @@ func (g *Gen) materializePath(path string) (expr string, ds diag.Diagnostics, ok
 			expr = ""
 			ok = false
 			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
+			if g.scope != nil && !g.InValidationScope() {
+				lb.diagnosed = true
+				lb.diagnosedExpr = ""
+			}
 		}
 	}()
 	expr, ds = lb.build()
+	// Scope passes report a broken path once across flows; direct calls
+	// stay retryable (a diagnosed path build is not a cycle).
+	if ds.HasFatal() && g.scope != nil && !g.InValidationScope() {
+		lb.diagnosed = true
+		lb.diagnosedExpr = expr
+	}
 	if len(ds) == 0 {
 		g.BindPath(path, expr)
 	}
@@ -615,6 +653,13 @@ func (g *Gen) setLazyRunning(lb *lazyBind, v bool) {
 }
 
 func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string, ds diag.Diagnostics, ok bool) {
+	if lb.diagnosed {
+		// Same contract a same-flow consumer gets from the bind cache.
+		if !g.typeBound(t, name) {
+			g.Bind(t, name, lb.diagnosedExpr)
+		}
+		return lb.diagnosedExpr, nil, true
+	}
 	// Avoid adding imports while formatting cycle diagnostics.
 	key := types.TypeString(t, func(p *types.Package) string { return p.Name() })
 	chainKey := key
@@ -638,9 +683,19 @@ func (g *Gen) materialize(t types.Type, name string, lb *lazyBind) (expr string,
 			expr = ""
 			ok = false
 			ds.Error(token.Position{}, lazyPanicMessage(lb.owner, p), "")
+			// Panics never reach the bind cache, so only the scope passes
+			// need the cross-flow dedup; direct consumers retry as before.
+			if g.scope != nil && !g.InValidationScope() {
+				lb.diagnosed = true
+				lb.diagnosedExpr = ""
+			}
 		}
 	}()
 	expr, ds = lb.build()
+	if ds.HasFatal() && !g.InValidationScope() {
+		lb.diagnosed = true
+		lb.diagnosedExpr = expr
+	}
 	// BindPath may populate the type-keyed cache during the build.
 	if !g.typeBound(t, name) {
 		g.Bind(t, name, expr)
