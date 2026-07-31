@@ -29,8 +29,17 @@ func Deploy(ctx cli.Context, kind string) error { return nil }
 //fabrik:cli:command
 //fabrik:cli:flag name=dry type=string
 func Clean(ctx cli.Context, dry string) error { return nil }
+
+//fabrik:inject ctx name=fast
+//fabrik:cli:command
+func Reset(ctx cli.Context) error { return nil }
+
+//fabrik:provider name=fast
+func NewFastKind() string { return "fast" }
 -- want/diags --
 error: shared/shared.go:10:30: parameter "kind" matches CLI input "kind" and a provider for string
   help: rename the parameter or the input; wiring never resolves this silently
 error: shared/shared.go:15:29: inject selector "dry" is a CLI input on Clean, not a dependency
   help: CLI values come from flags and arguments; only dependency parameters take named providers
+error: shared/shared.go:17:1: context parameters receive the application context
+  help: remove the mapping; context is not provider-resolved

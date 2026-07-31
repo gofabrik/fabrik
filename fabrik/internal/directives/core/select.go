@@ -269,7 +269,7 @@ func checkDefaultCase(grp *selGroup, kf cfgdir.Key, impls []*node) diag.Diagnost
 
 // resolveCaseParams accepts only context and config parameters.
 func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node, keyVar string, body *[]gen.Node) ([]string, diag.Diagnostics) {
-	return resolveArgs(g, p.cfg, nd.params,
+	return resolveArgs(g, nd.params,
 		func(pr param) (string, diag.Diagnostics, bool) {
 			cn := p.cfg.NodeFor(pr.t)
 			if cn == nil {
@@ -282,9 +282,9 @@ func (p *Provider) resolveCaseParams(g *gen.Gen, nd *node, keyNode *cfgdir.Node,
 			*body = append(*body, load)
 			return v, nil, true
 		},
-		func(param) (string, string, bool) {
+		func(pr param) (string, string) {
 			return "case provider parameters must be //fabrik:config structs or context.Context",
-				"construct other dependencies inside the provider, so unselected implementations cost nothing", false
+				missingHelp(g, p.cfg, pr.t, "construct other dependencies inside the provider, so unselected implementations cost nothing")
 		})
 }
 

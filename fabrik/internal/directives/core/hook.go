@@ -159,7 +159,7 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	emit := func() diag.Diagnostics {
 		// Config aliases resolve only after all config registrations are checked.
 		seenConfigs := map[string]bool{}
-		args, ds := resolveArgs(g, h.cfg, nd.params,
+		args, ds := resolveArgs(g, nd.params,
 			func(pr param) (string, diag.Diagnostics, bool) {
 				ct := cfgdir.Canonical(pr.t)
 				if !h.cfg.IsConfig(ct) {
@@ -175,9 +175,9 @@ func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 				seenConfigs[key] = true
 				return g.Instance(ct, "")
 			},
-			func(param) (string, string, bool) {
+			func(pr param) (string, string) {
 				return "a setup wire hook's parameters are context.Context then //fabrik:config structs; providers do not exist yet",
-					"construct the resource in a //fabrik:provider and inject it into a command", false
+					missingHelp(g, h.cfg, pr.t, "construct the resource in a //fabrik:provider and inject it into a command")
 			})
 		g.Node(&gen.Call{
 			// Scoped replay runs under the consuming directive; name the

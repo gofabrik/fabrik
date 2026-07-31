@@ -56,5 +56,5 @@ error: store/store.go:13:1: //fabrik:inject db has no effect on this declaration
   help: no generated wiring resolves this declaration by name
 error: store/store.go:16:1: //fabrik:inject DB has no effect on this declaration
   help: no generated wiring resolves this declaration by name
-error: store/store.go:23:1: //fabrik:inject ctx has no effect on this declaration
-  help: no generated wiring resolves this declaration by name
+error: store/store.go:23:1: context parameters receive the application context
+  help: remove the mapping; context is not provider-resolved

@@ -126,12 +126,11 @@ func (g *Gen) MaterializeScopes() diag.Diagnostics {
 			expr, rds, ok := g.Instance(root.Type, root.Name)
 			ds = append(ds, rds...)
 			if !ok && len(rds) == 0 {
-				if msg, help, named := g.MissingBinding(root.Type, root.Name); named {
-					ds.Error(s.pos, msg, help)
-				} else {
-					ds.Error(s.pos, "no provider for "+g.TypeExpr(root.Type),
-						"add a //fabrik:provider returning "+g.TypeExpr(root.Type))
-				}
+				msg, help := g.MissingBinding(root.Type, root.Name, func() (string, string) {
+					return "no provider for " + g.TypeExpr(root.Type),
+						"add a //fabrik:provider returning " + g.TypeExpr(root.Type)
+				})
+				ds.Error(s.pos, msg, help)
 			}
 			s.rootExprs = append(s.rootExprs, expr)
 			s.resultTypes = append(s.resultTypes, g.TypeExpr(root.Type))

@@ -78,12 +78,17 @@ func TestBindingNamesAndMissingBinding(t *testing.T) {
 	if names := g.BindingNames(ptr); len(names) != 0 {
 		t.Fatalf("BindingNames on unbound type = %v", names)
 	}
-	if _, _, ok := g.MissingBinding(ptr, ""); ok {
-		t.Fatal("unnamed miss with no bindings must leave the caller's text")
+	fallback := func() (string, string) { return "caller msg", "caller help" }
+	noFallback := func() (string, string) {
+		t.Fatal("fallback called for a named miss")
+		return "", ""
 	}
-	msg, help, ok := g.MissingBinding(ptr, "replica")
-	if !ok || msg != `no provider for *store.DB named "replica"` {
-		t.Fatalf("named miss with no bindings: %q, %v", msg, ok)
+	if msg, help := g.MissingBinding(ptr, "", fallback); msg != "caller msg" || help != "caller help" {
+		t.Fatalf("unnamed miss with no bindings must call the fallback: %q, %q", msg, help)
+	}
+	msg, help := g.MissingBinding(ptr, "replica", noFallback)
+	if msg != `no provider for *store.DB named "replica"` {
+		t.Fatalf("named miss with no bindings: %q", msg)
 	}
 	if help != "add a //fabrik:provider name=replica returning *store.DB" {
 		t.Fatalf("named miss help = %q", help)
@@ -96,21 +101,21 @@ func TestBindingNamesAndMissingBinding(t *testing.T) {
 	if names := g.BindingNames(ptr); len(names) != 2 || names[0] != "" || names[1] != "audit" {
 		t.Fatalf("BindingNames = %v", names)
 	}
-	_, help, ok = g.MissingBinding(ptr, "replica")
-	if !ok || help != "known names: (unnamed), audit" {
-		t.Fatalf("named miss help with candidates = %q, %v", help, ok)
+	_, help = g.MissingBinding(ptr, "replica", noFallback)
+	if help != "known names: (unnamed), audit" {
+		t.Fatalf("named miss help with candidates = %q", help)
 	}
 
-	if _, _, ok := g.MissingBinding(ptr, ""); ok {
-		t.Fatal("unnamed miss with an unnamed binding present must leave the caller's text")
+	if msg, help := g.MissingBinding(ptr, "", fallback); msg != "caller msg" || help != "caller help" {
+		t.Fatalf("unnamed miss with an unnamed binding present must call the fallback: %q, %q", msg, help)
 	}
 
 	g2 := New()
 	g2.SetDirective("provider")
 	g2.BindLazy(ptr, "warm", func() (string, diag.Diagnostics) { return "w", nil })
-	msg, help, ok = g2.MissingBinding(ptr, "")
-	if !ok || msg != "type *store.DB has only named providers" {
-		t.Fatalf("named-only miss msg = %q, %v", msg, ok)
+	msg, help = g2.MissingBinding(ptr, "", noFallback)
+	if msg != "type *store.DB has only named providers" {
+		t.Fatalf("named-only miss msg = %q", msg)
 	}
 	if help != "known names: warm; select one with //fabrik:inject" {
 		t.Fatalf("named-only miss help = %q", help)
@@ -128,8 +133,11 @@ func TestBindingNamesPathBinding(t *testing.T) {
 	if names := g.BindingNames(ptr); len(names) != 1 || names[0] != "" {
 		t.Fatalf("BindingNames with path binding = %v", names)
 	}
-	_, help, ok := g.MissingBinding(ptr, "backup")
-	if !ok || help != "known names: (unnamed)" {
-		t.Fatalf("path-bound named miss help = %q, %v", help, ok)
+	_, help := g.MissingBinding(ptr, "backup", func() (string, string) {
+		t.Fatal("fallback called for a named miss")
+		return "", ""
+	})
+	if help != "known names: (unnamed)" {
+		t.Fatalf("path-bound named miss help = %q", help)
 	}
 }

@@ -461,20 +461,15 @@ func resolveDeps(g *gen.Gen, pos token.Position, obj types.Object, deps []dep) (
 	var ds diag.Diagnostics
 	out := make([]string, 0, len(deps))
 	for _, d := range deps {
-		name := ""
-		if n, ok := g.InjectName(obj, d.ident); ok {
-			name = n
-			g.ConsumeInject(obj, d.ident)
-		}
+		name := g.SelectedName(obj, d.ident)
 		e, dds, ok := g.Instance(d.t, name)
 		ds = append(ds, dds...)
 		if !ok {
-			if msg, help, named := g.MissingBinding(d.t, name); named {
-				ds.Error(pos, msg, help)
-			} else {
-				ds.Error(pos, fmt.Sprintf("no provider for %s", g.TypeExpr(d.t)),
-					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(d.t)))
-			}
+			msg, help := g.MissingBinding(d.t, name, func() (string, string) {
+				return fmt.Sprintf("no provider for %s", g.TypeExpr(d.t)),
+					fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(d.t))
+			})
+			ds.Error(pos, msg, help)
 			out = append(out, "nil")
 			continue
 		}

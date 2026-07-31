@@ -168,23 +168,18 @@ func (m *Middleware) expr(g *gen.Gen, nd *mwNode) (string, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	args := make([]string, 0, len(nd.params))
 	for _, pr := range nd.params {
-		name := ""
-		if n, ok := g.InjectName(nd.obj, pr.ident); ok {
-			name = n
-			g.ConsumeInject(nd.obj, pr.ident)
-		}
+		name := g.SelectedName(nd.obj, pr.ident)
 		expr, ids, ok := g.Instance(pr.t, name)
 		ds = append(ds, ids...)
 		if !ok && len(ids) == 0 {
-			if msg, help, named := g.MissingBinding(pr.t, name); named {
-				ds.Error(pr.pos, msg, help)
-			} else {
+			msg, help := g.MissingBinding(pr.t, name, func() (string, string) {
 				help := "declare a //fabrik:provider for it"
 				if h, hinted := g.MissingHint(pr.t); hinted {
 					help = h
 				}
-				ds.Error(pr.pos, "no provider or binding supplies this middleware constructor parameter", help)
-			}
+				return "no provider or binding supplies this middleware constructor parameter", help
+			})
+			ds.Error(pr.pos, msg, help)
 		}
 		args = append(args, expr)
 	}

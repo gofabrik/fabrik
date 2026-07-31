@@ -49,25 +49,19 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 			}
 			continue
 		}
-		name, mapped := g.InjectName(named.Obj(), f.Name())
-		if mapped {
-			g.ConsumeInject(named.Obj(), f.Name())
-		}
+		name := g.SelectedName(named.Obj(), f.Name())
 		expr, eds, ok := g.Instance(f.Type(), name)
 		if !ok {
 			if len(eds) == 0 {
-				if msg, help, named := g.MissingBinding(f.Type(), name); named {
-					ds.Error(fset.Position(f.Pos()),
-						fmt.Sprintf("%s (field %s of %s)", msg, f.Name(), owner), help)
-				} else {
+				msg, help := g.MissingBinding(f.Type(), name, func() (string, string) {
 					help, hinted := g.MissingHint(f.Type())
 					if !hinted {
 						help = fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(f.Type()))
 					}
-					ds.Error(fset.Position(f.Pos()),
-						fmt.Sprintf("no provider for %s (field %s of %s)", g.TypeExpr(f.Type()), f.Name(), owner),
-						help)
-				}
+					return fmt.Sprintf("no provider for %s", g.TypeExpr(f.Type())), help
+				})
+				ds.Error(fset.Position(f.Pos()),
+					fmt.Sprintf("%s (field %s of %s)", msg, f.Name(), owner), help)
 			}
 			expr = "nil"
 		}

@@ -167,8 +167,8 @@ func (i *Inject) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (*Inject) Emit(any, *gen.Gen) diag.Diagnostics { return nil }
 
-// Mappings returns accepted declaration mappings.
-func (i *Inject) Mappings() map[types.Object]map[string]string {
+// InjectMappings returns accepted declaration mappings.
+func (i *Inject) InjectMappings() map[types.Object]map[string]string {
 	table := map[types.Object]map[string]string{}
 	for _, nd := range i.nodes {
 		if table[nd.obj] == nil {
@@ -191,6 +191,11 @@ func (i *Inject) Validate(g *gen.Gen) diag.Diagnostics {
 			continue
 		}
 		if g.InjectPending(nd.obj, nd.selector) {
+			if isContextSelector(nd.obj, nd.selector) {
+				ds.Error(nd.pos, "context parameters receive the application context",
+					"remove the mapping; context is not provider-resolved")
+				continue
+			}
 			ds.Error(nd.pos, fmt.Sprintf("//fabrik:inject %s has no effect on this declaration", nd.selector),
 				"no generated wiring resolves this declaration by name")
 		}
@@ -206,6 +211,29 @@ func providerOwned(g *gen.Gen, t types.Type) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// cliContextPath avoids a dependency from core on the CLI directive package.
+const cliContextPath = "github.com/gofabrik/fabrik/cli.Context"
+
+// isContextSelector reports whether selector names an application-context parameter.
+func isContextSelector(obj types.Object, selector string) bool {
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+	for p := range sig.Params().Len() {
+		v := sig.Params().At(p)
+		if v.Name() != selector {
+			continue
+		}
+		return gen.IsContext(v.Type()) || types.TypeString(types.Unalias(v.Type()), nil) == cliContextPath
 	}
 	return false
 }
