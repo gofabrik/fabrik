@@ -74,10 +74,40 @@ Commit `main.gen.go` so plain `go build` works without fabrik installed.
 Use `fabrik wire -check` in CI to verify it is current.
 
 `-comments` and `--graph` are one-shot inspection outputs: a later
-`fabrik wire`, `run`, or `build` regenerates `main.gen.go` at the default
+`fabrik wire`, `run`, or `build` regenerates `main.gen.go` at the configured
 comment level and leaves stale graph sidecars behind. Delete the sidecars or
 keep them out of version control (scaffolded apps ignore them); rerun
 `fabrik wire --graph` for a fresh view.
+
+## Project configuration
+
+Put `fabrik.yaml` beside the module's `go.mod`. Generation settings live under
+`generate`:
+
+```yaml
+generate:
+  emit: standalone
+  split: off
+  comments: sections
+```
+
+| Field | Values and default | Meaning |
+| --- | --- | --- |
+| `emit` | `standalone` or `embedded`; default `standalone` | Standalone output generates the executable package. Embedded output generates entrypoints for a host package. |
+| `dir` | Path; no default | Embedded output directory relative to the module root. Required when `emit` is `embedded`. |
+| `package` | Go package name; defaults to the base name of `dir` | Package name for embedded output. |
+| `split` | `off` or `fragment`; default `off` | `off` writes one generated file. `fragment` writes extracted regions to separate generated files. |
+| `buildtag` | Build tag; no default | Adds the build constraint to generated files and passes the tag through `fabrik run` and `fabrik build`. |
+| `entrypoints` | List of command paths; default all commands | Selects the command entrypoints exported by embedded output. |
+| `comments` | `off`, `sections`, or `full`; default `sections` | Controls comments in generated files. |
+
+`fabrik wire -comments` overrides `generate.comments` for that invocation.
+
+Embedded output regenerates only through `fabrik wire` and `fabrik wire
+-check`; its primary file is `fabrik.gen.go`, and `fabrik run` and
+`fabrik build` reject embedded modules because the host project builds and
+runs them. Under `split: fragment` the output is a file set tracked by
+`fabrik.manifest.json`.
 
 ## Directives
 
