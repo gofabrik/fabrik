@@ -11,8 +11,16 @@ import (
 type Arg struct {
 	Text string
 	Col  int // byte offset within Annotation.Args
-	// quoteAt is the opening quote offset, or -1, for option-value diagnostics.
-	quoteAt int
+}
+
+// lexToken is an Arg plus its source mapping, private to the lexer so
+// Arg stays comparable.
+type lexToken struct {
+	Text string
+	Col  int
+	// srcCols[i] is the offset within Annotation.Args of the byte that
+	// produced Text[i]; quotes and escapes make the mapping non-contiguous.
+	srcCols []int
 }
 
 // Args contains positional arguments and key=value options.
@@ -32,10 +40,19 @@ func ParseArgs(a Annotation, m Meta) (Args, diag.Diagnostics) {
 		known[s.Key] = s
 	}
 
+	toks, openQuote := lexArgs(a.Args)
+	if openQuote >= 0 {
+		ds.Error(a.ArgPos(openQuote), "unterminated quote",
+			`close the quoted value, or write \" for a quote inside it`)
+	}
+
 	inOptions := false
-	for _, tok := range lexArgs(a.Args) {
+	for _, tok := range toks {
 		key, val, isOption := cutOption(tok)
 		switch {
+		case isOption && !isIdent(key):
+			inOptions = true
+			ds.Error(a.ArgPos(tok.Col), fmt.Sprintf("invalid option key %q for %s", key, directive), knownOptionsHelp(m))
 		case isOption:
 			inOptions = true
 			spec, ok := known[key]
@@ -60,7 +77,7 @@ func ParseArgs(a Annotation, m Meta) (Args, diag.Diagnostics) {
 					fmt.Sprintf("%s takes only %s", directive, posNames(m)))
 			}
 		default:
-			out.Pos = append(out.Pos, tok)
+			out.Pos = append(out.Pos, Arg{Text: tok.Text, Col: tok.Col})
 		}
 	}
 
@@ -81,20 +98,24 @@ func ParseArgs(a Annotation, m Meta) (Args, diag.Diagnostics) {
 	return out, ds
 }
 
-// cutOption treats key=value as an option only when key is an identifier.
-func cutOption(tok Arg) (key string, val Arg, ok bool) {
+// cutOption accepts key=value only for identifier keys and reports the value's source offset.
+func cutOption(tok lexToken) (key string, val Arg, ok bool) {
 	i := strings.IndexByte(tok.Text, '=')
-	if i <= 0 || !isIdent(tok.Text[:i]) {
+	if i <= 0 || !isIdentChars(tok.Text[:i]) {
 		return "", Arg{}, false
 	}
-	col := tok.Col + i + 1
-	if tok.quoteAt == i+1 {
-		col++ // Point past the opening quote.
+	col := tok.srcCols[i] + 1
+	if i+1 < len(tok.Text) {
+		col = tok.srcCols[i+1]
 	}
-	return tok.Text[:i], Arg{Text: tok.Text[i+1:], Col: col, quoteAt: -1}, true
+	return tok.Text[:i], Arg{Text: tok.Text[i+1:], Col: col}, true
 }
 
 func isIdent(s string) bool {
+	return isIdentChars(s) && (s[0] < '0' || s[0] > '9')
+}
+
+func isIdentChars(s string) bool {
 	for i := 0; i < len(s); i++ {
 		b := s[i]
 		if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' {
@@ -143,40 +164,45 @@ func exampleHelp(m Meta) string {
 	return "example: " + m.Example
 }
 
-// lexArgs splits whitespace-separated args, preserving quoted spans.
-func lexArgs(s string) []Arg {
-	var out []Arg
-	var cur strings.Builder
+// lexArgs splits on unquoted whitespace, removes quotes, and recognizes \" and \\ in quoted
+// spans. It preserves source offsets and returns an unmatched quote offset with the final token.
+func lexArgs(s string) ([]lexToken, int) {
+	var out []lexToken
+	var cur []byte
+	var cols []int
 	start := -1
-	quoteAt := -1
-	inQuote := false
+	openQuote := -1
 	for i := 0; i < len(s); i++ {
 		b := s[i]
 		switch {
+		case b == '\\' && openQuote >= 0 && i+1 < len(s) && (s[i+1] == '"' || s[i+1] == '\\'):
+			i++
+			cur = append(cur, s[i])
+			cols = append(cols, i)
 		case b == '"':
-			inQuote = !inQuote
 			if start < 0 {
 				start = i
 			}
-			if quoteAt < 0 {
-				quoteAt = i - start
+			if openQuote < 0 {
+				openQuote = i
+			} else {
+				openQuote = -1
 			}
-		case (b == ' ' || b == '\t') && !inQuote:
+		case (b == ' ' || b == '\t') && openQuote < 0:
 			if start >= 0 {
-				out = append(out, Arg{Text: cur.String(), Col: start, quoteAt: quoteAt})
-				cur.Reset()
-				start = -1
-				quoteAt = -1
+				out = append(out, lexToken{Text: string(cur), Col: start, srcCols: cols})
+				cur, cols, start = nil, nil, -1
 			}
 		default:
 			if start < 0 {
 				start = i
 			}
-			cur.WriteByte(b)
+			cur = append(cur, b)
+			cols = append(cols, i)
 		}
 	}
 	if start >= 0 {
-		out = append(out, Arg{Text: cur.String(), Col: start, quoteAt: quoteAt})
+		out = append(out, lexToken{Text: string(cur), Col: start, srcCols: cols})
 	}
-	return out
+	return out, openQuote
 }

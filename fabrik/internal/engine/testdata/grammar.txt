@@ -1,4 +1,5 @@
-Grammar errors: counts, unknown method, bad path, unknown option, empty name.
+Grammar errors: counts, unknown method, bad path, unknown option, empty name,
+unterminated quote, digit-led option key.
 -- go.mod --
 module app
 
@@ -40,6 +41,12 @@ func Empty(w http.ResponseWriter, r *http.Request) {}
 
 //fabrik:job name=x
 func Unknown(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /x middleware="auth
+func OpenQuote(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /x 123=bar
+func DigitKey(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
 error: web/web.go:5:1: //fabrik:http requires PATH after METHOD (got only "GET")
   help: example: //fabrik:http GET /login
@@ -59,3 +66,7 @@ error: web/web.go:26:1: empty directive after "fabrik:"
   help: expected one of: assets, cli:argument, cli:command, cli:example, cli:flag, cli:group, cli:middleware, cli:root, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, inject, job, migrations, provider, provider:select, templates, templates:func, web
 error: web/web.go:29:1: handler Unknown has the wrong signature
   help: want func(ctx context.Context, deps..., msg T) error
+error: web/web.go:32:33: unterminated quote
+  help: close the quoted value, or write \" for a quote inside it
+error: web/web.go:35:22: invalid option key "123" for //fabrik:http
+  help: known options: middleware=
