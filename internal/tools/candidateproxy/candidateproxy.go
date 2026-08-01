@@ -4,7 +4,8 @@ package candidateproxy
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -107,7 +108,7 @@ func writeProxyFiles(outDir, modPath, version string, zipBytes []byte) error {
 	if err != nil {
 		return err
 	}
-	info, err := json.Marshal(struct{ Version, Time string }{version, fixedInfoTime})
+	info, err := json.Marshal(struct{ Version, Time string }{version, fixedInfoTime}, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return err
 	}

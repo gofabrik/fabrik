@@ -7,7 +7,8 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -48,8 +49,10 @@ type Codec interface {
 
 type jsonCodec struct{}
 
-func (jsonCodec) Marshal(v any) ([]byte, error)      { return json.Marshal(v) }
-func (jsonCodec) Unmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
+func (jsonCodec) Marshal(v any) ([]byte, error) { return json.Marshal(v, jsonv1.DefaultOptionsV1()) }
+func (jsonCodec) Unmarshal(data []byte, v any) error {
+	return json.Unmarshal(data, v, jsonv1.DefaultOptionsV1())
+}
 
 // Cache is a concurrency-safe typed view over a Store with optional
 // key namespacing and deduplicated loads.

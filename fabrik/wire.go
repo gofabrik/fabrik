@@ -1,7 +1,9 @@
 package main
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"flag"
 	"fmt"
 	"os"
@@ -186,7 +188,7 @@ func relTo(dir, path string) string {
 }
 
 func writeGraphSidecars(mainDir string, graph *gen.Graph) ([]string, error) {
-	data, err := json.MarshalIndent(graph, "", "  ")
+	data, err := json.Marshal(graph, jsonv1.DefaultOptionsV1(), json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, err
 	}

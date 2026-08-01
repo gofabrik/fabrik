@@ -1,7 +1,8 @@
 package jobs
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"math/rand/v2"
 	"time"
 )
@@ -76,7 +77,7 @@ func encodeBackoff(b Backoff) ([]byte, error) {
 	default:
 		return nil, ErrBackoffNotSerializable
 	}
-	return json.Marshal(backoffSpec{Type: "exponential", Base: exp.Base, Max: exp.Max, Jitter: exp.Jitter})
+	return json.Marshal(backoffSpec{Type: "exponential", Base: exp.Base, Max: exp.Max, Jitter: exp.Jitter}, jsonv1.DefaultOptionsV1())
 }
 
 // decodeBackoff reconstructs a backoff from its spec, or nil for empty
@@ -86,7 +87,7 @@ func decodeBackoff(data []byte) Backoff {
 		return nil
 	}
 	var spec backoffSpec
-	if err := json.Unmarshal(data, &spec); err != nil {
+	if err := json.Unmarshal(data, &spec, jsonv1.DefaultOptionsV1()); err != nil {
 		return nil
 	}
 	if spec.Type == "exponential" {

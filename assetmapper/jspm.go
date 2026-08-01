@@ -3,7 +3,8 @@ package assetmapper
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -126,7 +127,7 @@ func (j *JSPMResolver) Resolve(ctx context.Context, reqs []PackageRequest) (*Res
 		"install":  install,
 		"env":      []string{"browser", "production"},
 		"provider": "jspm.io",
-	})
+	}, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +167,7 @@ func (j *JSPMResolver) Resolve(ctx context.Context, reqs []PackageRequest) (*Res
 		return nil, fmt.Errorf("jspm.io: POST /generate: %w", err)
 	}
 	var gen jspmGenerateResponse
-	if err := json.Unmarshal(body, &gen); err != nil {
+	if err := json.Unmarshal(body, &gen, jsonv1.DefaultOptionsV1()); err != nil {
 		return nil, fmt.Errorf("jspm.io: decode response: %w", err)
 	}
 	resolution, err := jspmFlatten(&gen, reqs)
