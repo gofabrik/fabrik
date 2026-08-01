@@ -10,6 +10,7 @@ import (
 	"github.com/gofabrik/fabrik/internal/tools/candidateproxy"
 	"github.com/gofabrik/fabrik/internal/tools/converge"
 	"github.com/gofabrik/fabrik/internal/tools/gittag"
+	"github.com/gofabrik/fabrik/internal/tools/goversion"
 	"github.com/gofabrik/fabrik/internal/tools/manifest"
 	"github.com/gofabrik/fabrik/internal/tools/modset"
 	"github.com/gofabrik/fabrik/internal/tools/workspace"
@@ -72,6 +73,19 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("go.work replaces in sync with", cfg.Version)
+	case "goversion-check":
+		findings, err := goversion.Check(cfg)
+		if err != nil {
+			fatal(err)
+		}
+		if len(findings) > 0 {
+			for _, f := range findings {
+				fmt.Fprintln(os.Stderr, f)
+			}
+			fmt.Fprintf(os.Stderr, "\ngoversion check: %d finding(s)\n", len(findings))
+			os.Exit(1)
+		}
+		fmt.Println("goversion check: ok")
 	case "assert-version":
 		fs := flag.NewFlagSet("assert-version", flag.ExitOnError)
 		version := fs.String("version", "", "expected module-set version (required)")
@@ -151,7 +165,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: release [-root DIR] {manifest-lint|manifest-fix|workspace-sync|workspace-check|build-proxy OUT [REV]|build-binaries OUT|converge|verify|assert-version -version V|set-version -version V|tag -commit SHA [-push]}")
+	fmt.Fprintln(os.Stderr, "usage: release [-root DIR] {manifest-lint|manifest-fix|workspace-sync|workspace-check|goversion-check|build-proxy OUT [REV]|build-binaries OUT|converge|verify|assert-version -version V|set-version -version V|tag -commit SHA [-push]}")
 }
 
 func fatal(err error) {

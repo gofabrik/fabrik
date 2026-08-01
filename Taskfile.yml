@@ -17,12 +17,13 @@ tasks:
     silent: true
 
   ci:
-    desc: Per-PR gate - build, test, manifest lint, go.work drift, changelog validate
+    desc: Per-PR gate - build, test, manifest lint, go.work drift, go version consistency, changelog validate
     cmds:
       - task: build
       - task: test
       - task: manifest:lint
       - task: workspace:check
+      - task: goversion:check
       - task: changelog:validate
 
   build:
@@ -112,6 +113,11 @@ tasks:
     desc: Fail if go.work's replace block drifted from versions.yaml
     deps: [_build:release]
     cmds: ['{{.RELEASE}} workspace-check']
+
+  goversion:check:
+    desc: Fail if any go.mod, template, fixture, or workflow pin disagrees with go.work's go directive
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} goversion-check']
 
   changelog:validate:
     desc: Validate the .chloggen fragments
