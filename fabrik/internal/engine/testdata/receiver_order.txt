@@ -55,13 +55,12 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		webHandlers := &web.Handlers{}
 		webFoo := web.NewFoo(webHandlers)
 		webAPI := &web.API{
 			Foo: webFoo,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/api", webAPI.Get)

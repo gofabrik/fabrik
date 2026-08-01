@@ -87,15 +87,15 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		fabrikConfigOpts := []config.Option{
+		configOpts := []config.Option{
 			config.FileOptional("config.yaml"),
 			config.File("config." + fabrikEnv + ".yaml"),
 		}
 		if fabrikEnv == "development" {
-			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+			configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 		}
-		assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
-			config.KnownSections("assets"),
+		configOpts = append(configOpts, config.KnownSections("assets"))
+		assetmapperOptions, err := config.Load[assetmapper.Options](append(configOpts,
 			config.Section("assets"),
 		)...)
 		if err != nil {
@@ -108,6 +108,7 @@ func run() int {
 		}
 
 		// Providers
+		r := router.New()
 		assetKind, err := assetmapperOptions.Mode()
 		if err != nil {
 			return err
@@ -126,8 +127,6 @@ func run() int {
 		if err != nil {
 			return err
 		}
-
-		r := router.New()
 
 		// Register
 		r.Handle("/assets/", assetServer.Handler())

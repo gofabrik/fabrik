@@ -72,23 +72,14 @@ func run() int {
 			{
 				Name: "warm-cache",
 				Run: func(ctx cli.Context) (err error) {
-					pool, err := buildWarmCache(ctx)
+					storePool, err := store.NewPool(ctx)
 					if err != nil {
 						return err
 					}
-					return store.WarmCache(ctx, pool)
+					return store.WarmCache(ctx, storePool)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildWarmCache(ctx context.Context) (*store.Pool, error) {
-	// Providers
-	storePool, err := store.NewPool(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return storePool, nil
 }

@@ -226,7 +226,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -267,31 +266,121 @@ func run() int {
 			{
 				Name: "warm-cache",
 				Run: func(ctx cli.Context) (err error) {
-					pool, err := buildWarmCache(ctx)
+					configOpts, err := configOptions()
 					if err != nil {
 						return err
 					}
-					return store.WarmCache(ctx, pool)
+					if err := initLogger(ctx, configOpts); err != nil {
+						return err
+					}
+					storePool, err := store.NewPool(ctx)
+					if err != nil {
+						return err
+					}
+					return store.WarmCache(ctx, storePool)
 				},
 			},
 			{
 				Name: "serve",
 				Run: func(ctx cli.Context) (err error) {
-					server, err := buildServe(ctx)
+					configOpts, err := configOptions()
 					if err != nil {
 						return err
 					}
-					return store.Serve(ctx, server)
+					if err := initLogger(ctx, configOpts); err != nil {
+						return err
+					}
+					storePool, err := store.NewPool(ctx)
+					if err != nil {
+						return err
+					}
+					r := router.New()
+					sharedConfig, err := config.Load[shared.Config](append(configOpts,
+						config.Section("http"),
+					)...)
+					if err != nil {
+						return err
+					}
+					sharedHttpServer := shared.NewServer(sharedConfig)
+					r.Use(shared.Recovered)
+					// embedded Static, served under /static
+					webStatic, err := fs.Sub(web.Static, "static")
+					if err != nil {
+						return err
+					}
+					r.Handle("/static/", http.StripPrefix("/static", http.FileServerFS(webStatic)))
+					assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+						{FS: web.Assets, Dir: "assets"},
+					}, nil)
+					if err != nil {
+						return err
+					}
+					r.Handle("/assets/", assetCompiled.Handler())
+					storeConfig, err := config.Load[store.Config](append(configOpts,
+						config.Section("store"),
+					)...)
+					if err != nil {
+						return err
+					}
+					// store.Store, selected by store.kind
+					var storeStore store.Store
+					switch storeConfig.Kind {
+					case "memory":
+						storeStore = store.NewMemory(storeConfig)
+					case "postgres":
+						storePostgresConfig, err := config.Load[store.PostgresConfig](append(configOpts,
+							config.Section("postgres"),
+						)...)
+						if err != nil {
+							return err
+						}
+						storeStorePostgres, err := store.NewPostgres(ctx, storePostgresConfig)
+						if err != nil {
+							return err
+						}
+						storeStore = storeStorePostgres
+					default:
+						return fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
+					}
+					webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
+						"shout": web.Shout,
+					})
+					if err != nil {
+						return err
+					}
+					webAPI := &web.API{
+						Store:     storeStore,
+						Pool:      storePool,
+						Templates: webTemplates,
+					}
+					r.Method("GET", "/api/items/{id}", webAPI.Item, shared.RequireAuth)
+					r.Method("POST", "/api/items", webAPI.Create, shared.RequireAuth)
+					r.Handle("/metrics", web.Metrics())
+					adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
+					r.Method("GET", "/api/api/items.json", adapter.Wrap(webAPI.ItemsJSON), shared.RequireAuth)
+					r.NotFound(web.Missing)
+					return store.Serve(ctx, httpserver.New(r, sharedHttpServer))
 				},
 			},
 			{
 				Name: "migrate-db",
 				Run: func(ctx cli.Context) (err error) {
-					db, dialect, sources, err := buildMigrateDB(ctx)
+					configOpts, err := configOptions()
 					if err != nil {
 						return err
 					}
-					return store.MigrateDB(ctx, db, dialect, sources)
+					if err := initLogger(ctx, configOpts); err != nil {
+						return err
+					}
+					storeSqlDB, err := store.NewDB()
+					if err != nil {
+						return err
+					}
+					storeMigrationsDialect := store.NewDialect()
+					migrationSources := migrations.Sources{
+						{Stream: "store", FS: store.Migrations, Dir: "migrations"},
+					}
+					return store.MigrateDB(ctx, storeSqlDB, storeMigrationsDialect, migrationSources)
 				},
 			},
 		},
@@ -299,9 +388,8 @@ func run() int {
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
-func buildWarmCache(ctx context.Context) (*store.Pool, error) {
+func configOptions() ([]config.Option, error) {
 	var err error
-	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
@@ -315,199 +403,29 @@ func buildWarmCache(ctx context.Context) (*store.Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	fabrikConfigOpts := []config.Option{
+	configOpts := []config.Option{
 		config.FileOptional("config.yaml"),
 		config.File("config." + fabrikEnv + ".yaml"),
 	}
 	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+		configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 	}
-	sharedLog, err := config.Load[shared.Log](append(fabrikConfigOpts,
-		config.KnownSections("http", "log", "postgres", "store"),
-		config.Section("log"),
-	)...)
-	if err != nil {
-		return nil, err
-	}
+	configOpts = append(configOpts, config.KnownSections("http", "log", "postgres", "store"))
 
-	// Wire hooks: config exists, providers do not
-	if err := shared.InitLogger(ctx, sharedLog); err != nil {
-		return nil, err
-	}
-
-	// Providers
-	storePool, err := store.NewPool(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return storePool, nil
+	return configOpts, nil
 }
 
-func buildServe(ctx context.Context) (*httpserver.Server, error) {
-	var err error
-	// Config
-	fabrikEnv := os.Getenv("FABRIK_ENV")
-	switch fabrikEnv {
-	case "development", "production":
-	default:
-		if fabrikEnv == "" {
-			err = fmt.Errorf("FABRIK_ENV is required: development or production")
-		} else {
-			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	fabrikConfigOpts := []config.Option{
-		config.FileOptional("config.yaml"),
-		config.File("config." + fabrikEnv + ".yaml"),
-	}
-	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
-	}
-	sharedConfig, err := config.Load[shared.Config](append(fabrikConfigOpts,
-		config.KnownSections("http", "log", "postgres", "store"),
-		config.Section("http"),
-	)...)
-	if err != nil {
-		return nil, err
-	}
-	sharedLog, err := config.Load[shared.Log](append(fabrikConfigOpts,
-		config.KnownSections("http", "log", "postgres", "store"),
+func initLogger(ctx context.Context, configOpts []config.Option) error {
+	sharedLog, err := config.Load[shared.Log](append(configOpts,
 		config.Section("log"),
 	)...)
 	if err != nil {
-		return nil, err
-	}
-	storeConfig, err := config.Load[store.Config](append(fabrikConfigOpts,
-		config.KnownSections("http", "log", "postgres", "store"),
-		config.Section("store"),
-	)...)
-	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// Wire hooks: config exists, providers do not
 	if err := shared.InitLogger(ctx, sharedLog); err != nil {
-		return nil, err
+		return err
 	}
 
-	// Providers
-	sharedHttpServer := shared.NewServer(sharedConfig)
-
-	// store.Store, selected by store.kind
-	var storeStore store.Store
-	switch storeConfig.Kind {
-	case "memory":
-		storeStore = store.NewMemory(storeConfig)
-	case "postgres":
-		storePostgresConfig, err := config.Load[store.PostgresConfig](append(fabrikConfigOpts,
-			config.KnownSections("http", "log", "postgres", "store"),
-			config.Section("postgres"),
-		)...)
-		if err != nil {
-			return nil, err
-		}
-		storeStorePostgres, err := store.NewPostgres(ctx, storePostgresConfig)
-		if err != nil {
-			return nil, err
-		}
-		storeStore = storeStorePostgres
-	default:
-		return nil, fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
-	}
-	storePool, err := store.NewPool(ctx)
-	if err != nil {
-		return nil, err
-	}
-	assetCompiled, err := assetmapper.Build([]assetmapper.Root{
-		{FS: web.Assets, Dir: "assets"},
-	}, nil)
-	if err != nil {
-		return nil, err
-	}
-	webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
-		"shout": web.Shout,
-	})
-	if err != nil {
-		return nil, err
-	}
-	webAPI := &web.API{
-		Store:     storeStore,
-		Pool:      storePool,
-		Templates: webTemplates,
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
-
-	// embedded Static, served under /static
-	webStatic, err := fs.Sub(web.Static, "static")
-	if err != nil {
-		return nil, err
-	}
-
-	r := router.New()
-
-	// Middleware
-	r.Use(shared.Recovered)
-
-	// Register
-	r.Handle("/static/", http.StripPrefix("/static", http.FileServerFS(webStatic)))
-	r.Handle("/assets/", assetCompiled.Handler())
-	r.Method("GET", "/api/items/{id}", webAPI.Item, shared.RequireAuth)
-	r.Method("POST", "/api/items", webAPI.Create, shared.RequireAuth)
-	r.Handle("/metrics", web.Metrics())
-	r.Method("GET", "/api/api/items.json", adapter.Wrap(webAPI.ItemsJSON), shared.RequireAuth)
-	r.NotFound(web.Missing)
-	return httpserver.New(r, sharedHttpServer), nil
-}
-
-func buildMigrateDB(ctx context.Context) (*sql.DB, migrations.Dialect, migrations.Sources, error) {
-	var err error
-	// Config
-	fabrikEnv := os.Getenv("FABRIK_ENV")
-	switch fabrikEnv {
-	case "development", "production":
-	default:
-		if fabrikEnv == "" {
-			err = fmt.Errorf("FABRIK_ENV is required: development or production")
-		} else {
-			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
-		}
-	}
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	fabrikConfigOpts := []config.Option{
-		config.FileOptional("config.yaml"),
-		config.File("config." + fabrikEnv + ".yaml"),
-	}
-	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
-	}
-	sharedLog, err := config.Load[shared.Log](append(fabrikConfigOpts,
-		config.KnownSections("http", "log", "postgres", "store"),
-		config.Section("log"),
-	)...)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-
-	// Wire hooks: config exists, providers do not
-	if err := shared.InitLogger(ctx, sharedLog); err != nil {
-		return nil, 0, nil, err
-	}
-
-	// Providers
-	migrationSources := migrations.Sources{
-		{Stream: "store", FS: store.Migrations, Dir: "migrations"},
-	}
-
-	storeSqlDB, err := store.NewDB()
-	if err != nil {
-		return nil, 0, nil, err
-	}
-
-	storeMigrationsDialect := store.NewDialect()
-	return storeSqlDB, storeMigrationsDialect, migrationSources, nil
+	return nil
 }

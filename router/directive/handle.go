@@ -134,7 +134,7 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	h.host.record(func(g *gen.Gen) diag.Diagnostics {
 		var ds diag.Diagnostics
-		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		r := routerSingleton(g)
 		callee, hds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 		ds = append(ds, hds...)
 

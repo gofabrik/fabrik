@@ -61,6 +61,11 @@ type NodePreparer interface {
 	PrepareNode(node any, g *Gen)
 }
 
+// InjectSource seeds inject mappings before directive emission.
+type InjectSource interface {
+	InjectMappings() map[types.Object]map[string]string
+}
+
 // EmitTier orders directive emission.
 type EmitTier int
 

@@ -94,20 +94,11 @@ func run() int {
 					{Cmd: "app migrate up", Help: "Apply all pending migrations."},
 				},
 				Run: func(ctx cli.Context) (err error) {
-					store, err := buildMigrate(ctx)
-					if err != nil {
-						return err
-					}
-					return shared.Migrate(ctx, store, migrateDirection.Get(ctx), migrateDryRun.Get(ctx), migrateTimeout.Get(ctx), migrateOnly.Get(ctx))
+					sharedStore := shared.NewStore()
+					return shared.Migrate(ctx, sharedStore, migrateDirection.Get(ctx), migrateDryRun.Get(ctx), migrateTimeout.Get(ctx), migrateOnly.Get(ctx))
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildMigrate(ctx context.Context) (*shared.Store, error) {
-	// Providers
-	sharedStore := shared.NewStore()
-	return sharedStore, nil
 }

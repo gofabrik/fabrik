@@ -83,15 +83,15 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		fabrikConfigOpts := []config.Option{
+		configOpts := []config.Option{
 			config.FileOptional("config.yaml"),
 			config.File("config." + fabrikEnv + ".yaml"),
 		}
 		if fabrikEnv == "development" {
-			fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+			configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 		}
-		storeConfig, err := config.Load[store.Config](append(fabrikConfigOpts,
-			config.KnownSections("store"),
+		configOpts = append(configOpts, config.KnownSections("store"))
+		storeConfig, err := config.Load[store.Config](append(configOpts,
 			config.Section("store"),
 		)...)
 		if err != nil {
@@ -99,6 +99,7 @@ func run() int {
 		}
 
 		// Providers
+		r := router.New()
 		// store.Store, selected by store.kind
 		var storeStore store.Store
 		switch storeConfig.Kind {
@@ -110,8 +111,6 @@ func run() int {
 		webHandlers := &web.Handlers{
 			Store: storeStore,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/", webHandlers.Index)

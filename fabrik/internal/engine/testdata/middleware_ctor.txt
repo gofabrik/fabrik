@@ -80,8 +80,8 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
-		sharedLimiter := shared.NewLimiter()
 		r := router.New()
+		sharedLimiter := shared.NewLimiter()
 
 		// Middleware
 		sessionsMW, err := shared.Sessions(sharedLimiter)
@@ -89,7 +89,6 @@ func run() int {
 			return err
 		}
 		r.Use(sessionsMW)
-
 		authMW := shared.RequireAuth(sharedLimiter)
 
 		// Register

@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: fabrik wire can now use persistent fabrik.yaml settings to emit human-shaped shared wiring as split files or exported embedded constructors.
+issues: [0]

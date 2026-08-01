@@ -48,12 +48,11 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		webUsed := web.NewUsed()
 		webHandlers := &web.Handlers{
 			Used: webUsed,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/", webHandlers.Index)

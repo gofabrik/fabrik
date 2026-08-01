@@ -2,6 +2,7 @@ package gen
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -207,8 +208,198 @@ func anchorLess(a, b phaseNode) bool {
 	return a.emit < b.emit
 }
 
-// layoutPhase keeps dependent nodes together and orders independent clusters by anchor.
-func layoutPhase(nodes []phaseNode) [][]phaseNode {
+// layoutCtx indexes dependency and affinity signals across all nodes.
+type layoutCtx struct {
+	fanout    map[string]int
+	consumers map[string][]int // variable -> consuming universe node ids
+	nodeIx    map[Node]int
+	next      [][]int        // node -> consumer nodes through non-hub values
+	roots     []map[int]bool // node -> reachable feature roots (memoized)
+}
+
+// newLayoutCtx indexes affinity across all sections being laid out.
+func newLayoutCtx(universe []Node) *layoutCtx {
+	vars := map[string]bool{}
+	for _, n := range universe {
+		for _, d := range defines(n) {
+			vars[d] = true
+		}
+	}
+	lc := &layoutCtx{fanout: map[string]int{}, consumers: map[string][]int{}, nodeIx: map[Node]int{}}
+	for i, n := range universe {
+		if _, ok := lc.nodeIx[n]; !ok {
+			lc.nodeIx[n] = i
+		}
+		seen := map[string]bool{}
+		for _, u := range uses(n, vars) {
+			if seen[u] {
+				continue
+			}
+			seen[u] = true
+			lc.fanout[u]++
+			lc.consumers[u] = append(lc.consumers[u], i)
+		}
+	}
+	lc.next = make([][]int, len(universe))
+	for i, n := range universe {
+		if lc.nodeIx[n] != i {
+			continue
+		}
+		seen := map[int]bool{}
+		for _, d := range defines(n) {
+			if lc.fanout[d] > hubFanout {
+				continue
+			}
+			for _, c := range lc.consumers[d] {
+				if !seen[c] {
+					seen[c] = true
+					lc.next[i] = append(lc.next[i], c)
+				}
+			}
+		}
+	}
+	lc.roots = make([]map[int]bool, len(universe))
+	return lc
+}
+
+// featureRoots returns sinks reachable through non-hub values.
+func (lc *layoutCtx) featureRoots(i int) map[int]bool {
+	if lc.roots[i] != nil {
+		return lc.roots[i]
+	}
+	out := map[int]bool{}
+	lc.roots[i] = out // breaks cycles; an all-cycle path roots at itself below
+	if len(lc.next[i]) == 0 {
+		out[i] = true
+		return out
+	}
+	for _, c := range lc.next[i] {
+		for r := range lc.featureRoots(c) {
+			out[r] = true
+		}
+	}
+	if len(out) == 0 {
+		out[i] = true
+	}
+	return out
+}
+
+// Affinity prefers explicit groups, batches, data flow, directive occurrence, file, then proximity.
+const (
+	affGroup       = 100
+	affBatch       = 90
+	affExclusive   = 80
+	affSmallFan    = 60
+	affSharedCons  = 55
+	affDirective   = 50
+	affNearby      = 40
+	affSameFile    = 30
+	affSamePkg     = 25
+	affHub         = 15
+	affThreshold   = 40
+	layoutBlockMax = 10
+	hubFanout      = 3
+)
+
+func (lc *layoutCtx) affinity(a, b Node) int {
+	ab, bb := a.base(), b.base()
+	if ab.Group != "" && ab.Group == bb.Group {
+		return affGroup
+	}
+	if ab.Batch != "" && ab.Batch == bb.Batch {
+		return affBatch
+	}
+	// Hub edges must not outweigh stronger directive or source signals.
+	best := 0
+	if s := lc.producerConsumer(a, b); s > best {
+		best = s
+	}
+	if s := lc.producerConsumer(b, a); s > best {
+		best = s
+	}
+	if best < affSharedCons {
+		if s := lc.sharedConsumer(a, b); s > best {
+			best = s
+		}
+	}
+	if best < affDirective && ab.Origin.Pos.IsValid() && ab.Origin.Directive != "" &&
+		ab.Origin.Directive == bb.Origin.Directive && ab.Origin.Pos == bb.Origin.Pos {
+		best = affDirective
+	}
+	if best < affNearby && ab.Origin.Pos.IsValid() && bb.Origin.Pos.IsValid() {
+		if ab.Origin.Pos.Filename == bb.Origin.Pos.Filename {
+			d := ab.Origin.Pos.Line - bb.Origin.Pos.Line
+			if d < 0 {
+				d = -d
+			}
+			score := affSameFile
+			if d <= 10 {
+				score = affNearby
+			}
+			if score > best {
+				best = score
+			}
+		} else if filepath.Dir(ab.Origin.Pos.Filename) == filepath.Dir(bb.Origin.Pos.Filename) && affSamePkg > best {
+			best = affSamePkg
+		}
+	}
+	return best
+}
+
+// producerConsumer discounts producer affinity as fan-out increases.
+func (lc *layoutCtx) producerConsumer(producer, consumer Node) int {
+	ci, ok := lc.nodeIx[consumer]
+	if !ok {
+		return 0
+	}
+	best := 0
+	for _, d := range defines(producer) {
+		for _, u := range lc.consumers[d] {
+			if u != ci {
+				continue
+			}
+			switch f := lc.fanout[d]; {
+			case f == 1:
+				return affExclusive
+			case f <= hubFanout:
+				if affSmallFan > best {
+					best = affSmallFan
+				}
+			default:
+				if affHub > best {
+					best = affHub
+				}
+			}
+		}
+	}
+	return best
+}
+
+// sharedConsumer scores producers that reach the same sink through non-hub values.
+func (lc *layoutCtx) sharedConsumer(a, b Node) int {
+	ai, aok := lc.nodeIx[a]
+	bi, bok := lc.nodeIx[b]
+	if !aok || !bok {
+		return 0
+	}
+	if len(lc.next[ai]) == 0 && len(lc.next[bi]) == 0 {
+		return 0
+	}
+	ar := lc.featureRoots(ai)
+	for r := range lc.featureRoots(bi) {
+		if r != ai && r != bi && ar[r] {
+			return affSharedCons
+		}
+	}
+	return 0
+}
+
+// layout preserves dependency and batch constraints while greedily grouping affine ready nodes.
+// Source anchors and emission order break ties; groups define blank-line boundaries.
+func (lc *layoutCtx) layout(nodes []phaseNode) [][]phaseNode {
+	if len(nodes) == 0 {
+		return nil
+	}
 	owner := map[string]int{}
 	for i, pn := range nodes {
 		for _, d := range defines(pn.n) {
@@ -219,109 +410,96 @@ func layoutPhase(nodes []phaseNode) [][]phaseNode {
 	for v := range owner {
 		vars[v] = true
 	}
-
-	deps := make([][]int, len(nodes)) // deps[i] = nodes that must precede i
-	comp := make([]int, len(nodes))   // union-find parent
-	for i := range comp {
-		comp[i] = i
-	}
-	find := func(x int) int {
-		for comp[x] != x {
-			comp[x] = comp[comp[x]]
-			x = comp[x]
-		}
-		return x
-	}
-
+	deps := make([][]int, len(nodes))
 	for i, pn := range nodes {
 		for _, u := range uses(pn.n, vars) {
-			j := owner[u]
-			if j == i {
-				continue
+			if j := owner[u]; j != i {
+				deps[i] = append(deps[i], j)
 			}
-			deps[i] = append(deps[i], j)
-			comp[find(i)] = find(j)
 		}
 	}
-
-	groups := map[int][]int{}
-	for i := range nodes {
-		root := find(i)
-		groups[root] = append(groups[root], i)
-	}
-	roots := make([]int, 0, len(groups))
-	for root := range groups {
-		roots = append(roots, root)
-	}
-	sort.Slice(roots, func(a, b int) bool {
-		return anchorLess(earliest(nodes, groups[roots[a]]), earliest(nodes, groups[roots[b]]))
-	})
-
-	var clusters [][]phaseNode
-	for _, root := range roots {
-		clusters = append(clusters, orderCluster(nodes, deps, groups[root]))
-	}
-	return clusters
-}
-
-// earliest returns the member with the smallest anchor.
-func earliest(nodes []phaseNode, members []int) phaseNode {
-	best := nodes[members[0]]
-	for _, i := range members[1:] {
-		if anchorLess(nodes[i], best) {
-			best = nodes[i]
+	byBatch := map[string][]int{}
+	for i, pn := range nodes {
+		if b := pn.n.base().Batch; b != "" {
+			byBatch[b] = append(byBatch[b], i)
 		}
 	}
-	return best
-}
-
-// orderCluster emits producers before consumers.
-func orderCluster(nodes []phaseNode, deps [][]int, members []int) []phaseNode {
-	pending := map[int]bool{}
-	for _, i := range members {
-		pending[i] = true
+	for _, ids := range byBatch {
+		sort.SliceStable(ids, func(x, y int) bool {
+			return nodes[ids[x]].n.base().Seq < nodes[ids[y]].n.base().Seq
+		})
+		for k := 1; k < len(ids); k++ {
+			deps[ids[k]] = append(deps[ids[k]], ids[k-1])
+		}
 	}
-	var out []phaseNode
-	for len(pending) > 0 {
-		best := -1
-		for _, i := range members {
-			if !pending[i] {
+	emitted := make([]bool, len(nodes))
+	remaining := len(nodes)
+	var blocks [][]phaseNode
+	var block []phaseNode
+	var blockIx []int
+	for remaining > 0 {
+		var ready []int
+		for i := range nodes {
+			if emitted[i] {
 				continue
 			}
-			ready := true
+			ok := true
 			for _, j := range deps[i] {
-				if pending[j] {
-					ready = false
+				if !emitted[j] {
+					ok = false
 					break
 				}
 			}
-			if !ready {
-				continue
-			}
-			if best < 0 || anchorLess(nodes[i], nodes[best]) {
-				best = i
+			if ok {
+				ready = append(ready, i)
 			}
 		}
-		if best < 0 { // dependency cycle: fall back to emission order
-			for _, i := range members {
-				if pending[i] {
-					best = i
+		if len(ready) == 0 {
+			// A dependency cycle was already diagnosed; fall back to
+			// emission order.
+			for i := range nodes {
+				if !emitted[i] {
+					ready = []int{i}
 					break
 				}
 			}
 		}
-		delete(pending, best)
-		out = append(out, nodes[best])
-	}
-	return out
-}
-
-// spacedCluster reports whether a cluster needs surrounding blank lines.
-func spacedCluster(cluster []phaseNode) bool {
-	for _, pn := range cluster {
-		if pn.n.base().Label != "" || len(renderNode(pn.n, nil)) > 1 {
-			return true
+		pick := -1
+		if len(block) > 0 && len(block) < layoutBlockMax {
+			bestAff := 0
+			for _, i := range ready {
+				aff := 0
+				for _, j := range blockIx {
+					if a := lc.affinity(nodes[i].n, nodes[j].n); a > aff {
+						aff = a
+					}
+				}
+				if aff < affThreshold {
+					continue
+				}
+				if pick < 0 || aff > bestAff || (aff == bestAff && anchorLess(nodes[i], nodes[pick])) {
+					pick, bestAff = i, aff
+				}
+			}
 		}
+		if pick < 0 {
+			if len(block) > 0 {
+				blocks = append(blocks, block)
+				block, blockIx = nil, nil
+			}
+			for _, i := range ready {
+				if pick < 0 || anchorLess(nodes[i], nodes[pick]) {
+					pick = i
+				}
+			}
+		}
+		emitted[pick] = true
+		remaining--
+		block = append(block, nodes[pick])
+		blockIx = append(blockIx, pick)
 	}
-	return false
+	if len(block) > 0 {
+		blocks = append(blocks, block)
+	}
+	return blocks
 }

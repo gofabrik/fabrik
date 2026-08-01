@@ -3,7 +3,6 @@ package gen
 import (
 	"bytes"
 	"go/token"
-	"go/types"
 	"regexp"
 	"strings"
 	"testing"
@@ -35,8 +34,11 @@ func TestRenderCommandShellTree(t *testing.T) {
 	empty := g.AddScope("buildVersion", token.Position{})
 	g.AddCommandFunc(CommandFunc{Name: "version", Fn: "app.Version", Scope: empty})
 
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {
@@ -50,14 +52,13 @@ func TestRenderCommandShellTree(t *testing.T) {
 		`Name: "serve",`,
 		`Help: "Start the server",`,
 		"Run: func(ctx cli.Context) (err error) {",
-		"store, cleanup, err := buildServe(ctx)",
+		"conn, connClose, err := app.NewStore(ctx)",
 		"defer func() {",
-		"err = errors.Join(err, cleanup())",
-		"return app.Serve(ctx, store)",
+		"err = errors.Join(err, connClose())",
+		"return app.Serve(ctx, conn)",
 		`Name: "version",`,
 		"return app.Version(ctx)",
 		"return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))",
-		"func buildServe(ctx context.Context) (*app.Store, func() error, error) {",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("shell tree missing %q:\n%s", want, src)
@@ -67,14 +68,12 @@ func TestRenderCommandShellTree(t *testing.T) {
 		"if err := func() (err error) {",
 		"return 130",
 		"fmt.",
+		"func buildServe",
 		"func buildVersion",
 	} {
 		if strings.Contains(src, absent) {
 			t.Errorf("shell tree must not contain %q:\n%s", absent, src)
 		}
-	}
-	if strings.Index(src, "root := &cli.Command{") > strings.Index(src, "func buildServe") {
-		t.Errorf("build functions must follow run():\n%s", src)
 	}
 }
 
@@ -87,8 +86,11 @@ func TestRenderCommandSetupOnlyScope(t *testing.T) {
 	})
 	s := g.AddScope("buildVersion", token.Position{})
 	g.AddCommandFunc(CommandFunc{Name: "version", Fn: "app.Version", Scope: s})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {
@@ -96,13 +98,15 @@ func TestRenderCommandSetupOnlyScope(t *testing.T) {
 	}
 	src := string(out)
 	for _, want := range []string{
-		"func buildVersion(ctx context.Context) error {",
-		"if err := buildVersion(ctx); err != nil {",
+		"if err := app.InitLogger(); err != nil {",
 		"return app.Version(ctx)",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("setup-only scope missing %q:\n%s", want, src)
 		}
+	}
+	if strings.Contains(src, "func buildVersion") {
+		t.Errorf("single-command setup must inline, not extract:\n%s", src)
 	}
 }
 
@@ -111,8 +115,11 @@ func TestRenderRepeatedCommandShape(t *testing.T) {
 	g := w.g
 	s := g.AddScope("buildServe", token.Position{}, ScopeRoot{Type: w.store})
 	g.AddCommandFunc(CommandFunc{Name: "serve", Fn: "app.Serve", Scope: s})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	first, err := g.Render()
 	if err != nil {
@@ -124,58 +131,6 @@ func TestRenderRepeatedCommandShape(t *testing.T) {
 	}
 	if !bytes.Equal(first, second) {
 		t.Fatalf("repeated render differs:\n--- first ---\n%s\n--- second ---\n%s", first, second)
-	}
-}
-
-func TestWrapperVars(t *testing.T) {
-	pkg := typecheckScopePkg(t, "example.com/w", `package w
-
-type Server struct{}
-
-type DB struct{}
-
-type DB2 struct{}
-`)
-	server := types.NewPointer(pkg.Scope().Lookup("Server").Type())
-	db := types.NewPointer(pkg.Scope().Lookup("DB").Type())
-	db2t := types.NewPointer(pkg.Scope().Lookup("DB2").Type())
-	g := New()
-	s := &Scope{roots: []ScopeRoot{{Type: server}, {Type: db}, {Type: db}, {Type: db2t}}}
-	got := wrapperVars(g, s)
-	want := []string{"server", "db", "db2", "db22"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("wrapperVars = %v, want %v", got, want)
-		}
-	}
-}
-
-func TestDepVarBaseInitialisms(t *testing.T) {
-	pkg := typecheckScopePkg(t, "example.com/n", `package n
-
-type HTTPConfig struct{}
-
-type DB struct{}
-
-type Server struct{}
-`)
-	cases := map[string]string{"HTTPConfig": "httpConfig", "DB": "db", "Server": "server"}
-	for name, want := range cases {
-		typ := types.NewPointer(pkg.Scope().Lookup(name).Type())
-		if got := depVarBase(typ); got != want {
-			t.Errorf("depVarBase(%s) = %q, want %q", name, got, want)
-		}
-	}
-}
-
-func TestWrapperVarsAvoidImportAliases(t *testing.T) {
-	pkg := typecheckScopePkg(t, "example.com/app", "package app\n\ntype App struct{}\n")
-	appT := types.NewPointer(pkg.Scope().Lookup("App").Type())
-	g := New()
-	g.ImportPkg(pkg)
-	s := &Scope{roots: []ScopeRoot{{Type: appT}}}
-	if got := wrapperVars(g, s); got[0] != "app2" {
-		t.Fatalf("wrapperVars = %v, want app2 (alias app is taken)", got)
 	}
 }
 
@@ -214,8 +169,11 @@ func TestRenderCommandWithInputs(t *testing.T) {
 		Scope:      s,
 	})
 
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {
@@ -254,8 +212,11 @@ func TestRenderNestedCommandPaths(t *testing.T) {
 		s := g.AddScope("build"+c.fn[4:], token.Position{})
 		g.AddCommandFunc(CommandFunc{Name: c.path[len(c.path)-1], Path: c.path, Fn: c.fn, Scope: s})
 	}
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {
@@ -324,8 +285,11 @@ func TestRenderGroupAndRootSpecs(t *testing.T) {
 		Fn: "app.Migrate", Scope: s,
 		ValueExprs: []string{dbFlag + ".Get(ctx)", rootFlag + ".Get(ctx)"},
 	})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {
@@ -400,8 +364,11 @@ func TestRenderMiddlewareChains(t *testing.T) {
 		Name: "migrate", Path: []string{"database", "migrate"},
 		Fn: "app.Migrate", Scope: s, Use: []string{"app.Retry"},
 	})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {

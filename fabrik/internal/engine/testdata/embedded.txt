@@ -43,12 +43,11 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		webGreeter := web.NewGreeter()
 		webHandlers := &web.Handlers{
 			Greeter: webGreeter,
 		}
-
-		r := router.New()
 
 		// Register
 		r.Method("GET", "/", webHandlers.Index)

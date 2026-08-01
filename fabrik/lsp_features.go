@@ -11,6 +11,8 @@ import (
 
 	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
+	"github.com/gofabrik/fabrik/fabrik/internal/genfiles"
 	"github.com/gofabrik/fabrik/fabrik/internal/load"
 	"github.com/gofabrik/fabrik/gen"
 )
@@ -57,9 +59,15 @@ func (s *lspServer) publishTyped(uri string, gen int) {
 	}
 	s.mu.Unlock()
 
-	res, err := engine.Wire(root, overlay)
-	if err != nil {
-		return
+	// A broken fabrik.yaml suppresses only the typed pass.
+	cfg, cdiags := genconfig.ResolveOverlay(root, overlay, genconfig.Overrides{})
+	diags := cdiags
+	if !cdiags.HasFatal() {
+		res, err := engine.WireOptions(root, overlay, engine.OptionsFrom(cfg))
+		if err != nil {
+			return
+		}
+		diags = append(diags, res.Diags...)
 	}
 	// A newer edit may have scheduled a fresh publish while this Wire ran;
 	// publishing now would overwrite current diagnostics with stale ones.
@@ -89,7 +97,7 @@ func (s *lspServer) publishTyped(uri string, gen int) {
 		srcCache[path] = t
 		return t
 	}
-	for _, d := range res.Diags {
+	for _, d := range diags {
 		byFile[d.Pos.Filename] = append(byFile[d.Pos.Filename], lspDiagnostic{
 			Range:    spanRange(srcFor(d.Pos.Filename), d.Pos),
 			Severity: lspSeverity(d.Severity),
@@ -343,7 +351,7 @@ func (s *lspServer) middlewareCompletions(uri, partial, directive string) []comp
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || filepath.Base(path) == "main.gen.go" {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || generatedOutputFile(path) {
 			return nil
 		}
 		for _, name := range s.middlewareNames(path, overlay[path], d, directive) {
@@ -546,4 +554,19 @@ func stripDirective(line string) (int, string, bool) {
 	}
 	i += len("fabrik:")
 	return i, line[i:], true
+}
+
+// generatedOutputFile reports fabrik-generated files the language
+// features skip: main.gen.go and anything the directory's manifest owns.
+func generatedOutputFile(path string) bool {
+	base := filepath.Base(path)
+	if base == "main.gen.go" || base == "fabrik.gen.go" {
+		return true
+	}
+	for _, owned := range genfiles.Owned(filepath.Dir(path)) {
+		if owned == base {
+			return true
+		}
+	}
+	return false
 }

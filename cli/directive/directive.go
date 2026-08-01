@@ -296,12 +296,7 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 					"order is ctx, dependencies, then CLI values")
 				return ds
 			}
-			depName := ""
-			if n, ok := g.InjectName(nd.obj, pr.name); ok {
-				depName = n
-				g.ConsumeInject(nd.obj, pr.name)
-			}
-			roots = append(roots, gen.ScopeRoot{Type: pr.typ, Name: depName})
+			roots = append(roots, gen.ScopeRoot{Type: pr.typ, Name: g.SelectedName(nd.obj, pr.name)})
 			continue
 		}
 		c.values = append(c.values, valueParam{fn: nd.fn, obj: nd.obj, param: pr.name, tok: tok, typ: pr.typ, pos: pr.pos})
@@ -395,14 +390,13 @@ func (c *Command) Finish(g *gen.Gen) diag.Diagnostics {
 	ds = append(ds, c.fam.validateSiblingTokens()...)
 	// Provider registration is complete, so this check is emission-order independent.
 	for _, vp := range c.values {
-		name := ""
-		if n, ok := g.InjectName(vp.obj, vp.param); ok {
-			name = n
+		if _, ok := g.InjectName(vp.obj, vp.param); ok {
 			ds.Error(vp.pos, fmt.Sprintf("inject selector %q is a CLI input on %s, not a dependency", vp.param, vp.fn),
 				"CLI values come from flags and arguments; only dependency parameters take named providers")
 			g.RejectInject(vp.obj, vp.param)
+			continue
 		}
-		if g.HasBinding(vp.typ, name) {
+		if g.HasBinding(vp.typ, "") {
 			ds.Error(vp.pos, fmt.Sprintf("parameter %q matches CLI input %q and a provider for %s", vp.param, vp.tok, g.TypeExpr(vp.typ)),
 				"rename the parameter or the input; wiring never resolves this silently")
 		}

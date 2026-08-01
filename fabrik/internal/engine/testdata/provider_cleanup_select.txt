@@ -96,84 +96,58 @@ func run() int {
 			{
 				Name: "ping",
 				Run: func(ctx cli.Context) (err error) {
-					db2, store2, cleanup, err := buildPing(ctx)
+					dbDB, dbDBClose, err := db.NewDB()
 					if err != nil {
 						return err
 					}
-					defer func() {
-						err = errors.Join(err, cleanup())
-					}()
-					return shared.Ping(ctx, db2, store2)
+					if dbDBClose != nil {
+						defer func() {
+							err = errors.Join(err, dbDBClose())
+						}()
+					}
+					fabrikEnv := os.Getenv("FABRIK_ENV")
+					switch fabrikEnv {
+					case "development", "production":
+					default:
+						if fabrikEnv == "" {
+							err = fmt.Errorf("FABRIK_ENV is required: development or production")
+						} else {
+							err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+						}
+					}
+					if err != nil {
+						return err
+					}
+					configOpts := []config.Option{
+						config.FileOptional("config.yaml"),
+						config.File("config." + fabrikEnv + ".yaml"),
+					}
+					if fabrikEnv == "development" {
+						configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
+					}
+					configOpts = append(configOpts, config.KnownSections("store"))
+					storeConfig, err := config.Load[store.Config](append(configOpts,
+						config.Section("store"),
+					)...)
+					if err != nil {
+						return err
+					}
+					// shared.Selected, selected by store.kind
+					var storeStore shared.Selected
+					switch storeConfig.Kind {
+					case "sqlite":
+						storeStoreSqlite, err := store.NewSqlite(storeConfig)
+						if err != nil {
+							return err
+						}
+						storeStore = storeStoreSqlite
+					default:
+						return fmt.Errorf("no shared.Selected implementation for %q", storeConfig.Kind)
+					}
+					return shared.Ping(ctx, dbDB, storeStore)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildPing(ctx context.Context) (*db.DB, shared.Selected, func() error, error) {
-	var err error
-	var dbDBClose func() error
-	unwind := func(err error) error {
-		if dbDBClose != nil {
-			err = errors.Join(err, dbDBClose())
-		}
-		return err
-	}
-	// Config
-	fabrikEnv := os.Getenv("FABRIK_ENV")
-	switch fabrikEnv {
-	case "development", "production":
-	default:
-		if fabrikEnv == "" {
-			err = fmt.Errorf("FABRIK_ENV is required: development or production")
-		} else {
-			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
-		}
-	}
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	fabrikConfigOpts := []config.Option{
-		config.FileOptional("config.yaml"),
-		config.File("config." + fabrikEnv + ".yaml"),
-	}
-	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
-	}
-	storeConfig, err := config.Load[store.Config](append(fabrikConfigOpts,
-		config.KnownSections("store"),
-		config.Section("store"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	// Providers
-	dbDB, dbDBClose, err := db.NewDB()
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	// shared.Selected, selected by store.kind
-	var storeStore shared.Selected
-	switch storeConfig.Kind {
-	case "sqlite":
-		storeStoreSqlite, err := store.NewSqlite(storeConfig)
-		if err != nil {
-			return nil, nil, nil, unwind(err)
-		}
-		storeStore = storeStoreSqlite
-	default:
-		return nil, nil, nil, unwind(fmt.Errorf("no shared.Selected implementation for %q", storeConfig.Kind))
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if dbDBClose != nil {
-			errs = append(errs, dbDBClose())
-		}
-		return errors.Join(errs...)
-	}
-	return dbDB, storeStore, cleanup, nil
 }

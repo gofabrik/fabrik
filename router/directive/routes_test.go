@@ -259,6 +259,59 @@ func TestBundleDefersEmissionUntilRouterDemand(t *testing.T) {
 	}
 }
 
+func TestBundleUsageCoversDirectRouterFlow(t *testing.T) {
+	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
+	g := gen.New()
+	g.SetModule("demo")
+
+	routerPkg := types.NewPackage(routerPath, "router")
+	routerObj := types.NewTypeName(token.NoPos, routerPkg, "Router", nil)
+	routerNamed := types.NewNamed(routerObj, types.NewStruct(nil, nil), nil)
+	routerPtr := types.NewPointer(routerNamed)
+
+	srvPkg := types.NewPackage("example.com/srv", "srv")
+	srvObj := types.NewTypeName(token.NoPos, srvPkg, "Server", nil)
+	srvNamed := types.NewNamed(srvObj, types.NewStruct(nil, nil), nil)
+	srvPtr := types.NewPointer(srvNamed)
+
+	if ds := h.EmitHandle(g, "/direct", pos(1), func() (string, diag.Diagnostics) {
+		return "nil", nil
+	}); ds.HasFatal() {
+		t.Fatalf("EmitHandle: %v", ds)
+	}
+	g.BindLazy(srvPtr, "", func() (string, diag.Diagnostics) {
+		r, ds := h.Router(g)
+		return g.Import("example.com/srv") + ".New(" + r + ")", ds
+	})
+	g.BindLazy(routerPtr, "", func() (string, diag.Diagnostics) {
+		return h.Router(g)
+	})
+
+	s1 := g.AddScope("buildServe", pos(2), gen.ScopeRoot{Type: srvPtr})
+	g.AddCommandFunc(gen.CommandFunc{Name: "serve", Fn: "srv.RunServe", Scope: s1})
+	s2 := g.AddScope("buildInspect", pos(3), gen.ScopeRoot{Type: routerPtr})
+	g.AddCommandFunc(gen.CommandFunc{Name: "inspect", Fn: "srv.RunInspect", Scope: s2})
+
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	src, err := g.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	text := string(src)
+	// Every router-demanding flow reaches the registration bundle.
+	if got := strings.Count(text, "r, err := buildRouter()"); got != 2 {
+		t.Fatalf("bundle region called %d times, want both flows:\n%s", got, text)
+	}
+	if got := strings.Count(text, `"/direct"`); got != 1 {
+		t.Fatalf("route emitted %d times, want once inside the shared region:\n%s", got, text)
+	}
+}
+
 func TestBundleFinishFallbackEmitsWithoutDemand(t *testing.T) {
 	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
 	g := gen.New()
@@ -305,13 +358,17 @@ func TestDirectRouterFieldReplaysBundleAfterCommandRoot(t *testing.T) {
 	}); ds.HasFatal() {
 		t.Fatalf("EmitHandle: %v", ds)
 	}
-	g.AddScope("buildInspect", pos(2), gen.ScopeRoot{Type: handlerPtr})
+	inspect := g.AddScope("buildInspect", pos(2), gen.ScopeRoot{Type: handlerPtr})
+	g.AddCommandFunc(gen.CommandFunc{Name: "inspect", Fn: "web.Inspect", Scope: inspect, Pos: pos(2)})
 
 	if ds := g.RunValidationPass(); ds.HasFatal() {
 		t.Fatalf("RunValidationPass: %v", ds)
 	}
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	src, err := g.Render()
 	if err != nil {
@@ -381,5 +438,51 @@ func TestBundleReplayResolvesServerWithoutCycle(t *testing.T) {
 	}
 	if !strings.Contains(expr, ".New(r, nil)") {
 		t.Fatalf("server expr = %q, want httpserver.New(r, nil)", expr)
+	}
+}
+
+func TestBundleKeepsRegistrationOrderAgainstAnchors(t *testing.T) {
+	// Batch order overrides conflicting route anchors.
+	h := NewHost(NewGroup(), NewRouteTable(), NewMiddleware())
+	g := gen.New()
+	g.SetModule("demo")
+
+	routerPkg := types.NewPackage(routerPath, "router")
+	routerObj := types.NewTypeName(token.NoPos, routerPkg, "Router", nil)
+	routerNamed := types.NewNamed(routerObj, types.NewStruct(nil, nil), nil)
+	routerPtr := types.NewPointer(routerNamed)
+
+	for i, pattern := range []string{"/first", "/second", "/third"} {
+		pattern := pattern
+		at := token.Position{Filename: "handlers.go", Line: 90 - i*30}
+		if ds := h.EmitHandle(g, pattern, at, func() (string, diag.Diagnostics) {
+			return "nil", nil
+		}); ds.HasFatal() {
+			t.Fatalf("EmitHandle %s: %v", pattern, ds)
+		}
+	}
+	g.BindLazy(routerPtr, "", func() (string, diag.Diagnostics) {
+		return h.Router(g)
+	})
+	for _, name := range []string{"alpha", "beta"} {
+		s := g.AddScope("build"+strings.ToUpper(name[:1])+name[1:], pos(1), gen.ScopeRoot{Type: routerPtr})
+		g.AddCommandFunc(gen.CommandFunc{Name: name, Fn: "app.Run" + strings.ToUpper(name[:1]) + name[1:], Scope: s})
+	}
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	src, err := g.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	text := string(src)
+	first := strings.Index(text, `"/first"`)
+	second := strings.Index(text, `"/second"`)
+	third := strings.Index(text, `"/third"`)
+	if first < 0 || second < 0 || third < 0 || first > second || second > third {
+		t.Fatalf("registration order lost: first=%d second=%d third=%d\n%s", first, second, third, text)
 	}
 }

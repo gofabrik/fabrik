@@ -1,11 +1,9 @@
 package gen
 
 import (
-	"bytes"
 	"go/token"
 	"go/types"
 	"sort"
-	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
 )
@@ -22,25 +20,23 @@ type Scope struct {
 	pos   token.Position
 	roots []ScopeRoot
 
-	hasCleanup bool
+	idents      map[string]bool
+	reserved    map[string]bool
+	binds       map[string]map[string]string // printed type -> name -> expr
+	bindOrigins map[string]map[string]string // printed type -> name -> owner
+	bindTypes   map[string]types.Type
+	bindOrder   []string
+	bindSeen    map[string]bool
+	pathExprs   map[string]string
+	singletons  map[string]string
+	onceVals    map[string]string
+	nodes       []Node
+	running     map[*lazyBind]bool
+	imports     map[string]string // isolated validation aliases
+	ctxVar      string
+	validation  bool
 
-	idents     map[string]bool
-	reserved   map[string]bool
-	binds      map[string]map[string]string // printed type -> name -> expr
-	bindTypes  map[string]types.Type
-	bindOrder  []string
-	bindSeen   map[string]bool
-	pathExprs  map[string]string
-	singletons map[string]string
-	nodes      []Node
-	running    map[*lazyBind]bool
-	imports    map[string]string // isolated validation aliases
-	ctxVar     string
-	validation bool
-
-	rootExprs   []string
-	resultTypes []string
-	zeros       []string
+	rootExprs []string
 }
 
 // AddScope registers a build scope for the dependency roots at pos.
@@ -100,58 +96,19 @@ func (g *Gen) enterScope(s *Scope, validation bool) {
 		s.reserved[a] = true
 	}
 	s.binds = map[string]map[string]string{}
+	s.bindOrigins = map[string]map[string]string{}
 	s.bindTypes = map[string]types.Type{}
 	s.bindOrder = nil
 	s.bindSeen = map[string]bool{}
 	s.pathExprs = map[string]string{}
 	s.singletons = map[string]string{}
+	s.onceVals = map[string]string{}
 	s.running = map[*lazyBind]bool{}
 	s.validation = validation
 	if validation {
 		s.imports = map[string]string{}
 	}
 	g.scope = s
-}
-
-// MaterializeScopes resolves each scope after all bindings are registered.
-func (g *Gen) MaterializeScopes() diag.Diagnostics {
-	var ds diag.Diagnostics
-	for _, s := range g.scopes {
-		g.enterScope(s, false)
-		for _, fn := range g.prologues {
-			// Validation already reports prologue diagnostics; replay only emits code.
-			fn()
-		}
-		for _, root := range s.roots {
-			expr, rds, ok := g.Instance(root.Type, root.Name)
-			ds = append(ds, rds...)
-			if !ok && len(rds) == 0 {
-				if msg, help, named := g.MissingBinding(root.Type, root.Name); named {
-					ds.Error(s.pos, msg, help)
-				} else {
-					ds.Error(s.pos, "no provider for "+g.TypeExpr(root.Type),
-						"add a //fabrik:provider returning "+g.TypeExpr(root.Type))
-				}
-			}
-			s.rootExprs = append(s.rootExprs, expr)
-			s.resultTypes = append(s.resultTypes, g.TypeExpr(root.Type))
-			s.zeros = append(s.zeros, zeroExpr(g, root.Type))
-		}
-		for _, fn := range g.epilogues {
-			ds = append(ds, fn()...)
-		}
-		for _, n := range s.nodes {
-			if c, ok := n.(*Call); ok && c.Cleanup != "" {
-				s.hasCleanup = true
-			}
-		}
-		if s.hasCleanup {
-			s.resultTypes = append(s.resultTypes, "func() error")
-			s.zeros = append(s.zeros, "nil")
-		}
-		g.scope = nil
-	}
-	return ds
 }
 
 // RunValidationPass resolves every lazy binding in an isolated scope for diagnostics.
@@ -181,6 +138,10 @@ func (g *Gen) RunValidationPass() diag.Diagnostics {
 		return entries[i].name < entries[j].name
 	})
 	for _, e := range entries {
+		if g.demanded(demandKey{kind: demandType, key: e.key, name: e.name}) {
+			// Flow materialization owns this diagnostic.
+			continue
+		}
 		_, eds, _ := g.Instance(e.t, e.name)
 		ds = append(ds, eds...)
 	}
@@ -191,143 +152,20 @@ func (g *Gen) RunValidationPass() diag.Diagnostics {
 	}
 	sort.Strings(paths)
 	for _, p := range paths {
+		if g.demanded(demandKey{kind: demandPath, key: p}) {
+			continue
+		}
 		_, pds, _ := g.InstancePath(p)
 		ds = append(ds, pds...)
 	}
-	for _, fn := range g.epilogues {
-		ds = append(ds, fn()...)
+	for i, fn := range g.epilogues {
+		ds = append(ds, g.reportCallbackDiags(i, fn())...)
 	}
 	return ds
 }
 
-func (g *Gen) writeScopeFuncs(b *bytes.Buffer) {
-	ctxPkg := g.imports["context"]
-	for _, s := range g.scopes {
-		if len(s.nodes) == 0 {
-			continue
-		}
-		results := strings.Join(s.resultTypes, ", ")
-		if len(s.resultTypes) > 0 {
-			results += ", "
-		}
-		b.WriteString("func " + s.fn + "(" + s.ctxVar + " " + ctxPkg + ".Context) (" + results + "error) {\n")
-		g.emitScopedBody(b, s)
-		b.WriteString("}\n\n")
-	}
-}
-
-func (g *Gen) emitScopedBody(b *bytes.Buffer, s *Scope) {
-	errsPkg := ""
-	if s.hasCleanup {
-		errsPkg = g.Import("errors")
-	}
-
-	if nodesHaveCheck(s.nodes) {
-		b.WriteString("var err error\n")
-	}
-
-	// Cleanup order must follow emission order, which layout decides.
-	type section struct {
-		label    string
-		clusters [][]phaseNode
-	}
-	var sections []section
-	var cleanups []string
-	for _, pl := range phaseLabels {
-		var nodes []phaseNode
-		for i, n := range s.nodes {
-			if n.base().Phase == pl.phase {
-				nodes = append(nodes, phaseNode{n: n, emit: i})
-			}
-		}
-		if len(nodes) == 0 {
-			continue
-		}
-		clusters := layoutPhase(nodes)
-		sections = append(sections, section{label: pl.label, clusters: clusters})
-		for _, cluster := range clusters {
-			for _, pn := range cluster {
-				if c, ok := pn.n.(*Call); ok && c.Cleanup != "" {
-					cleanups = append(cleanups, c.Cleanup)
-				}
-			}
-		}
-	}
-	ec := s.scopeErrCtx()
-	if len(cleanups) > 0 {
-		b.WriteString("var " + strings.Join(cleanups, ", ") + " func() error\n")
-		if ec.unwind {
-			b.WriteString("unwind := func(err error) error {\n")
-			for _, line := range unwindLines(cleanups, errsPkg) {
-				b.WriteString(line)
-				b.WriteString("\n")
-			}
-			b.WriteString("return err\n")
-			b.WriteString("}\n")
-		}
-	}
-
-	for si, sec := range sections {
-		if si > 0 {
-			b.WriteString("\n")
-		}
-		if g.comments != CommentsOff {
-			b.WriteString("// " + sec.label + "\n")
-		}
-		for ci, cluster := range sec.clusters {
-			if ci > 0 && (spacedCluster(cluster) || spacedCluster(sec.clusters[ci-1])) {
-				b.WriteString("\n")
-			}
-			for _, pn := range cluster {
-				g.nodeComments(b, pn.n)
-				for _, line := range g.nodeLines(pn.n, ec) {
-					b.WriteString(line)
-					b.WriteString("\n")
-				}
-			}
-		}
-	}
-
-	rets := strings.Join(s.rootExprs, ", ")
-	if len(cleanups) > 0 {
-		b.WriteString("\ncleanup := func() error {\n")
-		b.WriteString("var errs []error\n")
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			b.WriteString("if " + cleanups[i] + " != nil {\n")
-			b.WriteString("errs = append(errs, " + cleanups[i] + "())\n")
-			b.WriteString("}\n")
-		}
-		b.WriteString("return " + errsPkg + ".Join(errs...)\n")
-		b.WriteString("}\n")
-		if rets != "" {
-			rets += ", "
-		}
-		rets += "cleanup"
-	}
-	if rets != "" {
-		rets += ", "
-	}
-	b.WriteString("return " + rets + "nil\n")
-}
-
 // lateAliases must include every import Render can register after scope identifiers freeze.
 var lateAliases = []string{"os", "fmt", "errors", "signal", "syscall", "cli", "context"}
-
-// scopeErrCtx keeps emission and parse probes on the same return path.
-func (s *Scope) scopeErrCtx() *errCtx {
-	zeros := strings.Join(s.zeros, ", ")
-	if zeros != "" {
-		zeros += ", "
-	}
-	hasErrSite := false
-	for _, n := range s.nodes {
-		if nodeHasErrTail(n) {
-			hasErrSite = true
-			break
-		}
-	}
-	return &errCtx{zeros: zeros, unwind: s.hasCleanup && hasErrSite}
-}
 
 // nodeHasErrTail determines whether a cleanup-bearing scope needs its unwind helper.
 func nodeHasErrTail(n Node) bool {

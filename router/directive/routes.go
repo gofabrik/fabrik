@@ -24,7 +24,7 @@ func (h *Host) BindHTTPServer(g *gen.Gen) {
 	}
 	g.BindLazy(ptr, "", func() (string, diag.Diagnostics) {
 		var ds diag.Diagnostics
-		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		r := routerSingleton(g)
 		srvExpr := "nil"
 		if t, ok := g.LookupType("net/http", "Server"); ok {
 			if e, sds, ok := g.Instance(types.NewPointer(t), ""); ok {
@@ -160,8 +160,7 @@ func (h *Host) registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 			// the receiver whose router field caused this fallback binding.
 			h.replayDemandedRouterAfterScope(g)
 			g.BindLazy(ft, "", func() (string, diag.Diagnostics) {
-				h.demanded[g.ScopeID()] = true
-				return g.Singleton(routerPath, "r", g.Import(routerPath)+".New()"), nil
+				return routerSingleton(g), nil
 			})
 		}
 	}

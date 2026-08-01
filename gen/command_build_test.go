@@ -39,6 +39,7 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 			Args:    []string{g.Context()},
 			Err:     ErrReturn,
 			Cleanup: c,
+			ErrsPkg: g.Import("errors"),
 		})
 		return v, nil
 	})
@@ -51,6 +52,7 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 			Fn:      "newExtra",
 			Err:     ErrReturn,
 			Cleanup: c,
+			ErrsPkg: g.Import("errors"),
 		})
 		return v, nil
 	})
@@ -67,8 +69,11 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 	version := g.AddScope("buildVersion", token.Position{})
 	g.AddCommandFunc(CommandFunc{Name: "version", Fn: "version", Scope: version, Pos: token.Position{}})
 
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {

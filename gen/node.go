@@ -17,6 +17,12 @@ type Base struct {
 	Phase  Phase    // run() section; child nodes inherit their parent's phase
 	Label  string   // optional one-line comment above the node
 	Uses   []string // Lists dependencies not visible in expression fields; Raw is never scanned.
+
+	// Batch and Seq impose order within a batch without ordering separate batches.
+	Batch string
+	Seq   int
+	// Group keeps nodes together regardless of dependency shape.
+	Group string
 }
 
 func (b *Base) base() *Base { return b }
@@ -134,9 +140,35 @@ func (g *Gen) Node(n Node) {
 	if b.Origin.Directive == "" {
 		b.Origin.Directive = g.current
 	}
-	if sc := g.scope; sc != nil {
+	if g.batchID != "" && b.Batch == "" {
+		b.Batch = g.batchID
+		g.batchSeq++
+		b.Seq = g.batchSeq
+	}
+	if sel, ok := n.(*Select); ok {
+		stampSelectPhases(sel)
+	}
+	if sc := g.scope; sc != nil && sc.validation {
 		sc.nodes = append(sc.nodes, n)
 		return
 	}
-	g.nodes = append(g.nodes, n)
+	g.frag.nodes = append(g.frag.nodes, storeNode{n: n, demand: g.frag.currentDemand(), flow: g.frag.flow, pos: g.frag.currentPos()})
+}
+
+// stampSelectPhases makes inherited phases explicit for validation.
+func stampSelectPhases(sel *Select) {
+	for ci := range sel.Cases {
+		c := &sel.Cases[ci]
+		for _, child := range c.Body {
+			if child.base().Phase == 0 {
+				child.base().Phase = sel.Phase
+			}
+			if nested, ok := child.(*Select); ok {
+				stampSelectPhases(nested)
+			}
+		}
+		if c.Result.Phase == 0 {
+			c.Result.Phase = sel.Phase
+		}
+	}
 }

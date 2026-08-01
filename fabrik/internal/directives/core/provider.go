@@ -236,12 +236,9 @@ func (p *Provider) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			// Context mappings stay pending because provider lookup is bypassed.
 			continue
 		}
-		if name, ok := g.InjectName(nd.obj, pr.ident); ok {
-			pr.name = name
-			g.ConsumeInject(nd.obj, pr.ident)
-		}
+		pr.name = g.SelectedName(nd.obj, pr.ident)
 	}
-	g.BindLazy(nd.returns[0], nd.name, func() (string, diag.Diagnostics) {
+	g.BindLazyAt(nd.returns[0], nd.name, nd.pos, func() (string, diag.Diagnostics) {
 		if !g.InValidationScope() {
 			nd.built = true
 		}
@@ -288,12 +285,11 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 				continue
 			}
 			if !g.HasBinding(pr.t, pr.name) {
-				if msg, help, named := g.MissingBinding(pr.t, pr.name); named {
-					ds.Error(pr.pos, msg, help)
-				} else {
-					ds.Error(pr.pos, fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-						missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t))))
-				}
+				msg, help := g.MissingBinding(pr.t, pr.name, func() (string, string) {
+					return fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+						missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)))
+				})
+				ds.Error(pr.pos, msg, help)
 			}
 		}
 	}
@@ -301,16 +297,15 @@ func (p *Provider) Validate(g *gen.Gen) diag.Diagnostics {
 }
 
 func (p *Provider) resolveParams(g *gen.Gen, params []param) ([]string, diag.Diagnostics) {
-	return resolveArgs(g, p.cfg, params,
+	return resolveArgs(g, params,
 		func(pr param) (string, diag.Diagnostics, bool) {
 			return g.Instance(pr.t, pr.name)
 		},
-		func(pr param) (string, string, bool) {
-			if msg, help, named := g.MissingBinding(pr.t, pr.name); named {
-				return msg, help, true
-			}
-			return fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
-				fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)), false
+		func(pr param) (string, string) {
+			return g.MissingBinding(pr.t, pr.name, func() (string, string) {
+				return fmt.Sprintf("no provider for %s", g.TypeExpr(pr.t)),
+					missingHelp(g, p.cfg, pr.t, fmt.Sprintf("add a //fabrik:provider returning %s", g.TypeExpr(pr.t)))
+			})
 		})
 }
 

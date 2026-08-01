@@ -74,35 +74,24 @@ func run() int {
 			{
 				Name: "work",
 				Run: func(ctx cli.Context) (err error) {
-					runner, err := buildWork(ctx)
+					sharedJobsStore, err := shared.NewJobStore()
 					if err != nil {
 						return err
 					}
-					return shared.Work(ctx, runner)
+					jobsManager, err := jobs.New(sharedJobsStore, jobs.Config{})
+					if err != nil {
+						return err
+					}
+					// Jobs
+					if err := jobs.RegisterCron(jobsManager, "purge", "0 * * * *", func(c jobs.Context) error {
+						return shared.Purge(c)
+					}); err != nil {
+						return err
+					}
+					return shared.Work(ctx, jobs.NewRunner(jobsManager, jobs.RuntimeConfig{RunScheduler: true}))
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildWork(ctx context.Context) (*jobs.Runner, error) {
-	// Providers
-	sharedJobsStore, err := shared.NewJobStore()
-	if err != nil {
-		return nil, err
-	}
-	jobsManager, err := jobs.New(sharedJobsStore, jobs.Config{})
-	if err != nil {
-		return nil, err
-	}
-
-	// Register
-	// Jobs
-	if err := jobs.RegisterCron(jobsManager, "purge", "0 * * * *", func(c jobs.Context) error {
-		return shared.Purge(c)
-	}); err != nil {
-		return nil, err
-	}
-	return jobs.NewRunner(jobsManager, jobs.RuntimeConfig{RunScheduler: true}), nil
 }

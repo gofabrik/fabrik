@@ -114,7 +114,7 @@ func (h *Hook) Check(n any, t gen.Typed) diag.Diagnostics {
 func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*hookNode)
 	h.host.record(func(g *gen.Gen) diag.Diagnostics {
-		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		r := routerSingleton(g)
 		handler, ds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 		g.Node(&gen.Call{
 			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},

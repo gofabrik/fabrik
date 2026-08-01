@@ -1,0 +1,39 @@
+Embedded output cannot land in a package the injected packages depend
+on: the generated imports would form a cycle.
+-- go.mod --
+module app
+
+go 1.26
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- fabrik.yaml --
+generate:
+  emit: embedded
+  dir: appwire
+-- appwire/host.go --
+package appwire
+
+type Host struct{}
+-- shared/db.go --
+package shared
+
+import "app/appwire"
+
+type DB struct{}
+
+var _ appwire.Host
+
+//fabrik:provider
+func NewDB() (*DB, error) { return &DB{}, nil }
+-- shared/cli.go --
+package shared
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:command
+func Sync(ctx cli.Context, db *DB) error { return nil }
+-- want/diags --
+error: fabrik.yaml:2:9: generated code imports app/shared, which imports the output package app/appwire
+  help: point generate.dir at a package the injected packages do not depend on

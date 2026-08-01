@@ -53,10 +53,16 @@ type Greeter interface{ Greet() string }
 	})
 
 	s := g.AddScope("buildRun", token.Position{}, ScopeRoot{Type: cache})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
 	}
-	s.nodes = append(s.nodes,
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	// Flow-attributed emission mirrors WalkFlows: nodes land in the
+	// store under the scope's flow.
+	g.frag.flow = s.fn
+	for _, n := range []Node{
 		&Raw{
 			Base:    Base{Phase: PhaseConfig, Origin: Origin{Directive: "config"}},
 			Lines:   []string{`appEnv := "dev"`, "appOpts := []string{appEnv}"},
@@ -93,7 +99,10 @@ type Greeter interface{ Greet() string }
 			Base: Base{Phase: PhaseRegister, Origin: Origin{Directive: "job", Pos: token.Position{Filename: "/work/app/web/visits.go", Line: 18}}},
 			Fn:   "jobs.On[app.Visit]", Args: []string{"conn"}, Err: ErrInline,
 		},
-	)
+	} {
+		g.Node(n)
+	}
+	g.frag.flow = ""
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -180,8 +189,11 @@ type Store struct{}
 		return v, nil
 	})
 	g.AddScope("buildMigrate", token.Position{}, ScopeRoot{Type: store})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -205,7 +217,8 @@ func TestGraphNodesDescribeEveryKind(t *testing.T) {
 
 	conn := nodeByID(t, gr, "run/conn")
 	wantConn := GraphNode{
-		ID: "run/conn", Flow: "run", Kind: "call", Defines: []string{"conn"},
+		ID: "run/conn", Node: "0", Flow: "run", Usage: []string{"run"},
+		Kind: "call", Defines: []string{"conn"},
 		Fn: "app.NewStore", Type: "*app.Store",
 		TypeCanonical: "*example.com/app.Store", Cleanup: "connClose",
 		Directive: "provider", Pos: "shared/db.go:14",
@@ -276,10 +289,12 @@ func TestGraphConsumerArgumentTargetsMatchingBinding(t *testing.T) {
 	// A matching node argument still targets the root-only cache binding.
 	g := graphWorld(t)
 	s := g.scopes[0]
-	s.nodes = append(s.nodes, &Call{
+	g.frag.flow = s.fn
+	g.Node(&Call{
 		Base: Base{Phase: PhaseRegister, Origin: Origin{Directive: "job"}},
 		Fn:   "app.Warm", Args: []string{"app.NewCache(conn)"}, Err: ErrInline,
 	})
+	g.frag.flow = ""
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -381,8 +396,8 @@ func TestGraphRenderings(t *testing.T) {
 	for _, want := range []string{
 		"flowchart TB",
 		`subgraph f1["buildRun"]`,
-		`n3["conn<br/>*app.Store (cleanup)<br/>provider shared/db.go:14"]`,
-		"n0 --> n3",
+		`n5["conn<br/>*app.Store (cleanup)<br/>provider shared/db.go:14"]`,
+		"n2 --> n5",
 		"end",
 	} {
 		if !strings.Contains(mmd, want) {
@@ -509,8 +524,11 @@ type Store struct{}
 		return v, nil
 	})
 	g.AddScope("buildMigrate", token.Position{}, ScopeRoot{Type: store, Name: "replica"})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -589,8 +607,10 @@ func TestGraphDefaultFlowIDIsReserved(t *testing.T) {
 	g := New()
 	g.SetModule("demo")
 	g.SetDirective("cli:command")
-	sc := g.AddScope("buildDefault", token.Position{})
-	sc.nodes = append(sc.nodes, &Assign{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}}, Var: "svc", Expr: "mk()"})
+	g.AddScope("buildDefault", token.Position{})
+	g.frag.flow = "buildDefault"
+	g.Node(&Assign{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}}, Var: "svc", Expr: "mk()"})
+	g.frag.flow = ""
 	gr := g.Graph()
 	var ids []string
 	for _, f := range gr.Flows {
@@ -617,8 +637,11 @@ func TestNodelessScopeFlowNamesNoFunction(t *testing.T) {
 	g.SetDirective("provider")
 	g.BindLazy(vT, "", func() (string, diag.Diagnostics) { return "inline.New()", nil })
 	g.AddScope("buildOnly", token.Position{}, ScopeRoot{Type: vT})
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	if _, err := g.Render(); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -697,6 +720,12 @@ func TestGraphNamedJSONSpelling(t *testing.T) {
 	g.Bind(db, "replica", "spell.NewReplica()")
 	g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "db", Fn: "spell.NewReplica", BindingName: "replica"})
 	g.AddScope("buildX", token.Position{}, ScopeRoot{Type: db, Name: "replica"})
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
 	if _, err := g.Render(); err != nil {
 		t.Fatal(err)
 	}
@@ -719,6 +748,12 @@ func TestGraphNamedJSONSpelling(t *testing.T) {
 	unnamed.Bind(db, "", "spell.NewDB()")
 	unnamed.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "db", Fn: "spell.NewDB"})
 	unnamed.AddScope("buildX", token.Position{}, ScopeRoot{Type: db})
+	if ds := unnamed.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := unnamed.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
 	if _, err := unnamed.Render(); err != nil {
 		t.Fatal(err)
 	}
@@ -730,6 +765,171 @@ func TestGraphNamedJSONSpelling(t *testing.T) {
 		if strings.Contains(string(plain), stray) {
 			t.Fatalf("unnamed graph must omit %s:\n%s", stray, plain)
 		}
+	}
+}
+
+// fragmentGraphWorld provides shared and flow-specific nodes for graph export tests.
+func fragmentGraphWorld(t *testing.T) *Gen {
+	t.Helper()
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type Store struct{}
+
+type Cache struct{}
+
+type Greeter interface{ Greet() string }
+`)
+	store := types.NewPointer(pkg.Scope().Lookup("Store").Type())
+	cache := types.NewPointer(pkg.Scope().Lookup("Cache").Type())
+	greeter := pkg.Scope().Lookup("Greeter").Type()
+
+	g := New()
+	g.SetModule("example.com/app")
+	g.SetDirective("provider")
+	g.BindLazy(store, "db", func() (string, diag.Diagnostics) {
+		v := g.Var("conn")
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Var:  v, Fn: g.Import("example.com/app") + ".NewStore",
+			Err: ErrReturn, Type: store,
+		})
+		return v, nil
+	})
+	g.BindLazy(greeter, "", func() (string, diag.Diagnostics) {
+		conn, ds, ok := g.Instance(store, "db")
+		if !ok {
+			return "", ds
+		}
+		v := g.Var("greeter")
+		g.Node(&Select{
+			Base:    Base{Phase: PhaseWire, Origin: Origin{Directive: "provider:select"}},
+			Var:     v,
+			Iface:   "app.Greeter",
+			KeyExpr: `"fancy"`,
+			FmtPkg:  g.Import("fmt"),
+			Cases: []Case{{
+				Value: "fancy",
+				Body: []Node{&Assign{
+					Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+					Var:  "tuned", Expr: "app.Tune(" + conn + ")",
+				}},
+				Result: Call{
+					Base: Base{Origin: Origin{Directive: "provider"}},
+					Var:  "greeterFancy", Fn: "app.NewFancyGreeter",
+					Args: []string{"tuned"}, Type: greeter, Err: ErrNone,
+				},
+			}},
+		})
+		return v, ds
+	})
+	g.BindLazy(cache, "", func() (string, diag.Diagnostics) {
+		conn, ds, ok := g.Instance(store, "db")
+		if !ok {
+			return "", ds
+		}
+		v := g.Var("cache")
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Var:  v, Fn: g.Import("example.com/app") + ".NewCache",
+			Args: []string{conn}, Err: ErrReturn, Type: cache,
+		})
+		return v, ds
+	})
+	for _, cmd := range []struct {
+		name  string
+		roots []ScopeRoot
+	}{
+		{"alpha", []ScopeRoot{{Type: greeter}, {Type: cache}}},
+		{"beta", []ScopeRoot{{Type: greeter}}},
+	} {
+		s := g.AddScope("build"+upperFirst(cmd.name), token.Position{}, cmd.roots...)
+		g.AddCommandFunc(CommandFunc{
+			Name:  cmd.name,
+			Fn:    g.Import("example.com/app") + ".Run" + upperFirst(cmd.name),
+			Scope: s,
+		})
+	}
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	if _, err := g.Render(); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	return g
+}
+
+func TestGraphOccurrencesOfOneNodeShareALogicalID(t *testing.T) {
+	gr := fragmentGraphWorld(t).Graph()
+
+	alpha := nodeByID(t, gr, "alpha/conn")
+	beta := nodeByID(t, gr, "beta/conn")
+	if alpha.Node == "" || alpha.Node != beta.Node {
+		t.Fatalf("per-flow occurrences must share a node id, got %q and %q", alpha.Node, beta.Node)
+	}
+	if alpha.ID == beta.ID {
+		t.Fatalf("per-flow occurrences stay distinct entries, both %q", alpha.ID)
+	}
+	want := []string{"alpha", "beta"}
+	if !reflect.DeepEqual(alpha.Usage, want) || !reflect.DeepEqual(beta.Usage, want) {
+		t.Fatalf("usage = %v and %v, want %v", alpha.Usage, beta.Usage, want)
+	}
+}
+
+func TestGraphFlattenedSelectChildrenInheritTheirOwner(t *testing.T) {
+	gr := fragmentGraphWorld(t).Graph()
+
+	sel := nodeByID(t, gr, "alpha/greeter")
+	if sel.Node == "" {
+		t.Fatalf("select node missing a logical id: %+v", sel)
+	}
+	body := nodeByID(t, gr, "alpha/tuned")
+	if want := sel.Node + "/case@0/body@0"; body.Node != want {
+		t.Fatalf("case body id = %q, want %q", body.Node, want)
+	}
+	result := nodeByID(t, gr, "alpha/greeterFancy")
+	if want := sel.Node + "/case@0/result"; result.Node != want {
+		t.Fatalf("case result id = %q, want %q", result.Node, want)
+	}
+	for _, child := range []GraphNode{body, result} {
+		if !reflect.DeepEqual(child.Usage, sel.Usage) || child.Fragment != sel.Fragment {
+			t.Fatalf("child %q = usage %v, fragment %q; want the owner's %v, %q",
+				child.ID, child.Usage, child.Fragment, sel.Usage, sel.Fragment)
+		}
+	}
+	if beta := nodeByID(t, gr, "beta/tuned"); beta.Node != body.Node {
+		t.Fatalf("flattened children join across flows: %q != %q", beta.Node, body.Node)
+	}
+}
+
+func TestGraphNodesNameTheirExtractedRegion(t *testing.T) {
+	gr := fragmentGraphWorld(t).Graph()
+
+	conn := nodeByID(t, gr, "alpha/conn")
+	if conn.Fragment != "buildDb" {
+		t.Fatalf("region member fragment = %q, want buildDb", conn.Fragment)
+	}
+	if sel := nodeByID(t, gr, "alpha/greeter"); sel.Fragment != "buildDb" {
+		t.Fatalf("region member fragment = %q, want buildDb", sel.Fragment)
+	}
+	inline := nodeByID(t, gr, "alpha/cache")
+	if inline.Fragment != "" {
+		t.Fatalf("inline node must carry no fragment, got %q", inline.Fragment)
+	}
+	if !reflect.DeepEqual(inline.Usage, []string{"alpha"}) {
+		t.Fatalf("inline usage = %v, want [alpha]", inline.Usage)
+	}
+}
+
+func TestGraphListsExtractedFragments(t *testing.T) {
+	gr := fragmentGraphWorld(t).Graph()
+
+	conn := nodeByID(t, gr, "alpha/conn")
+	want := []GraphFragment{{ID: conn.Node, Usage: []string{"alpha", "beta"}, Fn: "buildDb"}}
+	if !reflect.DeepEqual(gr.Fragments, want) {
+		t.Fatalf("fragments = %+v, want %+v", gr.Fragments, want)
 	}
 }
 
@@ -751,4 +951,210 @@ func rootField(t *testing.T, out []byte, field string) (string, bool) {
 	}
 	t.Fatal("no scope root in marshaled graph")
 	return "", false
+}
+
+func TestGraphJSONSpellsTheNewFields(t *testing.T) {
+	g := fragmentGraphWorld(t)
+	if _, err := g.Render(); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	data, err := json.Marshal(g.Graph())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	text := string(data)
+	for _, key := range []string{`"node":`, `"usage":`, `"fragment":"buildDb"`, `"fragments":[`, `"fn":"buildDb"`} {
+		if !strings.Contains(text, key) {
+			t.Fatalf("marshaled graph missing %s:\n%s", key, text)
+		}
+	}
+
+	// A graph with no extracted regions spells node and usage but no
+	// fragment assignments.
+	plain := New()
+	plain.SetModule("example.com/app")
+	plain.SetDirective("provider")
+	plain.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "v", Expr: "app.New()"})
+	if _, err := plain.Render(); err != nil {
+		t.Fatalf("Render plain: %v", err)
+	}
+	data, err = json.Marshal(plain.Graph())
+	if err != nil {
+		t.Fatalf("marshal plain: %v", err)
+	}
+	for _, key := range []string{`"fragment":`, `"fragments":`} {
+		if strings.Contains(string(data), key) {
+			t.Fatalf("region-free graph must omit %s:\n%s", key, data)
+		}
+	}
+}
+
+func TestGraphFragmentsMatchRenderedFunctions(t *testing.T) {
+	g := fragmentGraphWorld(t)
+	src, err := g.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	gr := g.Graph()
+	if len(gr.Fragments) == 0 {
+		t.Fatal("no fragments exported")
+	}
+	exported := map[string]bool{}
+	for _, f := range gr.Fragments {
+		exported[f.Fn] = true
+	}
+	rendered := map[string]bool{}
+	for _, line := range strings.Split(string(src), "\n") {
+		if !strings.HasPrefix(line, "func ") {
+			continue
+		}
+		name := strings.TrimPrefix(line, "func ")
+		if i := strings.IndexByte(name, '('); i > 0 {
+			name = name[:i]
+		}
+		if name != "run" && name != "main" {
+			rendered[name] = true
+		}
+	}
+	if !reflect.DeepEqual(exported, rendered) {
+		t.Fatalf("exported fragments %v differ from rendered functions %v", exported, rendered)
+	}
+}
+
+func TestGraphFragmentIDsDistinctAcrossSharedConfig(t *testing.T) {
+	// A config load in disjoint regions keeps a distinct fragment ID in each flow.
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type Cfg struct{}
+
+type A struct{}
+
+type B struct{}
+`)
+	cfg := types.NewPointer(pkg.Scope().Lookup("Cfg").Type())
+	ta := types.NewPointer(pkg.Scope().Lookup("A").Type())
+	tb := types.NewPointer(pkg.Scope().Lookup("B").Type())
+	g := New()
+	g.SetModule("example.com/app")
+	g.SetDirective("provider")
+	g.BindLazy(cfg, "", func() (string, diag.Diagnostics) {
+		g.Node(&ConfigLoad{
+			Base: Base{Phase: PhaseConfig, Origin: Origin{Directive: "config"}},
+			Var:  "appCfg", Pkg: g.Import("github.com/gofabrik/fabrik/config"),
+			Type: "app.Cfg",
+		})
+		return "appCfg", nil
+	})
+	chain := func(tt types.Type, name, base string) {
+		g.BindLazy(tt, name, func() (string, diag.Diagnostics) {
+			cv, ds, ok := g.Instance(cfg, "")
+			if !ok {
+				return "", ds
+			}
+			v := g.Var(base)
+			g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+				Var: v, Fn: g.Import("example.com/app") + ".New" + strings.ToUpper(base[:1]) + base[1:],
+				Args: []string{cv}, Err: ErrReturn, Type: tt})
+			v2 := g.Var(base + "Twin")
+			g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+				Var: v2, Fn: g.Import("example.com/app") + ".Wrap", Args: []string{v}, Err: ErrNone, Type: tt})
+			return v, ds
+		})
+	}
+	chain(ta, "left", "alpha")
+	chain(tb, "right", "bravo")
+	addCmd := func(name string, root ScopeRoot) {
+		s := g.AddScope("build"+upperFirst(name), token.Position{}, root)
+		g.AddCommandFunc(CommandFunc{Name: name, Fn: "app.Run" + upperFirst(name), Scope: s})
+	}
+	addCmd("one", ScopeRoot{Type: ta, Name: "left"})
+	addCmd("two", ScopeRoot{Type: ta, Name: "left"})
+	addCmd("three", ScopeRoot{Type: tb, Name: "right"})
+	addCmd("four", ScopeRoot{Type: tb, Name: "right"})
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	if _, err := g.Render(); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	gr := g.Graph()
+	if len(gr.Fragments) != 2 {
+		t.Fatalf("fragments = %+v, want two regions", gr.Fragments)
+	}
+	if gr.Fragments[0].ID == gr.Fragments[1].ID {
+		t.Fatalf("fragment ids must be distinct: %+v", gr.Fragments)
+	}
+}
+
+func TestGraphReappendedNodeFoldsIntoOwningEntry(t *testing.T) {
+	// Repeated occurrences share identity and usage without changing the region ID.
+	pkg := typecheckScopePkg(t, "example.com/app", `package app
+
+type Store struct{}
+`)
+	store := types.NewPointer(pkg.Scope().Lookup("Store").Type())
+	g := New()
+	g.SetModule("example.com/app")
+	g.SetDirective("provider")
+	g.BindLazy(store, "db", func() (string, diag.Diagnostics) {
+		v := g.Var("conn")
+		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Var: v, Fn: g.Import("example.com/app") + ".NewStore", Err: ErrReturn, Type: store})
+		ping := &Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Fn: "app.Ping", Args: []string{v}, Err: ErrNone}
+		g.Node(ping)
+		g.Node(ping)
+		return v, nil
+	})
+	for _, name := range []string{"alpha", "beta"} {
+		s := g.AddScope("build"+upperFirst(name), token.Position{}, ScopeRoot{Type: store, Name: "db"})
+		g.AddCommandFunc(CommandFunc{Name: name, Fn: "app.Run" + upperFirst(name), Scope: s})
+	}
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	if _, err := g.Render(); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	gr := g.Graph()
+	if len(gr.Fragments) != 1 {
+		t.Fatalf("fragments = %+v, want one region", gr.Fragments)
+	}
+	frag := gr.Fragments[0]
+	if frag.ID == "" {
+		t.Fatalf("fragment id empty: %+v", frag)
+	}
+	idOwned := false
+	for _, n := range gr.Nodes {
+		if n.Node == frag.ID && n.Fragment == frag.Fn {
+			idOwned = true
+		}
+	}
+	if !idOwned {
+		t.Fatalf("fragment id %q names no node of region %q: %+v", frag.ID, frag.Fn, gr.Nodes)
+	}
+	var pings []GraphNode
+	for _, n := range gr.Nodes {
+		if n.Fn == "app.Ping" {
+			pings = append(pings, n)
+		}
+	}
+	if len(pings) < 2 {
+		t.Fatalf("re-appended call missing occurrences: %+v", pings)
+	}
+	want := pings[0]
+	for _, p := range pings[1:] {
+		if p.Node != want.Node || !reflect.DeepEqual(p.Usage, want.Usage) || p.Fragment != want.Fragment {
+			t.Fatalf("occurrences diverge: %+v vs %+v", want, p)
+		}
+	}
+	if want.Fragment == "" || !reflect.DeepEqual(want.Usage, []string{"alpha", "beta"}) {
+		t.Fatalf("folded attribution wrong: %+v", want)
+	}
 }

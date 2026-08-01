@@ -17,9 +17,7 @@ type Host struct {
 	mw     *Middleware
 
 	deferred []func(*gen.Gen) diag.Diagnostics
-	building map[any]bool
-	built    map[any]bool
-	demanded map[any]bool
+	building bool
 	epilogue map[*gen.Gen]bool
 }
 
@@ -27,8 +25,7 @@ type Host struct {
 func NewHost(groups *Group, routes *routeTable, mw *Middleware) *Host {
 	h := &Host{
 		groups: groups, routes: routes, mw: mw,
-		building: map[any]bool{}, built: map[any]bool{},
-		demanded: map[any]bool{}, epilogue: map[*gen.Gen]bool{},
+		epilogue: map[*gen.Gen]bool{},
 	}
 	mw.host = h
 	return h
@@ -40,11 +37,20 @@ func (h *Host) replayDemandedRouterAfterScope(g *gen.Gen) {
 	}
 	h.epilogue[g] = true
 	g.ScopeEpilogue(func() diag.Diagnostics {
-		if !h.demanded[g.ScopeID()] {
+		if !g.SingletonDemanded(routerPath) {
 			return nil
 		}
+		restore := g.SingletonAttribution(routerPath)
+		defer restore()
 		return h.FinishBundle(g)
 	})
+}
+
+// routerSingleton returns the shared router and records its fragment-signature type.
+func routerSingleton(g *gen.Gen) string {
+	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+	g.DeclareVarType(r, "*"+g.Import(routerPath)+".Router", "nil")
+	return r
 }
 
 func (h *Host) record(fn func(*gen.Gen) diag.Diagnostics) {
@@ -53,23 +59,29 @@ func (h *Host) record(fn func(*gen.Gen) diag.Diagnostics) {
 
 // Router returns the router after emitting its pending registrations.
 func (h *Host) Router(g *gen.Gen) (string, diag.Diagnostics) {
-	r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+	r := routerSingleton(g)
 	return r, h.FinishBundle(g)
 }
 
-// FinishBundle emits every recorded registration once per scope, in insertion order.
+// FinishBundle emits recorded registrations once per scope in insertion order.
 func (h *Host) FinishBundle(g *gen.Gen) diag.Diagnostics {
-	id := g.ScopeID()
-	if h.built[id] || h.building[id] {
+	if h.building {
 		return nil
 	}
-	h.building[id] = true
 	var ds diag.Diagnostics
-	for _, fn := range h.deferred {
-		ds = append(ds, fn(g)...)
-	}
-	h.building[id] = false
-	h.built[id] = true
+	g.OnceValue(routerPath+":bundle", func() string {
+		h.building = true
+		defer func() { h.building = false }()
+		// Attribute registrations to every flow that demands the router.
+		restore := g.SingletonAttribution(routerPath)
+		defer restore()
+		endBatch := g.BeginBatch("router")
+		defer endBatch()
+		for _, fn := range h.deferred {
+			ds = append(ds, fn(g)...)
+		}
+		return ""
+	})
 	return ds
 }
 
@@ -135,7 +147,7 @@ func (h *Host) EmitHandle(g *gen.Gen, pattern string, pos token.Position, handle
 		return diag.Diagnostics{d}
 	}
 	h.record(func(g *gen.Gen) diag.Diagnostics {
-		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		r := routerSingleton(g)
 		hexpr, ds := handler()
 		g.Node(&gen.Route{
 			Base:    gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: pos}},
@@ -162,7 +174,7 @@ func (h *Host) EmitRoute(g *gen.Gen, args RouteArgs, recvObj *types.TypeName, po
 
 	h.record(func(g *gen.Gen) diag.Diagnostics {
 		var ds diag.Diagnostics
-		r := g.Singleton(routerPath, "r", g.Import(routerPath)+".New()")
+		r := routerSingleton(g)
 
 		hexpr, hds := handler()
 		ds = append(ds, hds...)

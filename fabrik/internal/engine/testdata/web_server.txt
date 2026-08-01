@@ -101,30 +101,18 @@ func run() int {
 			{
 				Name: "serve",
 				Run: func(ctx cli.Context) (err error) {
-					server, err := buildServe(ctx)
+					r := router.New()
+					webHandlers := &web.Handlers{}
+					webTemplates, err := templates.Load(web.Templates, "templates")
 					if err != nil {
 						return err
 					}
-					return web.Serve(ctx, server)
+					adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
+					r.Method("GET", "/home", adapter.Wrap(webHandlers.Home))
+					return web.Serve(ctx, httpserver.New(r, nil))
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildServe(ctx context.Context) (*httpserver.Server, error) {
-	// Providers
-	webTemplates, err := templates.Load(web.Templates, "templates")
-	if err != nil {
-		return nil, err
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
-
-	r := router.New()
-	webHandlers := &web.Handlers{}
-
-	// Register
-	r.Method("GET", "/home", adapter.Wrap(webHandlers.Home))
-	return httpserver.New(r, nil), nil
 }

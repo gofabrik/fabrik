@@ -10,6 +10,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"text/template"
+
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 )
 
 // all: is required - the starter carries the app's own _layout.html
@@ -146,7 +148,11 @@ func newCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := wire(abs); err != nil {
+	opts, _, err := resolveOptions(abs, genconfig.Overrides{})
+	if err != nil {
+		return err
+	}
+	if _, err := wireWith(abs, opts); err != nil {
 		return err
 	}
 	// Generated-only dependencies must stay at the CLI's version after the final tidy.

@@ -220,3 +220,44 @@ func hasLabel(items []completionItem, label string) bool {
 	}
 	return false
 }
+
+func TestLSPPublishesConfigDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	write := func(rel, content string) {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module app\n\ngo 1.26\n")
+	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
+	write("fabrik.yaml", "generate:\n  emit: bogus\n")
+	webSrc := `package web
+
+import "net/http"
+
+//fabrik:http GET /
+func Index(w http.ResponseWriter, r *http.Request) {}
+`
+	write("web/web.go", webSrc)
+	uri := uriFromFile(filepath.Join(dir, "web", "web.go"))
+	yamlURI := uriFromFile(filepath.Join(dir, "fabrik.yaml"))
+
+	c := startLSP(t)
+	c.request(1, "initialize", map[string]any{})
+	c.notifyServer("initialized", map[string]any{})
+	c.notifyServer("textDocument/didOpen", didOpenParams{
+		TextDocument: textDocumentItem{URI: uri, LanguageID: "go", Version: 1, Text: webSrc},
+	})
+
+	p := c.diagnostics(yamlURI)
+	if len(p.Diagnostics) != 1 || !strings.Contains(p.Diagnostics[0].Message, `invalid emit "bogus"`) {
+		t.Fatalf("config diagnostics = %+v, want the invalid-emit error on fabrik.yaml", p.Diagnostics)
+	}
+}

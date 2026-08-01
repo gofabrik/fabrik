@@ -48,37 +48,87 @@ func run() int {
 				Name: "config",
 				Help: "Print the resolved configuration",
 				Run: func(ctx cli.Context) (err error) {
-					httpConfig, databaseConfig, err := buildConfig(ctx)
+					configOpts, err := configOptions()
 					if err != nil {
 						return err
 					}
-					return shared.Config(ctx, httpConfig, databaseConfig)
+					if err := initLogger(ctx, configOpts); err != nil {
+						return err
+					}
+					sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(configOpts,
+						config.Section("http"),
+					)...)
+					if err != nil {
+						return err
+					}
+					sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(configOpts,
+						config.Section("database"),
+					)...)
+					if err != nil {
+						return err
+					}
+					return shared.Config(ctx, sharedHTTPConfig, sharedDatabaseConfig)
 				},
 			},
 			{
 				Name: "run",
 				Help: "Start the HTTP server and background worker",
 				Run: func(ctx cli.Context) (err error) {
-					server, runner, cleanup, err := buildRun(ctx)
+					configOpts, err := configOptions()
+					if err != nil {
+						return err
+					}
+					if err := initLogger(ctx, configOpts); err != nil {
+						return err
+					}
+					sharedSqlDBDatabase, cleanup, err := buildDatabase(configOpts)
 					if err != nil {
 						return err
 					}
 					defer func() {
 						err = errors.Join(err, cleanup())
 					}()
-					return shared.Run(ctx, server, runner)
+					server, jobsManager, cleanup2, err := buildServer(configOpts, sharedSqlDBDatabase)
+					if err != nil {
+						return err
+					}
+					defer func() {
+						err = errors.Join(err, cleanup2())
+					}()
+					sharedJobsConfig2, err := config.Load[shared.JobsConfig](append(configOpts,
+						config.Section("jobs"),
+					)...)
+					if err != nil {
+						return err
+					}
+					sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
+					return shared.Run(ctx, server, jobs.NewRunner(jobsManager, sharedJobsRuntimeConfig))
 				},
 			},
 			{
 				Name: "serve",
 				Help: "Start only the HTTP server",
 				Run: func(ctx cli.Context) (err error) {
-					server, cleanup, err := buildServe(ctx)
+					configOpts, err := configOptions()
+					if err != nil {
+						return err
+					}
+					if err := initLogger(ctx, configOpts); err != nil {
+						return err
+					}
+					sharedSqlDBDatabase, cleanup, err := buildDatabase(configOpts)
 					if err != nil {
 						return err
 					}
 					defer func() {
 						err = errors.Join(err, cleanup())
+					}()
+					server, _, cleanup2, err := buildServer(configOpts, sharedSqlDBDatabase)
+					if err != nil {
+						return err
+					}
+					defer func() {
+						err = errors.Join(err, cleanup2())
 					}()
 					return shared.Serve(ctx, server)
 				},
@@ -92,14 +142,24 @@ func run() int {
 						Help:  "Apply pending database migrations",
 						Flags: cli.Flags(migrateDryRun),
 						Run: func(ctx cli.Context) (err error) {
-							db, sources, cleanup, err := buildMigrate(ctx)
+							configOpts, err := configOptions()
+							if err != nil {
+								return err
+							}
+							if err := initLogger(ctx, configOpts); err != nil {
+								return err
+							}
+							sharedSqlDBDatabase, cleanup, err := buildDatabase(configOpts)
 							if err != nil {
 								return err
 							}
 							defer func() {
 								err = errors.Join(err, cleanup())
 							}()
-							return shared.Migrate(ctx, db, sources, migrateDryRun.Get(ctx))
+							migrationSources := migrations.Sources{
+								{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
+							}
+							return shared.Migrate(ctx, sharedSqlDBDatabase, migrationSources, migrateDryRun.Get(ctx))
 						},
 					},
 				},
@@ -109,9 +169,8 @@ func run() int {
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
 }
 
-func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfig, error) {
+func configOptions() ([]config.Option, error) {
 	var err error
-	// Config
 	fabrikEnv := os.Getenv("FABRIK_ENV")
 	switch fabrikEnv {
 	case "development", "production":
@@ -123,156 +182,123 @@ func buildConfig(ctx context.Context) (*shared.HTTPConfig, *shared.DatabaseConfi
 		}
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	fabrikConfigOpts := []config.Option{
+	configOpts := []config.Option{
 		config.FileOptional("config.yaml"),
 		config.File("config." + fabrikEnv + ".yaml"),
 	}
 	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+		configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 	}
-	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("http"),
-	)...)
-	if err != nil {
-		return nil, nil, err
-	}
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("database"),
-	)...)
-	if err != nil {
-		return nil, nil, err
-	}
-	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("log"),
-	)...)
-	if err != nil {
-		return nil, nil, err
-	}
+	configOpts = append(configOpts, config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"))
 
-	// Wire hooks: config exists, providers do not
-	if err := shared.InitLogger(ctx, sharedLogConfig); err != nil {
-		return nil, nil, err
-	}
-	return sharedHTTPConfig, sharedDatabaseConfig, nil
+	return configOpts, nil
 }
 
-func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() error, error) {
-	var err error
-	var sharedSqlDBDatabaseClose, sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
-	unwind := func(err error) error {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBDatabaseClose != nil {
-			err = errors.Join(err, sharedSqlDBDatabaseClose())
-		}
+func initLogger(ctx context.Context, configOpts []config.Option) error {
+	sharedLogConfig, err := config.Load[shared.LogConfig](append(configOpts,
+		config.Section("log"),
+	)...)
+	if err != nil {
 		return err
 	}
-	// Config
-	fabrikEnv := os.Getenv("FABRIK_ENV")
-	switch fabrikEnv {
-	case "development", "production":
-	default:
-		if fabrikEnv == "" {
-			err = fmt.Errorf("FABRIK_ENV is required: development or production")
-		} else {
-			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
+
+	if err := shared.InitLogger(ctx, sharedLogConfig); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func buildDatabase(configOpts []config.Option) (*sql.DB, func() error, error) {
+	var sharedSqlDBDatabaseClose func() error
+	cleanup := func() error {
+		var errs []error
+		if sharedSqlDBDatabaseClose != nil {
+			errs = append(errs, sharedSqlDBDatabaseClose())
 		}
+		return errors.Join(errs...)
 	}
+	unwind := func(err error) error {
+		return errors.Join(err, cleanup())
+	}
+	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(configOpts,
+		config.Section("database"),
+	)...)
 	if err != nil {
-		return nil, nil, nil, unwind(err)
+		return nil, nil, unwind(err)
 	}
-	fabrikConfigOpts := []config.Option{
-		config.FileOptional("config.yaml"),
-		config.File("config." + fabrikEnv + ".yaml"),
+
+	sharedSqlDBDatabase, sharedSqlDBDatabaseClose, err := shared.NewDB(sharedDatabaseConfig)
+	if err != nil {
+		return nil, nil, unwind(err)
 	}
-	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
+
+	return sharedSqlDBDatabase, cleanup, nil
+}
+
+func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*httpserver.Server, *jobs.Manager, func() error, error) {
+	var err error
+	var sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
+	cleanup := func() error {
+		var errs []error
+		if sharedStorageClose != nil {
+			errs = append(errs, sharedStorageClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			errs = append(errs, sharedRatelimitMemoryStoreClose())
+		}
+		if sharedCacheStoreClose != nil {
+			errs = append(errs, sharedCacheStoreClose())
+		}
+		return errors.Join(errs...)
 	}
-	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+	unwind := func(err error) error {
+		return errors.Join(err, cleanup())
+	}
+	// Config
+	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(configOpts,
 		config.Section("http"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedJobsConfig2, err := config.Load[shared.JobsConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("jobs"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("database"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("log"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+
+	assetmapperOptions, err := config.Load[assetmapper.Options](append(configOpts,
 		config.Section("assets"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("session"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(configOpts,
 		config.Section("crossorigin"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("mailer"),
+	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
+		config.Section("session"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("storage"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	webGreeterConfig, err := config.Load[web.GreeterConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
+	webGreeterConfig, err := config.Load[web.GreeterConfig](append(configOpts,
 		config.Section("greeter"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
-	// Wire hooks: config exists, providers do not
-	if err := shared.InitLogger(ctx, sharedLogConfig); err != nil {
+	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(configOpts,
+		config.Section("mailer"),
+	)...)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(configOpts,
+		config.Section("storage"),
+	)...)
+	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 
@@ -310,37 +336,11 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	sharedErrorPages := &shared.ErrorPages{
 		Templates: appTemplates,
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-	webStatus := &web.Status{
-		Templates: appTemplates,
-	}
-
-	sharedSqlDBDatabase, sharedSqlDBDatabaseClose, err := shared.NewDB(sharedDatabaseConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedJobsConfig := shared.NewJobsConfig()
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -354,37 +354,24 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	default:
 		return nil, nil, nil, unwind(fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind))
 	}
-	webCache, err := web.NewGreetingCache(sharedCacheStore)
+	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	webHandlers := &web.Handlers{
-		Greeter: webGreeter,
-		Queries: sharedQueryDB,
-		Session: sharedSessionManager,
-		Flash:   sharedFlash,
-		Jobs:    jobsManager,
-		Cache:   webCache,
+	sharedFlash, err := shared.NewFlash(sharedSessionManager)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
 	}
-	webAPI := &web.API{
-		Greeter: webGreeter,
-	}
-	webGreetings := &web.Greetings{
-		Session: sharedSessionManager,
-		Flash:   sharedFlash,
-		Queries: sharedQueryDB,
-		Jobs:    jobsManager,
-		Cache:   webCache,
-	}
-
-	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
+	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-	sharedJobsRuntimeConfig := shared.JobsWorker(sharedJobsConfig2)
-
+	sharedJobsConfig := shared.NewJobsConfig()
+	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	// shared.Mailer, selected by mailer.kind
 	var mailTransport shared.Mailer
 	switch sharedMailerConfig.Kind {
@@ -395,293 +382,17 @@ func buildRun(ctx context.Context) (*httpserver.Server, *jobs.Runner, func() err
 	default:
 		return nil, nil, nil, unwind(fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind))
 	}
-
 	sharedMailtemplatesRenderer, err := shared.NewEmailTemplates()
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
-	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
-
-	sharedStorage, sharedStorageClose, err := shared.NewStorage(sharedStorageConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	webFiles := &web.Files{
-		Store: sharedStorage,
-	}
-
-	r := router.New()
-	webDocs := &web.Docs{
-		Router: r,
-	}
-
-	// Middleware
-	r.Use(shared.Logged)
-	r.Use(shared.Recovered)
-	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
-	r.Use(secureHeadersMiddlewareMW)
-	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
-	r.Use(crossOriginMiddlewareMW)
-	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
-	r.Use(sessionMiddlewareMW)
-
-	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	// Register
-	r.Handle("/assets/", assetServer.Handler())
-	r.NotFound(sharedErrorPages.NotFound)
-	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-
-	// Jobs
-	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
-		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
-	}); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
-	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
-	r.Method("GET", "/uptime", webStatus.Uptime)
-	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
-	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update), greetlimitMW)
-	r.Method("GET", "/routes", webDocs.List)
-	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
-	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
-	r.Method("GET", "/files/{key...}", webFiles.Serve)
-
-	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
-		return web.RecordVisit(c, sharedQueryDB, m)
-	}); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
-		return web.PurgeGreetings(c, sharedQueryDB)
-	}); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if sharedStorageClose != nil {
-			errs = append(errs, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			errs = append(errs, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			errs = append(errs, sharedCacheStoreClose())
-		}
-		if sharedSqlDBDatabaseClose != nil {
-			errs = append(errs, sharedSqlDBDatabaseClose())
-		}
-		return errors.Join(errs...)
-	}
-	return httpserver.New(r, sharedHttpServer), jobs.NewRunner(jobsManager, sharedJobsRuntimeConfig), cleanup, nil
-}
-
-func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
-	var err error
-	var sharedSqlDBDatabaseClose, sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
-	unwind := func(err error) error {
-		if sharedStorageClose != nil {
-			err = errors.Join(err, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			err = errors.Join(err, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			err = errors.Join(err, sharedCacheStoreClose())
-		}
-		if sharedSqlDBDatabaseClose != nil {
-			err = errors.Join(err, sharedSqlDBDatabaseClose())
-		}
-		return err
-	}
-	// Config
-	fabrikEnv := os.Getenv("FABRIK_ENV")
-	switch fabrikEnv {
-	case "development", "production":
-	default:
-		if fabrikEnv == "" {
-			err = fmt.Errorf("FABRIK_ENV is required: development or production")
-		} else {
-			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
-		}
-	}
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	fabrikConfigOpts := []config.Option{
-		config.FileOptional("config.yaml"),
-		config.File("config." + fabrikEnv + ".yaml"),
-	}
-	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
-	}
-	sharedHTTPConfig, err := config.Load[shared.HTTPConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("http"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("database"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("log"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	assetmapperOptions, err := config.Load[assetmapper.Options](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("assets"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("session"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("crossorigin"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedMailerConfig, err := config.Load[shared.MailerConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("mailer"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedStorageConfig, err := config.Load[shared.StorageConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("storage"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	webGreeterConfig, err := config.Load[web.GreeterConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("greeter"),
-	)...)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	// Wire hooks: config exists, providers do not
-	if err := shared.InitLogger(ctx, sharedLogConfig); err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	// Providers
-	assetKind, err := assetmapperOptions.Mode()
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	var assetServer assetmapper.Server
-	switch assetKind {
-	case assetmapper.KindSource:
-		assetServer, err = assetmapper.NewSource([]assetmapper.Root{
-			{FS: os.DirFS("shared/assets")},
-			{FS: os.DirFS("web/assets")},
-		}, nil)
-	case assetmapper.KindCompiled:
-		assetServer, err = assetmapper.Build([]assetmapper.Root{
-			{FS: shared.Assets, Dir: "assets"},
-			{FS: web.Assets, Dir: "assets"},
-		}, nil)
-	}
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	appTemplates, err := templates.LoadSources([]templates.Source{
-		{FS: shared.Templates, Dir: "templates"},
-		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), templates.FuncMap{
-		"humanizeAge": shared.HumanizeAge,
-		"shout":       shared.Shout,
-	})
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-	webStatus := &web.Status{
-		Templates: appTemplates,
-	}
-
-	sharedSqlDBDatabase, sharedSqlDBDatabaseClose, err := shared.NewDB(sharedDatabaseConfig)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedJobsConfig := shared.NewJobsConfig()
-	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
 	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDBDatabase)
 	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	// web.Greeter, selected by greeter.kind
-	var webGreeter web.Greeter
-	switch webGreeterConfig.Kind {
-	case "goodbye":
-		webGreeter = web.NewGoodbyeGreeter()
-	case "hello":
-		webGreeter = web.NewHelloGreeter()
-	default:
-		return nil, nil, unwind(fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind))
+		return nil, nil, nil, unwind(err)
 	}
 	webCache, err := web.NewGreetingCache(sharedCacheStore)
 	if err != nil {
-		return nil, nil, unwind(err)
+		return nil, nil, nil, unwind(err)
 	}
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
@@ -691,9 +402,18 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+	webStatus := &web.Status{
+		Templates: appTemplates,
+	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
+
+	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
+	r := router.New()
+
 	webGreetings := &web.Greetings{
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
@@ -701,43 +421,16 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-
-	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-
-	// shared.Mailer, selected by mailer.kind
-	var mailTransport shared.Mailer
-	switch sharedMailerConfig.Kind {
-	case "log":
-		mailTransport = shared.NewLogMailer()
-	case "smtp":
-		mailTransport = shared.NewSMTPMailer(sharedMailerConfig)
-	default:
-		return nil, nil, unwind(fmt.Errorf("no shared.Mailer implementation for %q", sharedMailerConfig.Kind))
-	}
-
-	sharedMailtemplatesRenderer, err := shared.NewEmailTemplates()
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-
 	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
-
+	webDocs := &web.Docs{
+		Router: r,
+	}
 	sharedStorage, sharedStorageClose, err := shared.NewStorage(sharedStorageConfig)
 	if err != nil {
-		return nil, nil, unwind(err)
+		return nil, nil, nil, unwind(err)
 	}
 	webFiles := &web.Files{
 		Store: sharedStorage,
-	}
-
-	r := router.New()
-	webDocs := &web.Docs{
-		Router: r,
 	}
 
 	// Middleware
@@ -749,28 +442,15 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
-
 	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
 	if err != nil {
-		return nil, nil, unwind(err)
+		return nil, nil, nil, unwind(err)
 	}
 
 	// Register
 	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(sharedErrorPages.NotFound)
 	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
-
-	// Jobs
-	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
-		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
-	}); err != nil {
-		return nil, nil, unwind(err)
-	}
-
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
 	r.Method("GET", "/uptime", webStatus.Uptime)
@@ -778,111 +458,33 @@ func buildServe(ctx context.Context) (*httpserver.Server, func() error, error) {
 	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
 	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update), greetlimitMW)
 	r.Method("GET", "/routes", webDocs.List)
+
+	// Jobs
+	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
+		return shared.SendGreetingNotification(c, mailTransport, sharedMailerConfig, sharedMailtemplatesRenderer, m)
+	}); err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
+		return web.RecordVisit(c, sharedQueryDB, m)
+	}); err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
+		return web.PurgeGreetings(c, sharedQueryDB)
+	}); err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+
 	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
 	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
-	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
-		return web.RecordVisit(c, sharedQueryDB, m)
-	}); err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
-		return web.PurgeGreetings(c, sharedQueryDB)
-	}); err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if sharedStorageClose != nil {
-			errs = append(errs, sharedStorageClose())
-		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			errs = append(errs, sharedRatelimitMemoryStoreClose())
-		}
-		if sharedCacheStoreClose != nil {
-			errs = append(errs, sharedCacheStoreClose())
-		}
-		if sharedSqlDBDatabaseClose != nil {
-			errs = append(errs, sharedSqlDBDatabaseClose())
-		}
-		return errors.Join(errs...)
-	}
-	return httpserver.New(r, sharedHttpServer), cleanup, nil
-}
-
-func buildMigrate(ctx context.Context) (*sql.DB, migrations.Sources, func() error, error) {
-	var err error
-	var sharedSqlDBDatabaseClose func() error
-	unwind := func(err error) error {
-		if sharedSqlDBDatabaseClose != nil {
-			err = errors.Join(err, sharedSqlDBDatabaseClose())
-		}
-		return err
-	}
-	// Config
-	fabrikEnv := os.Getenv("FABRIK_ENV")
-	switch fabrikEnv {
-	case "development", "production":
-	default:
-		if fabrikEnv == "" {
-			err = fmt.Errorf("FABRIK_ENV is required: development or production")
-		} else {
-			err = fmt.Errorf("invalid FABRIK_ENV %q: want development or production", fabrikEnv)
-		}
-	}
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	fabrikConfigOpts := []config.Option{
-		config.FileOptional("config.yaml"),
-		config.File("config." + fabrikEnv + ".yaml"),
-	}
-	if fabrikEnv == "development" {
-		fabrikConfigOpts = append(fabrikConfigOpts, config.FileOptional("config.local.yaml"))
-	}
-	sharedDatabaseConfig, err := config.Load[shared.DatabaseConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("database"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedLogConfig, err := config.Load[shared.LogConfig](append(fabrikConfigOpts,
-		config.KnownSections("assets", "crossorigin", "database", "greeter", "http", "jobs", "log", "mailer", "session", "storage"),
-		config.Section("log"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	// Wire hooks: config exists, providers do not
-	if err := shared.InitLogger(ctx, sharedLogConfig); err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	// Providers
-	migrationSources := migrations.Sources{
-		{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
-	}
-
-	sharedSqlDBDatabase, sharedSqlDBDatabaseClose, err := shared.NewDB(sharedDatabaseConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if sharedSqlDBDatabaseClose != nil {
-			errs = append(errs, sharedSqlDBDatabaseClose())
-		}
-		return errors.Join(errs...)
-	}
-	return sharedSqlDBDatabase, migrationSources, cleanup, nil
+	return httpserver.New(r, sharedHttpServer), jobsManager, cleanup, nil
 }

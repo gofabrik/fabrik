@@ -45,14 +45,13 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
+		r := router.New()
 		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
 			{FS: web.Assets, Dir: "assets"},
 		}, nil)
 		if err != nil {
 			return err
 		}
-
-		r := router.New()
 
 		// Register
 		r.Handle("/assets/", assetCompiled.Handler())

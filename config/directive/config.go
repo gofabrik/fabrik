@@ -20,9 +20,6 @@ type Config struct {
 	byType    map[string]*Node // TypeString of *T -> node
 	bySection map[string]*Node
 	nodes     []*Node
-
-	// preludes caches generated variables per flow; nil identifies the default flow.
-	preludes map[any]preludeVars
 }
 
 type preludeVars struct {
@@ -32,7 +29,7 @@ type preludeVars struct {
 
 // New returns the config directive for one generation run.
 func New() *Config {
-	return &Config{byType: map[string]*Node{}, bySection: map[string]*Node{}, preludes: map[any]preludeVars{}}
+	return &Config{byType: map[string]*Node{}, bySection: map[string]*Node{}}
 }
 
 func (*Config) Name() string { return "config" }
@@ -163,7 +160,7 @@ func (c *Config) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	ptr := types.NewPointer(nd.named)
-	g.BindLazy(ptr, "", func() (string, diag.Diagnostics) {
+	g.BindLazyAt(ptr, "", nd.Pos(), func() (string, diag.Diagnostics) {
 		v, load := c.LoadNode(nd, g, gen.PhaseConfig)
 		g.Node(load)
 		return v, nil
@@ -179,13 +176,6 @@ func (c *Config) LoadNode(nd *Node, g *gen.Gen, phase gen.Phase) (string, *gen.C
 	cfgPkg := g.Import(configPath)
 	prelude := c.prelude(g, cfgPkg)
 	var opts []string
-	if known := c.knownSections(); known != nil {
-		quoted := make([]string, len(known))
-		for i, k := range known {
-			quoted[i] = fmt.Sprintf("%q", k)
-		}
-		opts = append(opts, fmt.Sprintf("%s.KnownSections(%s)", cfgPkg, strings.Join(quoted, ", ")))
-	}
 	if nd.section != "" {
 		opts = append(opts, fmt.Sprintf("%s.Section(%q)", cfgPkg, nd.section))
 	}
@@ -202,12 +192,20 @@ func (c *Config) LoadNode(nd *Node, g *gen.Gen, phase gen.Phase) (string, *gen.C
 
 // prelude emits one shared set of layered config options in the Config phase for each flow.
 func (c *Config) prelude(g *gen.Gen, cfgPkg string) preludeVars {
-	if pv, ok := c.preludes[g.ScopeID()]; ok {
-		return pv
-	}
+	restore := g.SingletonAttribution(configPath + ":prelude")
+	defer restore()
+	packed := g.OnceValue(configPath+":prelude", func() string {
+		pv := c.emitPrelude(g, cfgPkg)
+		return pv.env + "\x00" + pv.opts
+	})
+	env, opts, _ := strings.Cut(packed, "\x00")
+	return preludeVars{env: env, opts: opts}
+}
+
+func (c *Config) emitPrelude(g *gen.Gen, cfgPkg string) preludeVars {
 	osPkg := g.Import("os")
 	fmtPkg := g.Import("fmt")
-	pv := preludeVars{env: g.Var("fabrikEnv"), opts: g.Var("fabrikConfigOpts")}
+	pv := preludeVars{env: g.Var("fabrikEnv"), opts: g.Var("configOpts")}
 	g.Node(&gen.Raw{
 		Base: gen.Base{Phase: gen.PhaseConfig, Origin: gen.Origin{Directive: c.Name()}},
 		Lines: []string{
@@ -225,20 +223,30 @@ func (c *Config) prelude(g *gen.Gen, cfgPkg string) preludeVars {
 		Defines: []string{pv.env},
 		Check:   true,
 	})
+	lines := []string{
+		pv.opts + " := []" + cfgPkg + ".Option{",
+		cfgPkg + `.FileOptional("config.yaml"),`,
+		cfgPkg + `.File("config." + ` + pv.env + ` + ".yaml"),`,
+		"}",
+		"if " + pv.env + ` == "development" {`,
+		pv.opts + " = append(" + pv.opts + ", " + cfgPkg + `.FileOptional("config.local.yaml"))`,
+		"}",
+	}
+	if known := c.knownSections(); known != nil {
+		quoted := make([]string, len(known))
+		for i, k := range known {
+			quoted[i] = fmt.Sprintf("%q", k)
+		}
+		lines = append(lines,
+			pv.opts+" = append("+pv.opts+", "+cfgPkg+".KnownSections("+strings.Join(quoted, ", ")+"))")
+	}
 	g.Node(&gen.Raw{
-		Base: gen.Base{Phase: gen.PhaseConfig, Uses: []string{pv.env}, Origin: gen.Origin{Directive: c.Name()}},
-		Lines: []string{
-			pv.opts + " := []" + cfgPkg + ".Option{",
-			cfgPkg + `.FileOptional("config.yaml"),`,
-			cfgPkg + `.File("config." + ` + pv.env + ` + ".yaml"),`,
-			"}",
-			"if " + pv.env + ` == "development" {`,
-			pv.opts + " = append(" + pv.opts + ", " + cfgPkg + `.FileOptional("config.local.yaml"))`,
-			"}",
-		},
+		Base:    gen.Base{Phase: gen.PhaseConfig, Uses: []string{pv.env}, Origin: gen.Origin{Directive: c.Name()}},
+		Lines:   lines,
 		Defines: []string{pv.opts},
 	})
-	c.preludes[g.ScopeID()] = pv
+	g.DeclareVarType(pv.env, "string", `""`)
+	g.DeclareVarType(pv.opts, "[]"+cfgPkg+".Option", "nil")
 	return pv
 }
 

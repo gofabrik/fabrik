@@ -70,45 +70,23 @@ func run() int {
 			{
 				Name: "ping",
 				Run: func(ctx cli.Context) (err error) {
-					db, audit, cleanup, err := buildPing(ctx)
+					sharedDB, sharedDBClose, err := shared.NewDB()
 					if err != nil {
 						return err
 					}
-					defer func() {
-						err = errors.Join(err, cleanup())
-					}()
-					return shared.Ping(ctx, db, audit)
+					if sharedDBClose != nil {
+						defer func() {
+							err = errors.Join(err, sharedDBClose())
+						}()
+					}
+					sharedAudit, err := shared.NewAudit(sharedDB)
+					if err != nil {
+						return err
+					}
+					return shared.Ping(ctx, sharedDB, sharedAudit)
 				},
 			},
 		},
 	}
 	return root.Exec(os.Args[1:], cli.WithSignalContext(ctx))
-}
-
-func buildPing(ctx context.Context) (*shared.DB, *shared.Audit, func() error, error) {
-	var sharedDBClose func() error
-	unwind := func(err error) error {
-		if sharedDBClose != nil {
-			err = errors.Join(err, sharedDBClose())
-		}
-		return err
-	}
-	// Providers
-	sharedDB, sharedDBClose, err := shared.NewDB()
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedAudit, err := shared.NewAudit(sharedDB)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if sharedDBClose != nil {
-			errs = append(errs, sharedDBClose())
-		}
-		return errors.Join(errs...)
-	}
-	return sharedDB, sharedAudit, cleanup, nil
 }

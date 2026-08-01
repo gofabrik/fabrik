@@ -46,6 +46,16 @@ func (g *Gen) InjectName(obj types.Object, selector string) (string, bool) {
 	return e.name, true
 }
 
+// SelectedName returns a selector's mapped provider name and marks the mapping consumed.
+func (g *Gen) SelectedName(obj types.Object, selector string) string {
+	name, ok := g.InjectName(obj, selector)
+	if !ok {
+		return ""
+	}
+	g.ConsumeInject(obj, selector)
+	return name
+}
+
 // ConsumeInject marks a mapping as used by generated wiring.
 func (g *Gen) ConsumeInject(obj types.Object, selector string) {
 	if e, ok := g.inject[injectKey{obj, selector}]; ok {
@@ -105,22 +115,22 @@ func (g *Gen) BindingNames(t types.Type) []string {
 	return names
 }
 
-// MissingBinding returns a naming-specific diagnostic, or ok=false when an unnamed failure is unrelated to naming.
-func (g *Gen) MissingBinding(t types.Type, name string) (msg, help string, ok bool) {
+// MissingBinding returns a naming diagnostic, or fallback when no named provider is involved.
+func (g *Gen) MissingBinding(t types.Type, name string, fallback func() (msg, help string)) (msg, help string) {
 	names := g.BindingNames(t)
 	if name == "" {
 		// An unnamed binding makes the failure unrelated to provider naming.
 		if len(names) == 0 || names[0] == "" {
-			return "", "", false
+			return fallback()
 		}
 		return fmt.Sprintf("type %s has only named providers", g.TypeExpr(t)),
-			knownNames(names) + "; select one with //fabrik:inject", true
+			knownNames(names) + "; select one with //fabrik:inject"
 	}
 	msg = fmt.Sprintf("no provider for %s named %q", g.TypeExpr(t), name)
 	if len(names) == 0 {
-		return msg, fmt.Sprintf("add a //fabrik:provider name=%s returning %s", name, g.TypeExpr(t)), true
+		return msg, fmt.Sprintf("add a //fabrik:provider name=%s returning %s", name, g.TypeExpr(t))
 	}
-	return msg, knownNames(names), true
+	return msg, knownNames(names)
 }
 
 func knownNames(names []string) string {

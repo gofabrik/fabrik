@@ -89,8 +89,11 @@ type Cache struct{}
 
 func renderScopes(t *testing.T, g *Gen) string {
 	t.Helper()
-	if ds := g.MaterializeScopes(); ds.HasFatal() {
-		t.Fatalf("MaterializeScopes: %v", ds)
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
 	}
 	out, err := g.Render()
 	if err != nil {
@@ -101,36 +104,26 @@ func renderScopes(t *testing.T, g *Gen) string {
 
 func TestScopeBuildsItsSubtree(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.cache})
+	ping := w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.cache})
+	w.g.AddCommandFunc(CommandFunc{Name: "ping", Fn: "app.Ping", Scope: ping})
 	src := renderScopes(t, w.g)
 
-	want := `func buildPing(ctx context.Context) (*app.Cache, func() error, error) {
-	var connClose func() error
-	unwind := func(err error) error {
-		if connClose != nil {
-			err = errors.Join(err, connClose())
-		}
-		return err
-	}
-	// Providers
-	conn, connClose, err := app.NewStore(ctx)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-	cache, err := app.NewCache(conn)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}
-
-	cleanup := func() error {
-		var errs []error
-		if connClose != nil {
-			errs = append(errs, connClose())
-		}
-		return errors.Join(errs...)
-	}
-	return cache, cleanup, nil
-}`
+	want := `Run: func(ctx cli.Context) (err error) {
+					conn, connClose, err := app.NewStore(ctx)
+					if err != nil {
+						return err
+					}
+					if connClose != nil {
+						defer func() {
+							err = errors.Join(err, connClose())
+						}()
+					}
+					cache, err := app.NewCache(conn)
+					if err != nil {
+						return err
+					}
+					return app.Ping(ctx, cache)
+				},`
 	if !strings.Contains(src, want) {
 		t.Fatalf("buildPing shape mismatch.\n--- want ---\n%s\n--- got ---\n%s", want, src)
 	}
@@ -138,19 +131,23 @@ func TestScopeBuildsItsSubtree(t *testing.T) {
 
 func TestScopesConstructIndependently(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildA", token.Position{}, ScopeRoot{Type: w.store})
-	w.g.AddScope("buildB", token.Position{}, ScopeRoot{Type: w.store})
+	sa := w.g.AddScope("buildA", token.Position{}, ScopeRoot{Type: w.store})
+	w.g.AddCommandFunc(CommandFunc{Name: "a", Fn: "app.A", Scope: sa})
+	sb := w.g.AddScope("buildB", token.Position{}, ScopeRoot{Type: w.store})
+	w.g.AddCommandFunc(CommandFunc{Name: "b", Fn: "app.B", Scope: sb})
 	src := renderScopes(t, w.g)
 
 	if got := strings.Count(src, "app.NewStore(ctx)"); got != 2 {
-		t.Fatalf("store constructed %d times, want once per scope:\n%s", got, src)
+		t.Fatalf("store constructed %d times, want once per flow:\n%s", got, src)
 	}
 	if strings.Contains(src, "conn2") {
-		t.Fatalf("scope-local names leaked across scopes:\n%s", src)
+		t.Fatalf("flow-local names leaked across flows:\n%s", src)
 	}
-	if !strings.Contains(src, "func buildA(ctx context.Context) (*app.Store, func() error, error)") ||
-		!strings.Contains(src, "func buildB(ctx context.Context) (*app.Store, func() error, error)") {
-		t.Fatalf("missing scope functions:\n%s", src)
+	if got := strings.Count(src, "return app.A(ctx, conn)"); got != 1 {
+		t.Fatalf("command a consumes its own conn %d times, want 1:\n%s", got, src)
+	}
+	if got := strings.Count(src, "return app.B(ctx, conn)"); got != 1 {
+		t.Fatalf("command b consumes its own conn %d times, want 1:\n%s", got, src)
 	}
 }
 
@@ -165,28 +162,29 @@ func TestScopeWithoutCleanupOmitsSlot(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/flag") + ".Parse"})
 		return v, nil
 	})
-	g.AddScope("buildFlags", token.Position{}, ScopeRoot{Type: flags})
+	sf := g.AddScope("buildFlags", token.Position{}, ScopeRoot{Type: flags})
+	g.AddCommandFunc(CommandFunc{Name: "flags", Fn: "app.Flags", Scope: sf})
 	src := renderScopes(t, g)
 
-	buildFlags := strings.Index(src, "func buildFlags(ctx context.Context) (*flag.Flags, error) {")
-	if buildFlags < 0 {
-		t.Fatalf("cleanup-free scope should omit the cleanup slot:\n%s", src)
+	if !strings.Contains(src, "flags := flag.Parse()") {
+		t.Fatalf("cleanup-free construction should inline as a bare assignment:\n%s", src)
 	}
-	if strings.Contains(src[buildFlags:], "cleanup :=") {
-		t.Fatalf("cleanup composed in a cleanup-free scope:\n%s", src)
+	if strings.Contains(src, "cleanup") {
+		t.Fatalf("cleanup machinery composed in a cleanup-free flow:\n%s", src)
 	}
 }
 
 func TestScopeContextBindsToParam(t *testing.T) {
 	w := newScopeWorld(t)
-	w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.store})
+	ping := w.g.AddScope("buildPing", token.Position{}, ScopeRoot{Type: w.store})
+	w.g.AddCommandFunc(CommandFunc{Name: "ping", Fn: "app.Ping", Scope: ping})
 	src := renderScopes(t, w.g)
 
 	if !strings.Contains(src, "app.NewStore(ctx)") {
-		t.Fatalf("scoped Context() should bind to the build param:\n%s", src)
+		t.Fatalf("flow Context() should bind to the command's ctx param:\n%s", src)
 	}
-	if strings.Contains(src, "context.Background()") {
-		t.Fatalf("scope ctx leaked into run():\n%s", src)
+	if got := strings.Count(src, "context.Background()"); got != 1 {
+		t.Fatalf("context.Background() appears %d times, want only the signal shell's:\n%s", got, src)
 	}
 }
 
@@ -469,7 +467,8 @@ func TestScopeVarAndImportAliasDoNotCollide(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/conn") + ".NewPool"})
 		return v, nil
 	})
-	g.AddScope("buildPool", token.Position{}, ScopeRoot{Type: pool})
+	sp := g.AddScope("buildPool", token.Position{}, ScopeRoot{Type: pool})
+	g.AddCommandFunc(CommandFunc{Name: "pool", Fn: "app.Pool", Scope: sp})
 	src := renderScopes(t, g)
 	if !strings.Contains(src, "conn2 \"example.com/conn\"") {
 		t.Fatalf("import alias should rename around the scope var:\n%s", src)
@@ -508,6 +507,292 @@ func TestScopeReservesRenderAliases(t *testing.T) {
 	}
 }
 
+// lateImportAliases renders g and returns the aliases of the imports Render
+// registers itself, after scope identifiers have frozen.
+func lateImportAliases(t *testing.T, g *Gen) map[string]bool {
+	t.Helper()
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	early := map[string]bool{}
+	for path := range g.imports {
+		early[path] = true
+	}
+	if _, err := g.Render(); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	late := map[string]bool{}
+	for path, alias := range g.imports {
+		if !early[path] {
+			late[alias] = true
+		}
+	}
+	return late
+}
+
+// lateAliases must mirror the imports Render registers for itself after
+// identifier allocation: an alias missing from the list is unreserved, and a
+// listed alias no import claims reserves a name for nothing. The worlds below
+// cover every late registration path - the command shell, a command surface
+// without scopes, the plain run shell, and embedded entrypoints with cleanup.
+func TestLateAliasesMatchRenderRegisteredImports(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/late", `package late
+
+type Conn struct{}
+`)
+	conn := types.NewPointer(pkg.Scope().Lookup("Conn").Type())
+
+	commands := newRegionWorld(t, "db")
+	commands.addCommand("alpha", ScopeRoot{Type: commands.cache})
+	commands.addCommand("beta", ScopeRoot{Type: commands.cache})
+
+	rootOnly := New()
+	rootOnly.SetModule("demo")
+	rootOnly.SetCommandRoot(RootSpec{Version: "1.2.3"})
+
+	plain := New()
+	plain.SetModule("demo")
+	plain.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "app", Fn: "app.New"})
+
+	embedded := New()
+	embedded.SetModule("demo")
+	embedded.EmbeddedOutput("appwire")
+	embedded.BindLazy(conn, "", func() (string, diag.Diagnostics) {
+		v := embedded.Var("conn")
+		embedded.Node(&Call{
+			Base:    Base{Phase: PhaseWire},
+			Var:     v,
+			Fn:      embedded.Import("example.com/late") + ".Open",
+			Err:     ErrReturn,
+			Cleanup: embedded.Var(v + "Close"),
+			Type:    conn,
+		})
+		return v, nil
+	})
+	for _, name := range []string{"alpha", "beta"} {
+		s := embedded.AddScope("build"+upperFirst(name), token.Position{}, ScopeRoot{Type: conn})
+		embedded.AddCommandFunc(CommandFunc{Name: name, Fn: "late.Run" + upperFirst(name), Scope: s})
+	}
+
+	registered := map[string]bool{}
+	for _, g := range []*Gen{commands.g, rootOnly, plain, embedded} {
+		for alias := range lateImportAliases(t, g) {
+			registered[alias] = true
+		}
+	}
+
+	listed := map[string]bool{}
+	for _, a := range lateAliases {
+		listed[a] = true
+	}
+	for alias := range registered {
+		if !listed[alias] {
+			t.Errorf("Render registers alias %q late; add it to lateAliases", alias)
+		}
+	}
+	for _, a := range lateAliases {
+		if !registered[a] {
+			t.Errorf("lateAliases reserves %q, which no rendered world registers late", a)
+		}
+	}
+}
+
+// declaredIdents collects the identifiers a generated file defines.
+func declaredIdents(t *testing.T, src string) map[string]bool {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "main.gen.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	names := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok != token.DEFINE {
+				return true
+			}
+			for _, lhs := range n.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok {
+					names[id.Name] = true
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				names[id.Name] = true
+			}
+		case *ast.Field:
+			for _, id := range n.Names {
+				names[id.Name] = true
+			}
+		}
+		return true
+	})
+	return names
+}
+
+// claimLateNames emits one call per lateAliases name so generated
+// identifiers pre-claim every reserved name, and returns the last variable.
+func claimLateNames(g *Gen, alias string, typ types.Type) string {
+	var prev, v string
+	for _, name := range lateAliases {
+		v = g.Var(name)
+		var args []string
+		if prev != "" {
+			args = []string{prev}
+		}
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire},
+			Var:  v,
+			Fn:   alias + ".New",
+			Args: args,
+			Err:  ErrReturn,
+			Type: typ,
+		})
+		prev = v
+	}
+	return v
+}
+
+// assertAliasesUnshadowed checks that the claimed names reached the output
+// and that no generated declaration hides an import alias.
+func assertAliasesUnshadowed(t *testing.T, g *Gen, src string) {
+	t.Helper()
+	declared := declaredIdents(t, src)
+	for _, name := range lateAliases {
+		if !declared[name] && !declared[name+"2"] {
+			t.Errorf("generated code never claims %q, so the collision is untested:\n%s", name, src)
+		}
+	}
+	for path, alias := range g.imports {
+		if declared[alias] {
+			t.Errorf("generated declaration shadows import %q under alias %q:\n%s", path, alias, src)
+		}
+	}
+}
+
+// appImporter resolves the packages a generated file imports from checked
+// test packages and every other path from one toolchain importer, which
+// keeps transitively shared types identical.
+type appImporter struct {
+	pkgs map[string]*types.Package
+	std  types.Importer
+}
+
+func (ai appImporter) Import(path string) (*types.Package, error) {
+	if p, ok := ai.pkgs[path]; ok {
+		return p, nil
+	}
+	return ai.std.Import(path)
+}
+
+// typecheckRendered compiles generated source against pkgs and the stdlib.
+func typecheckRendered(t *testing.T, src string, pkgs ...*types.Package) {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fabrik.gen.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	imp := appImporter{pkgs: map[string]*types.Package{}, std: importer.Default()}
+	for _, p := range pkgs {
+		imp.pkgs[p.Path()] = p
+	}
+	conf := types.Config{Importer: imp}
+	if _, err := conf.Check(f.Name.Name, fset, []*ast.File{f}, nil); err != nil {
+		t.Fatalf("rendered output does not compile: %v\n%s", err, src)
+	}
+}
+
+// Generated identifiers may claim every lateAliases name: the late imports
+// take suffixed aliases instead, and the rendered file keeps every import
+// alias unshadowed. Each shell that registers late imports claims them.
+func TestLateAliasNamesSurviveIdentifierCollision(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/claim", `package claim
+
+type Node struct{}
+
+func New(deps ...*Node) (*Node, error) { return nil, nil }
+
+func Open(n *Node) (*Node, func() error, error) { return nil, nil, nil }
+
+func Use(n *Node) error { return nil }
+
+func Run(ctx any, n *Node) error { return nil }
+`)
+	nodeT := types.NewPointer(pkg.Scope().Lookup("Node").Type())
+	// The stand-in carries what the command shell references; the engine
+	// fixtures own conformance with the real cli package.
+	cliPkg := typecheckScopePkg(t, "github.com/gofabrik/fabrik/cli", `package cli
+
+type Context struct{}
+
+type Option func()
+
+type Command struct {
+	Name        string
+	Subcommands []*Command
+	Run         func(Context) error
+}
+
+func (c *Command) Exec(args []string, opts ...Option) int { return 0 }
+
+func WithSignalContext(ctx any) Option { return nil }
+`)
+
+	t.Run("command shell", func(t *testing.T) {
+		g := New()
+		g.SetModule("demo")
+		g.BindLazy(nodeT, "", func() (string, diag.Diagnostics) {
+			return claimLateNames(g, g.Import("example.com/claim"), nodeT), nil
+		})
+		s := g.AddScope("buildNode", token.Position{}, ScopeRoot{Type: nodeT})
+		g.AddCommandFunc(CommandFunc{Name: "node", Fn: "claim.Run", Scope: s})
+		src := renderScopes(t, g)
+		assertAliasesUnshadowed(t, g, src)
+		typecheckRendered(t, src, pkg, cliPkg)
+	})
+
+	t.Run("plain run shell", func(t *testing.T) {
+		g := New()
+		g.SetModule("demo")
+		alias := g.Import("example.com/claim")
+		last := claimLateNames(g, alias, nodeT)
+		g.Node(&Call{Base: Base{Phase: PhaseWire}, Fn: alias + ".Use", Args: []string{last}, Err: ErrInline})
+		src := renderScopes(t, g)
+		assertAliasesUnshadowed(t, g, src)
+		typecheckRendered(t, src, pkg)
+	})
+
+	t.Run("embedded entrypoint", func(t *testing.T) {
+		g := New()
+		g.SetModule("demo")
+		g.EmbeddedOutput("appwire")
+		g.BindLazy(nodeT, "", func() (string, diag.Diagnostics) {
+			alias := g.Import("example.com/claim")
+			last := claimLateNames(g, alias, nodeT)
+			v := g.Var("conn")
+			g.Node(&Call{
+				Base:    Base{Phase: PhaseWire},
+				Var:     v,
+				Fn:      alias + ".Open",
+				Args:    []string{last},
+				Err:     ErrReturn,
+				Cleanup: g.Var(v + "Close"),
+				Type:    nodeT,
+			})
+			return v, nil
+		})
+		s := g.AddScope("buildNode", token.Position{}, ScopeRoot{Type: nodeT})
+		g.AddCommandFunc(CommandFunc{Name: "node", Fn: "claim.Run", Scope: s})
+		src := renderScopes(t, g)
+		assertAliasesUnshadowed(t, g, src)
+		typecheckRendered(t, src, pkg)
+	})
+}
+
 func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 	w := newScopeWorld(t)
 	g := w.g
@@ -536,7 +821,10 @@ func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 			Var: v, Fn: g.Import("example.com/ind") + ".NewC", Args: []string{xv, yv}, Err: ErrReturn})
 		return v, nil
 	})
-	g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	c1 := g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "one", Fn: "app.One", Scope: c1})
+	c2 := g.AddScope("buildC2", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "two", Fn: "app.Two", Scope: c2})
 	src := renderScopes(t, g)
 
 	yPos := strings.Index(src, "y, yClose, err := ind.NewY()")
@@ -544,17 +832,22 @@ func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 	if yPos < 0 || xPos < 0 || yPos > xPos {
 		t.Fatalf("layout should emit y before x:\n%s", src)
 	}
-	unwind := `unwind := func(err error) error {
+	shape := `	var yClose, xClose func() error
+	cleanup := func() error {
+		var errs []error
 		if xClose != nil {
-			err = errors.Join(err, xClose())
+			errs = append(errs, xClose())
 		}
 		if yClose != nil {
-			err = errors.Join(err, yClose())
+			errs = append(errs, yClose())
 		}
-		return err
+		return errors.Join(errs...)
+	}
+	unwind := func(err error) error {
+		return errors.Join(err, cleanup())
 	}`
-	if !strings.Contains(src, unwind) {
-		t.Fatalf("unwind must reverse emission order (x released before y):\n%s", src)
+	if !strings.Contains(src, shape) {
+		t.Fatalf("cleanup must release in reverse emission order (x before y):\n%s", src)
 	}
 }
 
@@ -565,16 +858,19 @@ func TestCleanupWithoutErrorSitesOmitsUnwind(t *testing.T) {
 	pT := types.NewPointer(pkg.Scope().Lookup("P").Type())
 	g.BindLazy(pT, "", func() (string, diag.Diagnostics) {
 		v := g.Var("p")
-		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/pure") + ".New", Cleanup: g.Var(v + "Close")})
+		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/pure") + ".New", Cleanup: g.Var(v + "Close"), ErrsPkg: g.Import("errors")})
 		return v, nil
 	})
-	g.AddScope("buildP", token.Position{}, ScopeRoot{Type: pT})
+	p1 := g.AddScope("buildP", token.Position{}, ScopeRoot{Type: pT})
+	g.AddCommandFunc(CommandFunc{Name: "one", Fn: "app.One", Scope: p1})
+	p2 := g.AddScope("buildP2", token.Position{}, ScopeRoot{Type: pT})
+	g.AddCommandFunc(CommandFunc{Name: "two", Fn: "app.Two", Scope: p2})
 	src := renderScopes(t, g)
 	if strings.Contains(src, "unwind") {
 		t.Fatalf("no error sites, unwind must not be declared:\n%s", src)
 	}
-	if !strings.Contains(src, "var pClose func() error") || !strings.Contains(src, "p, pClose := pure.New()") {
-		t.Fatalf("cleanup slot must still be declared and assigned:\n%s", src)
+	if !strings.Contains(src, "p, pClose := pure.New()") || !strings.Contains(src, "err = errors.Join(err, pClose())") {
+		t.Fatalf("cleanup must assign its slot and defer the join:\n%s", src)
 	}
 }
 
@@ -612,30 +908,14 @@ func TestScopeMultiCleanupReverseOrder(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/two") + ".NewC", Args: []string{bv}, Err: ErrReturn})
 		return v, ds
 	})
-	g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	c1 := g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "one", Fn: "app.One", Scope: c1})
+	c2 := g.AddScope("buildC2", token.Position{}, ScopeRoot{Type: cT})
+	g.AddCommandFunc(CommandFunc{Name: "two", Fn: "app.Two", Scope: c2})
 	src := renderScopes(t, g)
 
-	slots := `	var aClose, bClose func() error
-	unwind := func(err error) error {
-		if bClose != nil {
-			err = errors.Join(err, bClose())
-		}
-		if aClose != nil {
-			err = errors.Join(err, aClose())
-		}
-		return err
-	}`
-	if !strings.Contains(src, slots) {
-		t.Fatalf("unwind helper should pre-declare slots and release b then a:\n%s", src)
-	}
-	collapsed := `	c, err := two.NewC(b)
-	if err != nil {
-		return nil, nil, unwind(err)
-	}`
-	if !strings.Contains(src, collapsed) {
-		t.Fatalf("error site should collapse to unwind(err):\n%s", src)
-	}
-	composed := `	cleanup := func() error {
+	composed := `	var aClose, bClose func() error
+	cleanup := func() error {
 		var errs []error
 		if bClose != nil {
 			errs = append(errs, bClose())
@@ -644,9 +924,19 @@ func TestScopeMultiCleanupReverseOrder(t *testing.T) {
 			errs = append(errs, aClose())
 		}
 		return errors.Join(errs...)
+	}
+	unwind := func(err error) error {
+		return errors.Join(err, cleanup())
 	}`
 	if !strings.Contains(src, composed) {
-		t.Fatalf("composed cleanup should release in reverse:\n%s", src)
+		t.Fatalf("cleanup should pre-declare slots and release b then a:\n%s", src)
+	}
+	collapsed := `	c, err := two.NewC(b)
+	if err != nil {
+		return nil, nil, unwind(err)
+	}`
+	if !strings.Contains(src, collapsed) {
+		t.Fatalf("error site should collapse to unwind(err):\n%s", src)
 	}
 }
 
@@ -678,7 +968,8 @@ func TestValidationPassDeterministicDiagnostics(t *testing.T) {
 	}
 }
 
-// Path bindings cache independently in the default flow and each scope.
+// A path binding materializes once; the demand graph shares it and each
+// demanding flow re-emits the node.
 func TestScopePathBindings(t *testing.T) {
 	w := newScopeWorld(t)
 	g := w.g
@@ -709,21 +1000,24 @@ func TestScopePathBindings(t *testing.T) {
 		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v, Fn: g.Import("example.com/user") + ".New", Args: []string{mgr}, Err: ErrReturn})
 		return v, ds
 	})
-	// Scopes must not reuse a path expression cached by the default flow.
 	if expr, _, ok := g.InstancePath(mgrPath); !ok || expr == "" {
 		t.Fatalf("default materialization failed")
 	}
 	if builds != 1 {
 		t.Fatalf("default flow built %d times, want 1", builds)
 	}
-	g.AddScope("buildU1", token.Position{}, ScopeRoot{Type: uT})
-	g.AddScope("buildU2", token.Position{}, ScopeRoot{Type: uT})
+	u1 := g.AddScope("buildU1", token.Position{}, ScopeRoot{Type: uT})
+	g.AddCommandFunc(CommandFunc{Name: "u1", Fn: "app.U1", Scope: u1})
+	u2 := g.AddScope("buildU2", token.Position{}, ScopeRoot{Type: uT})
+	g.AddCommandFunc(CommandFunc{Name: "u2", Fn: "app.U2", Scope: u2})
 	src := renderScopes(t, g)
-	if builds != 3 {
-		t.Fatalf("manager built %d times, want the default plus once per scope", builds)
+	// One materialization is shared through the demand graph; each
+	// demanding flow re-emits the node.
+	if builds != 1 {
+		t.Fatalf("manager built %d times, want one shared materialization", builds)
 	}
-	if got := strings.Count(src, "mgr.New()"); got != 3 {
-		t.Fatalf("manager constructed %d times in output, want 3:\n%s", got, src)
+	if got := strings.Count(src, "mgr.New()"); got != 2 {
+		t.Fatalf("manager constructed %d times in output, want once per command flow:\n%s", got, src)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -15,11 +16,19 @@ const graphSchemaVersion = 1
 // Graph is the structural export of a generated app: its flows, the
 // nodes each flow emits, and the dependency edges between them.
 type Graph struct {
-	Version int         `json:"version"`
-	Module  string      `json:"module"`
-	Flows   []GraphFlow `json:"flows,omitempty"`
-	Nodes   []GraphNode `json:"nodes,omitempty"`
-	Edges   []GraphEdge `json:"edges,omitempty"`
+	Version   int             `json:"version"`
+	Module    string          `json:"module"`
+	Flows     []GraphFlow     `json:"flows,omitempty"`
+	Nodes     []GraphNode     `json:"nodes,omitempty"`
+	Edges     []GraphEdge     `json:"edges,omitempty"`
+	Fragments []GraphFragment `json:"fragments,omitempty"` // Extracted region functions, absent outside fragment emission.
+}
+
+// GraphFragment is one extracted region function.
+type GraphFragment struct {
+	ID    string   `json:"id"` // The node id of the region's first exclusive member.
+	Usage []string `json:"usage,omitempty"`
+	Fn    string   `json:"fn"`
 }
 
 // GraphFlow is one build function: a command scope, or the unscoped
@@ -57,8 +66,12 @@ type GraphBinding struct {
 
 // GraphNode is one emitted statement.
 type GraphNode struct {
-	ID            string   `json:"id"`
+	ID string `json:"id"`
+	// Node identifies one construction across its per-flow occurrences.
+	Node          string   `json:"node,omitempty"`
 	Flow          string   `json:"flow"`
+	Usage         []string `json:"usage,omitempty"`    // Flows needing this node, sorted.
+	Fragment      string   `json:"fragment,omitempty"` // Extracted region owning this node in this flow.
 	Kind          string   `json:"kind"`
 	Defines       []string `json:"defines,omitempty"`
 	Fn            string   `json:"fn,omitempty"`
@@ -86,20 +99,13 @@ type GraphEdge struct {
 func (g *Gen) Graph() *Graph {
 	gr := &Graph{Version: graphSchemaVersion, Module: g.module}
 	seen := map[GraphEdge]bool{}
-	gr.addFlow(g, "default", "run", emissionOrdered(g.nodes), nil, seen)
-	used := map[string]bool{"default": true}
-	for _, s := range g.scopes {
-		// A command named "default" uses its build function name to avoid the reserved flow id.
-		id := flowID(s.fn)
-		if used[id] {
-			id = s.fn
-		}
-		for n := 2; used[id]; n++ {
-			id = fmt.Sprintf("%s@%d", s.fn, n)
-		}
-		used[id] = true
-		gr.addFlow(g, id, s.fn, emissionOrdered(s.nodes), s, seen)
+	ids, byFlow := g.flowIDs()
+	gs := g.graphStore(byFlow)
+	gr.addFlow(g, gs, "default", "run", emissionOrdered(g.flowNodes("default")), nil, seen)
+	for i, s := range g.scopes {
+		gr.addFlow(g, gs, ids[i], s.fn, emissionOrdered(g.scopeFlowNodes(s)), s, seen)
 	}
+	gr.Fragments = gs.fragments()
 	sort.Slice(gr.Edges, func(i, j int) bool {
 		if gr.Edges[i].From != gr.Edges[j].From {
 			return gr.Edges[i].From < gr.Edges[j].From
@@ -109,27 +115,190 @@ func (g *Gen) Graph() *Graph {
 	return gr
 }
 
+// flowIDs maps internal scope names and the default flow to exported IDs.
+func (g *Gen) flowIDs() ([]string, map[string]string) {
+	ids := make([]string, len(g.scopes))
+	byFlow := map[string]string{"default": "default"}
+	used := map[string]bool{"default": true}
+	for i, s := range g.scopes {
+		// A command named "default" uses its build function name to avoid the reserved flow id.
+		id := flowID(s.fn)
+		if used[id] {
+			id = s.fn
+		}
+		for n := 2; used[id]; n++ {
+			id = fmt.Sprintf("%s@%d", s.fn, n)
+		}
+		used[id] = true
+		ids[i] = id
+		if _, dup := byFlow[s.fn]; !dup {
+			byFlow[s.fn] = id
+		}
+	}
+	return ids, byFlow
+}
+
+// storeRef identifies an exported occurrence in the shared store.
+type storeRef struct {
+	node     string
+	usage    []string
+	fragment string
+}
+
+func (r storeRef) child(path string) storeRef {
+	if r.node == "" {
+		return storeRef{}
+	}
+	return storeRef{node: r.node + "/" + path, usage: r.usage, fragment: r.fragment}
+}
+
+// graphStore adds fragment-store identity, usage, and region membership to graph export.
+type graphStore struct {
+	ordinal  map[Node]int
+	usage    [][]string
+	memberOf map[int][]*region
+	owned    map[*region][]int // normalized, deduplicated member ordinals
+	regions  []*region
+	flowIDs  map[string]string
+}
+
+func (g *Gen) graphStore(byFlow map[string]string) *graphStore {
+	nodes := g.frag.nodes
+	gs := &graphStore{
+		ordinal:  make(map[Node]int, len(nodes)),
+		usage:    make([][]string, len(nodes)),
+		memberOf: map[int][]*region{},
+		flowIDs:  byFlow,
+	}
+	for i, sn := range nodes {
+		gs.usage[i] = gs.exportFlows(g.nodeUsage(sn))
+		// Repeated nodes share the first occurrence's identity and combined usage.
+		if first, ok := gs.ordinal[sn.n]; ok {
+			gs.usage[first] = mergeSorted(gs.usage[first], gs.usage[i])
+			continue
+		}
+		gs.ordinal[sn.n] = i
+	}
+	if g.fragPlan != nil {
+		gs.regions = g.fragPlan.regions
+		gs.owned = map[*region][]int{}
+		for _, reg := range gs.regions {
+			seenM := map[int]bool{}
+			for _, m := range reg.members {
+				// Region membership follows the first occurrence's identity.
+				if o, ok := gs.ordinal[nodes[m].n]; ok {
+					m = o
+				}
+				if seenM[m] {
+					continue
+				}
+				seenM[m] = true
+				gs.memberOf[m] = append(gs.memberOf[m], reg)
+				gs.owned[reg] = append(gs.owned[reg], m)
+			}
+		}
+	}
+	return gs
+}
+
+func mergeSorted(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range append(append([]string{}, a...), b...) {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (gs *graphStore) exportFlows(flows []string) []string {
+	var out []string
+	for _, f := range flows {
+		if id, ok := gs.flowIDs[f]; ok {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ref resolves flow-specific region membership for an exported node.
+func (gs *graphStore) ref(n Node, flow string) storeRef {
+	if gs == nil {
+		return storeRef{}
+	}
+	i, ok := gs.ordinal[n]
+	if !ok {
+		return storeRef{}
+	}
+	r := storeRef{node: strconv.Itoa(i), usage: gs.usage[i]}
+	for _, reg := range gs.memberOf[i] {
+		if reg.runs(flow) {
+			r.fragment = reg.fn
+			break
+		}
+	}
+	return r
+}
+
+func (gs *graphStore) fragments() []GraphFragment {
+	if gs == nil {
+		return nil
+	}
+	var out []GraphFragment
+	for _, reg := range gs.regions {
+		// A colocated config uses the current flow's region ID.
+		members := gs.owned[reg]
+		id := members[0]
+		for _, m := range members {
+			if len(gs.memberOf[m]) == 1 {
+				id = m
+				break
+			}
+		}
+		out = append(out, GraphFragment{
+			ID:    strconv.Itoa(id),
+			Usage: gs.exportFlows(reg.usage),
+			Fn:    reg.fn,
+		})
+	}
+	return out
+}
+
 type flowNode struct {
 	n      Node
 	id     string
 	parent string
 	branch string
 	result bool
+	ref    storeRef
 }
 
-func (gr *Graph) addFlow(g *Gen, id, fn string, nodes []Node, s *Scope, seen map[GraphEdge]bool) {
+func (gr *Graph) addFlow(g *Gen, gs *graphStore, id, fn string, nodes []Node, s *Scope, seen map[GraphEdge]bool) {
 	// Nodeless scopes have no build function.
 	if s != nil && len(nodes) == 0 {
 		fn = ""
 	}
 	flow := GraphFlow{ID: id, Fn: fn}
+	usageFlow := "default"
+	if s != nil {
+		usageFlow = s.fn
+	}
 
 	var list []flowNode
 	owner := map[string]string{}
 	kinds := map[string]int{}
-	var walk func(ns []Node, parent, branch string, result bool)
-	walk = func(ns []Node, parent, branch string, result bool) {
-		for _, n := range ns {
+	// Flattened select children inherit their owner's identity through refs.
+	var walk func(ns []Node, refs []storeRef, parent, branch string, result bool)
+	walk = func(ns []Node, refs []storeRef, parent, branch string, result bool) {
+		for i, n := range ns {
+			ref := gs.ref(n, usageFlow)
+			if refs != nil {
+				ref = refs[i]
+			}
 			kind := nodeKind(n)
 			nodeID := fmt.Sprintf("%s/%s@%d", id, kind, kinds[kind])
 			if defs := graphDefines(n); len(defs) > 0 {
@@ -141,17 +310,21 @@ func (gr *Graph) addFlow(g *Gen, id, fn string, nodes []Node, s *Scope, seen map
 					owner[d] = nodeID
 				}
 			}
-			list = append(list, flowNode{n: n, id: nodeID, parent: parent, branch: branch, result: result})
+			list = append(list, flowNode{n: n, id: nodeID, parent: parent, branch: branch, result: result, ref: ref})
 			if sel, ok := n.(*Select); ok {
-				for _, c := range sel.Cases {
-					walk(c.Body, nodeID, c.Value, false)
+				for ci, c := range sel.Cases {
+					body := make([]storeRef, len(c.Body))
+					for bi := range c.Body {
+						body[bi] = ref.child(fmt.Sprintf("case@%d/body@%d", ci, bi))
+					}
+					walk(c.Body, body, nodeID, c.Value, false)
 					res := c.Result
-					walk([]Node{&res}, nodeID, c.Value, true)
+					walk([]Node{&res}, []storeRef{ref.child(fmt.Sprintf("case@%d/result", ci))}, nodeID, c.Value, true)
 				}
 			}
 		}
 	}
-	walk(nodes, "", "", false)
+	walk(nodes, nil, "", "", false)
 
 	bindings, byExpr := flowBindings(g, id, s, owner)
 	flow.Bindings = bindings
@@ -237,14 +410,32 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 	}
 	var order []string
 	if s != nil {
-		order = s.bindOrder
-		for key, byName := range s.binds {
-			for name, expr := range byName {
-				addType(expr, s.bindTypes[key], key, name)
+		// A flow lists bindings satisfied by its nodes or referenced by its roots.
+		relevant := func(expr string) bool {
+			for _, e := range s.rootExprs {
+				if e == expr {
+					return true
+				}
 			}
+			ok := len(owner) == 0
+			freeIdents(expr, func(name string) {
+				if owner[name] != "" {
+					ok = true
+				}
+			})
+			return ok
 		}
-		for path, expr := range s.pathExprs {
-			if !slices.Contains(pathsByExpr[expr], path) {
+		order = g.bindOrder
+		g.binds.Iterate(func(t types.Type, v any) {
+			key := types.TypeString(t, nil)
+			for name, expr := range v.(map[string]string) {
+				if relevant(expr) {
+					addType(expr, t, key, name)
+				}
+			}
+		})
+		for path, expr := range g.pathExprs {
+			if relevant(expr) && !slices.Contains(pathsByExpr[expr], path) {
 				pathsByExpr[expr] = append(pathsByExpr[expr], path)
 			}
 		}
@@ -298,6 +489,7 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 // emissionOrdered mirrors renderer phase and cluster order.
 func emissionOrdered(nodes []Node) []Node {
 	out := make([]Node, 0, len(nodes))
+	lc := newLayoutCtx(nodes)
 	for _, pl := range phaseLabels {
 		var pns []phaseNode
 		for i, n := range nodes {
@@ -305,7 +497,7 @@ func emissionOrdered(nodes []Node) []Node {
 				pns = append(pns, phaseNode{n: n, emit: i})
 			}
 		}
-		for _, cluster := range layoutPhase(pns) {
+		for _, cluster := range lc.layout(pns) {
 			for _, pn := range cluster {
 				out = append(out, pn.n)
 			}
@@ -318,7 +510,10 @@ func graphNode(g *Gen, fnode flowNode, flow string) GraphNode {
 	o := fnode.n.base().Origin
 	out := GraphNode{
 		ID:        fnode.id,
+		Node:      fnode.ref.node,
 		Flow:      flow,
+		Usage:     fnode.ref.usage,
+		Fragment:  fnode.ref.fragment,
 		Kind:      nodeKind(fnode.n),
 		Defines:   graphDefines(fnode.n),
 		Directive: o.Directive,

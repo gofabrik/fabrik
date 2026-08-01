@@ -55,8 +55,8 @@ import (
 func run() int {
 	if err := func() (err error) {
 		// Providers
-		storeLogAccess := store.NewAccessLog()
 		r := router.New()
+		storeLogAccess := store.NewAccessLog()
 
 		// Middleware
 		auditMW := web.Audit(storeLogAccess)

@@ -6,12 +6,15 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/fabrik/internal/genfiles"
 	"github.com/gofabrik/fabrik/gen"
 	"golang.org/x/tools/go/packages"
 )
@@ -34,13 +37,24 @@ type Result struct {
 	// type like jobs.Store by path even when no annotated signature names
 	// it).
 	Types map[string]*types.Package
+	// MainIdents lists handwritten top-level identifiers in package main.
+	// Generated declarations are excluded to keep regeneration stable.
+	MainIdents []string
+	// PackageIdents and PackageNames index handwritten declarations and package names by directory.
+	PackageIdents map[string][]string
+	PackageNames  map[string]string
+	// Imports maps package paths to direct imports for output-cycle checks.
+	Imports map[string][]string
+	// GeneratedFiles includes generated files omitted by package loading, such as build-tagged files.
+	GeneratedFiles []string
 }
 
 // Load type-checks the module rooted at dir and collects //fabrik: annotations.
 func Load(dir string, overlay map[string][]byte) (*Result, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
-			packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedModule,
+			packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedModule |
+			packages.NeedImports | packages.NeedDeps,
 		Dir:     dir,
 		Overlay: overlay,
 	}
@@ -63,18 +77,31 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 		if pkg.Name == "main" {
 			mains = append(mains, pkg)
-			// main.gen.go may be stale; handwritten parse errors still block wiring.
+			// Stale generated files do not turn their parse errors into load failures.
 			var parseErrs []packages.Error
 			for _, e := range pkg.Errors {
-				if e.Kind == packages.ParseError && filepath.Base(errorPosition(e).Filename) != "main.gen.go" {
-					parseErrs = append(parseErrs, e)
+				if e.Kind != packages.ParseError {
+					continue
 				}
+				pos := errorPosition(e)
+				if generatedFile(pos.Filename) {
+					continue
+				}
+				parseErrs = append(parseErrs, e)
 			}
 			reportPkgErrors(parseErrs, &res.Diags)
 			warnMainDirectives(pkg, &res.Diags)
 			continue
 		}
-		reportPkgErrors(pkg.Errors, &res.Diags)
+		// Generated-file errors do not block regeneration.
+		var errs []packages.Error
+		for _, e := range pkg.Errors {
+			if generatedFile(errorPosition(e).Filename) {
+				continue
+			}
+			errs = append(errs, e)
+		}
+		reportPkgErrors(errs, &res.Diags)
 		scanPackage(pkg, res)
 	}
 
@@ -83,10 +110,27 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		return nil, err
 	}
 	res.MainDir = mainDir
+	for _, pkg := range mains {
+		if len(pkg.GoFiles) == 0 || filepath.Dir(pkg.GoFiles[0]) != mainDir {
+			continue
+		}
+		res.MainIdents = handwrittenIdents(pkg)
+	}
 
 	res.Types = map[string]*types.Package{}
+	res.PackageIdents = map[string][]string{}
+	res.PackageNames = map[string]string{}
+	res.Imports = map[string][]string{}
 	for _, pkg := range pkgs {
 		collectTypes(pkg.Types, res.Types)
+		if d := dirOfPkg(pkg); d != "" {
+			res.PackageNames[d] = pkg.Name
+			res.PackageIdents[d] = handwrittenIdents(pkg)
+		}
+		for path := range pkg.Imports {
+			res.Imports[pkg.PkgPath] = append(res.Imports[pkg.PkgPath], path)
+		}
+		sort.Strings(res.Imports[pkg.PkgPath])
 	}
 
 	res.Diags.Sort()
@@ -97,6 +141,7 @@ func Load(dir string, overlay map[string][]byte) (*Result, error) {
 		}
 		return a.Line < b.Line
 	})
+	res.GeneratedFiles = generatedInTree(res.Root)
 	return res, nil
 }
 
@@ -244,6 +289,58 @@ func warnMainDirectives(pkg *packages.Package, ds *diag.Diagnostics) {
 }
 
 // reportPkgErrors drops duplicates and unpositioned summaries.
+// generatedFile reports whether path is fabrik-generated: main.gen.go
+// or a file the output directory's manifest owns.
+func generatedFile(path string) bool {
+	base := filepath.Base(path)
+	if base == "main.gen.go" || base == "fabrik.gen.go" {
+		return true
+	}
+	for _, owned := range genfiles.Owned(filepath.Dir(path)) {
+		if owned == base {
+			return true
+		}
+	}
+	return false
+}
+
+func dirOfPkg(pkg *packages.Package) string {
+	if len(pkg.GoFiles) == 0 {
+		return ""
+	}
+	return filepath.Dir(pkg.GoFiles[0])
+}
+
+// handwrittenIdents reads syntax because stale generated declarations may shadow the type scope.
+func handwrittenIdents(pkg *packages.Package) []string {
+	var out []string
+	for _, file := range pkg.Syntax {
+		if generatedFile(pkg.Fset.Position(file.Pos()).Filename) {
+			continue
+		}
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil && d.Name != nil {
+					out = append(out, d.Name.Name)
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					switch sp := spec.(type) {
+					case *ast.TypeSpec:
+						out = append(out, sp.Name.Name)
+					case *ast.ValueSpec:
+						for _, name := range sp.Names {
+							out = append(out, name.Name)
+						}
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
 func selectMain(mains []*packages.Package) (string, error) {
 	dirOf := func(pkg *packages.Package) string {
 		if len(pkg.GoFiles) == 0 {
@@ -407,4 +504,31 @@ func levenshtein(a, b string) int {
 		prev, curr = curr, prev
 	}
 	return prev[lb]
+}
+
+func generatedInTree(root string) []string {
+	var out []string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if path != root && (strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata") {
+				return filepath.SkipDir
+			}
+			if path != root {
+				// A nested module owns its own generated files.
+				if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".go") && generatedFile(path) {
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out
 }

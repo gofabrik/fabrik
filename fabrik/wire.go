@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,11 +10,13 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/fabrik/internal/diagfmt"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
+	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
+	"github.com/gofabrik/fabrik/fabrik/internal/genfiles"
 	"github.com/gofabrik/fabrik/gen"
 )
 
 func wireCmd(args []string) error {
-	dir, check, opts, err := parseWireArgs(args)
+	dir, check, ov, graph, err := parseWireArgs(args)
 	if err != nil {
 		return err
 	}
@@ -23,6 +24,11 @@ func wireCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, _, err := resolveOptions(abs, ov)
+	if err != nil {
+		return err
+	}
+	opts.Graph = graph
 	if check {
 		return wireCheck(abs, opts)
 	}
@@ -30,41 +36,63 @@ func wireCmd(args []string) error {
 	return err
 }
 
-func parseWireArgs(args []string) (dir string, check bool, opts engine.Options, err error) {
+func parseWireArgs(args []string) (dir string, check bool, ov genconfig.Overrides, graph bool, err error) {
 	fs := flag.NewFlagSet("wire", flag.ContinueOnError)
 	checkFlag := fs.Bool("check", false, "verify main.gen.go is up to date instead of writing it")
-	comments := fs.String("comments", "sections", "generated comment level: off, sections, or full")
-	graph := fs.Bool("graph", false, "write the structural graph beside main.gen.go")
+	comments := fs.String("comments", "", "generated comment level: off, sections, or full (overrides fabrik.yaml)")
+	graphFlag := fs.Bool("graph", false, "write the structural graph beside main.gen.go")
 	if err := fs.Parse(args); err != nil {
-		return "", false, engine.Options{}, err
+		return "", false, genconfig.Overrides{}, false, err
 	}
-	level, err := commentLevel(*comments)
-	if err != nil {
-		return "", false, engine.Options{}, err
+	commentsSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "comments" {
+			commentsSet = true
+		}
+	})
+	if commentsSet {
+		level, err := commentLevel(*comments)
+		if err != nil {
+			return "", false, genconfig.Overrides{}, false, err
+		}
+		ov.Comments = &level
 	}
-	if *checkFlag && *graph {
-		return "", false, engine.Options{}, fmt.Errorf("-check does not write files; drop --graph to check, or drop -check to write the graph")
+	if *checkFlag && *graphFlag {
+		return "", false, genconfig.Overrides{}, false, fmt.Errorf("-check does not write files; drop --graph to check, or drop -check to write the graph")
 	}
 	dir = "."
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)
 	}
 	if fs.NArg() > 1 {
-		return "", false, engine.Options{}, fmt.Errorf("unexpected argument %q; usage: fabrik wire [-check] [-comments=LEVEL] [--graph] [dir]", fs.Arg(1))
+		return "", false, genconfig.Overrides{}, false, fmt.Errorf("unexpected argument %q; usage: fabrik wire [-check] [-comments=LEVEL] [--graph] [dir]", fs.Arg(1))
 	}
-	return dir, *checkFlag, engine.Options{Comments: level, Graph: *graph}, nil
+	return dir, *checkFlag, ov, *graphFlag, nil
+}
+
+// resolveOptions reports configuration diagnostics and returns errSilent for fatal ones.
+func resolveOptions(dir string, ov genconfig.Overrides) (engine.Options, genconfig.Options, error) {
+	resolved, diags := genconfig.Resolve(dir, ov)
+	if len(diags) > 0 {
+		if err := emitDiagnostics(diags); err != nil {
+			return engine.Options{}, genconfig.Options{}, err
+		}
+		if diags.HasFatal() {
+			return engine.Options{}, genconfig.Options{}, errSilent
+		}
+	}
+	return engine.OptionsFrom(resolved), resolved, nil
 }
 
 func commentLevel(s string) (gen.CommentLevel, error) {
-	switch s {
-	case "off":
-		return gen.CommentsOff, nil
-	case "sections":
-		return gen.CommentsSections, nil
-	case "full":
-		return gen.CommentsFull, nil
+	if s == "" {
+		return 0, fmt.Errorf("invalid -comments level %q: want off, sections, or full", s)
 	}
-	return 0, fmt.Errorf("invalid -comments level %q: want off, sections, or full", s)
+	level, err := genconfig.ParseCommentLevel(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid -comments level %q: want off, sections, or full", s)
+	}
+	return level, nil
 }
 
 // generate reports diagnostics and returns errSilent on fatal ones.
@@ -86,7 +114,11 @@ func generate(dir string, opts engine.Options) (res *engine.Result, out string, 
 			return nil, "", errSilent
 		}
 	}
-	return res, filepath.Join(res.MainDir, "main.gen.go"), nil
+	mainName := "main.gen.go"
+	if opts.Embedded {
+		mainName = "fabrik.gen.go"
+	}
+	return res, filepath.Join(res.OutDir, mainName), nil
 }
 
 func emitDiagnostics(diags diag.Diagnostics) error {
@@ -105,16 +137,23 @@ func wire(dir string) (string, error) {
 }
 
 func wireWith(dir string, opts engine.Options) (string, error) {
-	res, out, err := generate(dir, opts)
+	res, _, err := generate(dir, opts)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(out, res.Src, 0o644); err != nil { // #nosec G306 -- generated Go source is intentionally readable
+	if err := os.MkdirAll(res.OutDir, 0o755); err != nil { // #nosec G301 -- generated package directories are conventional source-tree paths
 		return "", err
 	}
-	written := []string{out}
+	names, pruned, kept, err := genfiles.WriteSet(res.OutDir, res.Files, opts.Split)
+	if err != nil {
+		return "", err
+	}
+	written := make([]string, 0, len(names))
+	for _, name := range names {
+		written = append(written, filepath.Join(res.OutDir, name))
+	}
 	if res.Graph != nil {
-		sidecars, err := writeGraphSidecars(filepath.Dir(out), res.Graph)
+		sidecars, err := writeGraphSidecars(res.OutDir, res.Graph)
 		if err != nil {
 			return "", err
 		}
@@ -127,7 +166,23 @@ func wireWith(dir string, opts engine.Options) (string, error) {
 			fmt.Printf("fabrik: wrote %s\n", path)
 		}
 	}
-	return filepath.Dir(out), nil
+	for _, name := range pruned {
+		fmt.Printf("fabrik: removed %s\n", name)
+	}
+	for _, name := range kept {
+		fmt.Fprintf(os.Stderr, "fabrik: %s is no longer generated but was edited; not removing it\n", name)
+	}
+	for _, path := range res.Stale {
+		fmt.Fprintf(os.Stderr, "fabrik: %s is left over from an earlier output setting; delete it\n", relTo(dir, path))
+	}
+	return res.OutDir, nil
+}
+
+func relTo(dir, path string) string {
+	if rel, err := filepath.Rel(dir, path); err == nil {
+		return rel
+	}
+	return path
 }
 
 func writeGraphSidecars(mainDir string, graph *gen.Graph) ([]string, error) {
@@ -163,24 +218,37 @@ func mainPackageArg(dir, mainDir string) string {
 	return "./" + filepath.ToSlash(rel)
 }
 
-// wireCheck fails when main.gen.go is missing or stale.
+// wireCheck fails when any generated file is missing, stale, or no
+// longer generated.
 func wireCheck(dir string, opts engine.Options) error {
-	res, out, err := generate(dir, opts)
+	res, _, err := generate(dir, opts)
 	if err != nil {
 		return err
 	}
-	disk, err := os.ReadFile(out) // #nosec G304 -- reads an app/workspace-selected path
+	problems, kept, err := genfiles.Check(res.OutDir, res.Files, opts.Split)
 	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "fabrik: %s does not exist; run fabrik wire\n", out)
-			return errSilent
+		return err
+	}
+	for _, name := range kept {
+		problems = append(problems, name+" is no longer generated but was edited; not removing it")
+	}
+	for _, path := range res.Stale {
+		problems = append(problems, relTo(dir, path)+" is left over from an earlier output setting; delete it")
+	}
+	if len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintf(os.Stderr, "fabrik: %s\n", p)
 		}
-		return err
-	}
-	if !bytes.Equal(disk, res.Src) {
-		fmt.Fprintf(os.Stderr, "fabrik: %s is stale; run fabrik wire\n", out)
+		fmt.Fprintln(os.Stderr, "fabrik: run fabrik wire")
 		return errSilent
 	}
-	fmt.Printf("fabrik: main.gen.go up to date\n")
+	switch {
+	case opts.Split:
+		fmt.Printf("fabrik: generated files up to date\n")
+	case opts.Embedded:
+		fmt.Printf("fabrik: fabrik.gen.go up to date\n")
+	default:
+		fmt.Printf("fabrik: main.gen.go up to date\n")
+	}
 	return nil
 }
