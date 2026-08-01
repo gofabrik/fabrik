@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"slices"
 	"strings"
 )
 
@@ -200,8 +201,8 @@ func (s *scopeStack) bind(name string) {
 }
 
 func (s *scopeStack) bound(name string) bool {
-	for i := len(s.frames) - 1; i >= 0; i-- {
-		if s.frames[i][name] {
+	for _, v := range slices.Backward(s.frames) {
+		if v[name] {
 			return true
 		}
 	}

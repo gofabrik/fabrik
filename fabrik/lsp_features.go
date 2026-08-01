@@ -6,6 +6,7 @@ import (
 	iofs "io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -164,10 +165,7 @@ func sourceFor(path string, texts map[string]string) string {
 // spanRange covers the token at the diagnostic column.
 func spanRange(src string, pos token.Position) lspRange {
 	line := pos.Line - 1
-	startCol := pos.Column - 1
-	if startCol < 0 {
-		startCol = 0
-	}
+	startCol := max(pos.Column-1, 0)
 	endCol := startCol + 1
 
 	lineText := nthLine(src, line)
@@ -283,8 +281,8 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 }
 
 func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, gen.ValueKind, bool) {
-	for i := len(args) - 1; i >= 0; i-- {
-		key, val, hasEq := strings.Cut(args[i], "=")
+	for i, arg := range slices.Backward(args) {
+		key, val, hasEq := strings.Cut(arg, "=")
 		if !hasEq {
 			continue
 		}
@@ -563,10 +561,5 @@ func generatedOutputFile(path string) bool {
 	if base == "main.gen.go" || base == "fabrik.gen.go" {
 		return true
 	}
-	for _, owned := range genfiles.Owned(filepath.Dir(path)) {
-		if owned == base {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(genfiles.Owned(filepath.Dir(path)), base)
 }

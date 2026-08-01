@@ -1,6 +1,9 @@
 package assetmapper
 
-import "sort"
+import (
+	"slices"
+	"sort"
+)
 
 type dependencyComponent struct {
 	nodes  []string
@@ -106,11 +109,8 @@ func dependencyComponents(deps map[string][]string) []dependencyComponent {
 		members := components[component]
 		cyclic := len(members) > 1
 		if !cyclic {
-			for _, dependency := range deps[members[0]] {
-				if dependency == members[0] {
-					cyclic = true
-					break
-				}
+			if slices.Contains(deps[members[0]], members[0]) {
+				cyclic = true
 			}
 		}
 		ordered = append(ordered, dependencyComponent{

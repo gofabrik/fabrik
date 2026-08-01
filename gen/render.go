@@ -3,6 +3,7 @@ package gen
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,8 +178,8 @@ func renderRoute(n *Route) []string {
 		return []string{n.Router + ".HandleFunc(" + strconv.Quote(n.Pattern) + ", " + n.Handler + ")"}
 	default:
 		expr := n.Handler
-		for i := len(n.Chain) - 1; i >= 0; i-- {
-			expr = n.Chain[i] + "(" + expr + ")"
+		for _, v := range slices.Backward(n.Chain) {
+			expr = v + "(" + expr + ")"
 		}
 		return []string{n.Router + ".Handle(" + strconv.Quote(n.Pattern) + ", " + expr + ")"}
 	}

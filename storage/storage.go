@@ -40,7 +40,7 @@ func CheckKey(key string) error {
 	if key == "" || strings.HasPrefix(key, "/") || strings.HasSuffix(key, "/") {
 		return fmt.Errorf("invalid key %q", key)
 	}
-	for _, seg := range strings.Split(key, "/") {
+	for seg := range strings.SplitSeq(key, "/") {
 		if seg == "" || strings.HasPrefix(seg, ".") {
 			return fmt.Errorf("invalid key %q", key)
 		}

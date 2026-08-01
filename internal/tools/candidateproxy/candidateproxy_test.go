@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,10 +24,10 @@ func gitFixture(t *testing.T) *modset.Config {
 		"module-sets:\n  fabrik:\n    version: v1.0.0\n    modules:\n"+
 			"      - github.com/gofabrik/fabrik/router\n"+
 			"      - github.com/gofabrik/fabrik/router/directive\n")
-	write(t, root, "go.work", "go 1.26\n\nuse (\n\t./router\n\t./router/directive\n)\n")
-	write(t, root, "router/go.mod", "module github.com/gofabrik/fabrik/router\n\ngo 1.26\n")
+	write(t, root, "go.work", "go 1.27\n\nuse (\n\t./router\n\t./router/directive\n)\n")
+	write(t, root, "router/go.mod", "module github.com/gofabrik/fabrik/router\n\ngo 1.27\n")
 	write(t, root, "router/r.go", "package router\n\nfunc R() {}\n")
-	write(t, root, "router/directive/go.mod", "module github.com/gofabrik/fabrik/router/directive\n\ngo 1.26\n")
+	write(t, root, "router/directive/go.mod", "module github.com/gofabrik/fabrik/router/directive\n\ngo 1.27\n")
 	write(t, root, "router/directive/d.go", "package directive\n\nfunc D() {}\n")
 
 	git(t, root, "init")
@@ -58,12 +60,7 @@ func TestBuildCanonicalArchive(t *testing.T) {
 	}
 	const prefix = "github.com/gofabrik/fabrik/router@v1.0.0/"
 	has := func(name string) bool {
-		for _, e := range entries {
-			if e == prefix+name {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(entries, prefix+name)
 	}
 	if !has("r.go") {
 		t.Errorf("module source missing from zip: %v", entries)
@@ -91,14 +88,15 @@ func TestArchiveHashConsumable(t *testing.T) {
 	}
 
 	consumer := t.TempDir()
-	write(t, consumer, "go.mod", "module example.com/consumer\n\ngo 1.26\n")
+	write(t, consumer, "go.mod", "module example.com/consumer\n\ngo 1.27\n")
 	modcache := t.TempDir()
 	// Go's read-only cache must be writable before temporary-directory cleanup.
 	t.Cleanup(func() { makeWritable(modcache) })
 
 	dl := exec.Command("go", "mod", "download", "-json", "github.com/gofabrik/fabrik/router@v1.0.0")
 	dl.Dir = consumer
-	dl.Env = append(os.Environ(), Env(out, modcache)...)
+	// Resolve the scratch module with the running test toolchain.
+	dl.Env = append(os.Environ(), append(Env(out, modcache), "GOTOOLCHAIN="+runtime.Version())...)
 	o, err := dl.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go mod download: %v\n%s", err, o)
@@ -150,7 +148,7 @@ func TestHashMatchesGoVCSDownload(t *testing.T) {
 func goVCSSum(t *testing.T, gitcfg, modver string) string {
 	t.Helper()
 	consumer := t.TempDir()
-	write(t, consumer, "go.mod", "module example.com/c\n\ngo 1.26\n")
+	write(t, consumer, "go.mod", "module example.com/c\n\ngo 1.27\n")
 	modcache := t.TempDir()
 	t.Cleanup(func() { makeWritable(modcache) })
 
@@ -166,6 +164,7 @@ func goVCSSum(t *testing.T, gitcfg, modver string) string {
 		"GOFLAGS=-mod=mod",
 		"GOWORK=off",
 		"GOMODCACHE="+modcache,
+		"GOTOOLCHAIN="+runtime.Version(),
 	)
 	o, err := cmd.CombinedOutput()
 	if err != nil {

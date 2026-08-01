@@ -213,7 +213,7 @@ func envPrefix(module string) string {
 // extractFlag removes "--name value" or "--name=value" from args.
 func extractFlag(args []string, name string) (string, []string) {
 	prefix := "--" + name
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		switch {
 		case args[i] == prefix && i+1 < len(args):
 			return args[i+1], append(append([]string{}, args[:i]...), args[i+2:]...)

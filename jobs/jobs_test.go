@@ -315,7 +315,7 @@ func TestConcurrentUniqueKeyInsert(t *testing.T) {
 	var wg sync.WaitGroup
 	ids := make([]string, n)
 	dups := make([]bool, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -327,7 +327,7 @@ func TestConcurrentUniqueKeyInsert(t *testing.T) {
 	wg.Wait()
 	// All callers observe the same live job.
 	live := 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if !dups[i] {
 			live++
 		}
@@ -335,7 +335,7 @@ func TestConcurrentUniqueKeyInsert(t *testing.T) {
 	if live != 1 {
 		t.Fatalf("concurrent UniqueKey inserts created %d live jobs, want 1", live)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if ids[i] != ids[0] {
 			t.Fatalf("id[%d]=%s != id[0]=%s; all should be the one live job", i, ids[i], ids[0])
 		}

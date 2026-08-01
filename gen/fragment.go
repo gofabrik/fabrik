@@ -2,6 +2,7 @@ package gen
 
 import (
 	"go/token"
+	"slices"
 	"sort"
 	"strings"
 
@@ -165,12 +166,7 @@ func (r *region) providerNamesProduct() bool {
 	if len(r.liveOuts) == 0 {
 		return true
 	}
-	for _, out := range r.liveOuts {
-		if out == r.anchorProviderVar {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.liveOuts, r.anchorProviderVar)
 }
 
 type planStep struct {
@@ -682,13 +678,7 @@ func (g *Gen) orderFlow(ps *planState, flow string, out *[]planStep) *region {
 	regUnit := map[*region]*unit{}
 	nodeUnit := map[int]*unit{}
 	for i := range st.nodes {
-		inFlow := false
-		for _, f := range ps.flowsOf[i] {
-			if f == flow {
-				inFlow = true
-				break
-			}
-		}
+		inFlow := slices.Contains(ps.flowsOf[i], flow)
 		if !inFlow {
 			continue
 		}

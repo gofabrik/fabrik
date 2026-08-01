@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -37,6 +38,8 @@ func TestScaffoldPinsSurviveRealFlow(t *testing.T) {
 	t.Setenv("GOPROXY", "file://"+filepath.ToSlash(proxy)+",https://proxy.golang.org")
 	t.Setenv("GONOSUMDB", "github.com/gofabrik/fabrik/*")
 	t.Setenv("GOMODCACHE", modcache)
+	// Resolve the scaffolded module with the running test toolchain.
+	t.Setenv("GOTOOLCHAIN", runtime.Version())
 
 	tmp := t.TempDir()
 	if r, err := filepath.EvalSymlinks(tmp); err == nil {

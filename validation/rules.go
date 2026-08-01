@@ -7,6 +7,7 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -122,10 +123,8 @@ func Max[T cmp.Ordered](n T) Rule[T] {
 // In requires value to be one of allowed.
 func In[T comparable](allowed ...T) Rule[T] {
 	return func(v T) error {
-		for _, a := range allowed {
-			if v == a {
-				return nil
-			}
+		if slices.Contains(allowed, v) {
+			return nil
 		}
 		return fmt.Errorf("must be one of %s", joinValues(allowed))
 	}

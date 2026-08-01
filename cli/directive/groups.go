@@ -338,7 +338,7 @@ func exampleSpecs(exs []*exampleNode) []gen.CommandExample {
 // strippedDoc removes directive lines from a doc comment.
 func strippedDoc(text string) string {
 	var kept []string
-	for _, ln := range strings.Split(text, "\n") {
+	for ln := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(ln), "fabrik:") {
 			continue
 		}
@@ -406,7 +406,7 @@ func splitPathSegments(a gen.Annotation, attr gen.Arg) ([]string, diag.Diagnosti
 func splitAliases(a gen.Annotation, attr gen.Arg) ([]string, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	var out []string
-	for _, alias := range strings.Split(attr.Text, ",") {
+	for alias := range strings.SplitSeq(attr.Text, ",") {
 		if !tokenRE.MatchString(alias) {
 			ds.Error(a.ArgPos(attr.Col), fmt.Sprintf("invalid CLI token %q in alias=", alias),
 				"aliases are single lowercase kebab-case tokens")

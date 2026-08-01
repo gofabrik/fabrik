@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -183,8 +184,6 @@ func loadOrEmptyImportmap(path string) (*assetmapper.Importmap, error) {
 
 func copyAssetEntries(im *assetmapper.Importmap) map[string]assetmapper.ImportmapEntry {
 	entries := make(map[string]assetmapper.ImportmapEntry, len(im.Entries))
-	for specifier, entry := range im.Entries {
-		entries[specifier] = entry
-	}
+	maps.Copy(entries, im.Entries)
 	return entries
 }

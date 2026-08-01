@@ -87,7 +87,7 @@ func rowType[T any]() (reflect.Type, error) {
 	var zero T
 	typ := reflect.TypeOf(zero)
 	if typ == nil || typ.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("query: T must be a struct, got %v", reflect.TypeOf(&zero).Elem())
+		return nil, fmt.Errorf("query: T must be a struct, got %v", reflect.TypeFor[T]())
 	}
 	fm, err := getFieldMap(typ)
 	if err != nil {
@@ -188,10 +188,10 @@ func typeLabel(t reflect.Type) string {
 }
 
 var (
-	timeType    = reflect.TypeOf(time.Time{})
-	ptrTimeType = reflect.TypeOf((*time.Time)(nil))
-	valuerType  = reflect.TypeOf((*driver.Valuer)(nil)).Elem()
-	scannerType = reflect.TypeOf((*sql.Scanner)(nil)).Elem()
+	timeType    = reflect.TypeFor[time.Time]()
+	ptrTimeType = reflect.TypeFor[*time.Time]()
+	valuerType  = reflect.TypeFor[driver.Valuer]()
+	scannerType = reflect.TypeFor[sql.Scanner]()
 )
 
 // isColumnStruct reports whether a struct type can serve as one

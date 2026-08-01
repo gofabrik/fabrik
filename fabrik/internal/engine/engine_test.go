@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ func TestCompileFixtureReportsBuildOutput(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	gomod := "module fixture\n\ngo 1.26\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => /tmp/x\n)\n"
+	gomod := "module fixture\n\ngo 1.27\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => /tmp/x\n)\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func compileFixture(dir, outDir, mainDir string, files map[string][]byte, replac
 	// #nosec G204 -- the command and all arguments are controlled by this test
 	build := exec.Command("go", "build", "-o", os.DevNull, target)
 	build.Dir = buildDir
-	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN="+runtime.Version())
 	if b, err := build.CombinedOutput(); err != nil {
 		var src []byte
 		for _, name := range slices.Sorted(maps.Keys(files)) {
@@ -558,7 +559,7 @@ func TestWireOptionsFlagsStaleGeneratedFiles(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module nested\n\ngo 1.26\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module nested\n\ngo 1.27\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(nested, "main.gen.go"), []byte("package main\n"), 0o644); err != nil {

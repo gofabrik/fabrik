@@ -100,7 +100,7 @@ func TestSQLiteStore_GetDoesNotPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reads leave expired rows for Sweep.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		e, ok, err := s.Get(ctx, "k", now)
 		if err != nil || !ok || !e.Expires.Equal(exp) {
 			t.Fatalf("read %d: %+v %v %v", i, e, ok, err)

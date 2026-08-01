@@ -63,8 +63,8 @@ func (f *File) UnmarshalJSON(data []byte) error {
 }
 
 var (
-	fileType      = reflect.TypeOf(File{})
-	fileSliceType = reflect.TypeOf([]File{})
+	fileType      = reflect.TypeFor[File]()
+	fileSliceType = reflect.TypeFor[[]File]()
 )
 
 // rejectJSONFiles rejects a non-null JSON value for any []File field.
@@ -73,8 +73,7 @@ func rejectJSONFiles(dst any) error {
 	if rv.Kind() != reflect.Struct {
 		return nil
 	}
-	for i := 0; i < rv.NumField(); i++ {
-		f := rv.Field(i)
+	for _, f := range rv.Fields() {
 		if f.Type() == fileSliceType && !f.IsNil() {
 			return errors.New("forms: file fields bind from multipart requests only")
 		}

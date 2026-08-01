@@ -167,7 +167,7 @@ func ClassifyTidy(diff, stderr []byte, tidyExit int) Status {
 // more intra-repo v0.1.0 resolution errors and nothing else.
 func tidyErrorsAllIntraRepo(stderr []byte) bool {
 	found := false
-	for _, raw := range bytes.Split(stderr, []byte("\n")) {
+	for raw := range bytes.SplitSeq(stderr, []byte("\n")) {
 		line := strings.TrimSpace(string(raw))
 		if line == "" ||
 			strings.HasPrefix(line, "go: downloading ") ||
@@ -355,10 +355,7 @@ func Render(results []ModuleResult, freshness Status, updates []Update, meta Met
 	b.WriteString("\n## Details\n")
 
 	if b.Len()+len(truncNote) > budget {
-		keep := budget - len(truncNote)
-		if keep < 0 {
-			keep = 0
-		}
+		keep := max(budget-len(truncNote), 0)
 		return clamp(b.String()[:keep]+truncNote, budget)
 	}
 
@@ -422,10 +419,7 @@ func detailBlock(module, check string, status Status, body string, remaining int
 	if len(body)+overhead <= remaining {
 		return head + body + tail, true
 	}
-	cut := remaining - overhead - len("\n(truncated)")
-	if cut < 0 {
-		cut = 0
-	}
+	cut := max(remaining-overhead-len("\n(truncated)"), 0)
 	return head + body[:cut] + "\n(truncated)" + tail, false
 }
 

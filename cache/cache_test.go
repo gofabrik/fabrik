@@ -110,10 +110,8 @@ func TestGetOrLoadSharesConcurrentLoad(t *testing.T) {
 	c := newCache[rollup](t)
 	var loads atomic.Int32
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			v, err := c.GetOrLoad(ctx, "daily", time.Minute, func(context.Context) (rollup, error) {
 				loads.Add(1)
 				time.Sleep(10 * time.Millisecond)
@@ -122,7 +120,7 @@ func TestGetOrLoadSharesConcurrentLoad(t *testing.T) {
 			if err != nil || v.Total != 42 {
 				t.Errorf("GetOrLoad = %+v, %v", v, err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if loads.Load() != 1 {

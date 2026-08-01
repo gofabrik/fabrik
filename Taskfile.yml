@@ -7,7 +7,7 @@ vars:
   MULTIMOD: '{{.ROOT_DIR}}/.task-bin/multimod'
   MODULE_DIRS:
     sh: cd {{.ROOT_DIR}} && go work edit -json | jq -r '.Use[].DiskPath'
-  # Run pinned tools with the workspace toolchain so they can analyze Go 1.26 code.
+  # Use the workspace toolchain for tools that analyze Go 1.27 code.
   GOLANGCI: 'go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2'
   GOVULNCHECK: 'go run golang.org/x/vuln/cmd/govulncheck@v1.1.4'
 

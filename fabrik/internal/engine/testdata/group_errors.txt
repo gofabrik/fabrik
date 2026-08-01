@@ -2,7 +2,7 @@ Group misuse: non-struct target, bad prefix.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

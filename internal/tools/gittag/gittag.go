@@ -89,7 +89,7 @@ func versionAtCommit(dir, commit string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("versions.yaml not found at %s; use the release commit: %v\n%s", commit, err, out)
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Fields(line)
 		if len(f) == 2 && f[0] == "version:" {
 			return f[1], nil

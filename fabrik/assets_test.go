@@ -44,7 +44,7 @@ func TestAssetsRequire(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n")
+	write("go.mod", "module app\n\ngo 1.27\n")
 	write("main.go", "package main\n\nfunc main() {}\n")
 	write("web/assets.go", "package web\n\nimport \"embed\"\n\n//fabrik:assets\n//go:embed all:assets\nvar Assets embed.FS\n")
 	write("web/assets/app.js", "export {}\n")
@@ -88,7 +88,7 @@ func TestAssetsRequire(t *testing.T) {
 
 func TestAssetsRequireNoDeclaration(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.27\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {

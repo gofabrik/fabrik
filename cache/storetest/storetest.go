@@ -236,7 +236,7 @@ func Run(t *testing.T, factory func(t *testing.T) cache.Store) {
 		s := factory(t)
 		var wg sync.WaitGroup
 		errs := make(chan error, 20)
-		for i := 0; i < 20; i++ {
+		for i := range 20 {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -251,7 +251,7 @@ func Run(t *testing.T, factory func(t *testing.T) cache.Store) {
 		if err := <-errs; err != nil {
 			t.Fatal(err)
 		}
-		for i := 0; i < 20; i++ {
+		for i := range 20 {
 			k := strconv.Itoa(i)
 			e, ok, err := s.Get(ctx, k, now)
 			if err != nil || !ok || string(e.Value) != k {

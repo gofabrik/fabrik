@@ -162,8 +162,7 @@ func TestLoad_RequiredFileMissingErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("a missing required file should error")
 	}
-	var le *config.LoadError
-	if errors.As(err, &le) {
+	if _, ok := errors.AsType[*config.LoadError](err); ok {
 		t.Error("a missing file is a hard error, not an aggregated LoadError")
 	}
 }

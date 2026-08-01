@@ -112,7 +112,7 @@ func TestLSP(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n")
+	write("go.mod", "module app\n\ngo 1.27\n")
 	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
 	webSrc := `package web
 
@@ -235,7 +235,7 @@ func TestLSPPublishesConfigDiagnostics(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n")
+	write("go.mod", "module app\n\ngo 1.27\n")
 	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
 	write("fabrik.yaml", "generate:\n  emit: bogus\n")
 	webSrc := `package web

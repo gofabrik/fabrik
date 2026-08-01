@@ -2,7 +2,7 @@ Selector failures join errors from cleanups accumulated before selection.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/cli v0.1.0
 

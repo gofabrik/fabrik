@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -465,8 +466,8 @@ func resolveDir(root, target string) (string, bool, error) {
 	for p := target; ; p = filepath.Dir(p) {
 		resolved, err := filepath.EvalSymlinks(p)
 		if err == nil {
-			for i := len(tail) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, tail[i])
+			for _, t := range slices.Backward(tail) {
+				resolved = filepath.Join(resolved, t)
 			}
 			contained := resolved == resolvedRoot ||
 				strings.HasPrefix(resolved, resolvedRoot+string(filepath.Separator))

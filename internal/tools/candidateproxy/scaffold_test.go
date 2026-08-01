@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func twoVersionProxy(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	write(t, root, "LICENSE", "license\n")
-	write(t, root, "lib/go.mod", "module github.com/gofabrik/fabrik/lib\n\ngo 1.26\n")
+	write(t, root, "lib/go.mod", "module github.com/gofabrik/fabrik/lib\n\ngo 1.27\n")
 	write(t, root, "lib/lib.go", "package lib\n\nconst V = \"v0.1.0\"\n")
 	git(t, root, "init")
 	git(t, root, "add", "-A")
@@ -53,9 +54,10 @@ func TestScaffoldRepinSurvivesNewerRelease(t *testing.T) {
 		app := t.TempDir()
 		modcache := t.TempDir()
 		t.Cleanup(func() { makeWritable(modcache) })
-		env := append(os.Environ(), Env(proxy, modcache)...)
+		// Resolve the scratch module with the running test toolchain.
+		env := append(os.Environ(), append(Env(proxy, modcache), "GOTOOLCHAIN="+runtime.Version())...)
 
-		write(t, app, "go.mod", "module example.com/app\n\ngo 1.26\n\nrequire "+lib+" v0.1.0\n")
+		write(t, app, "go.mod", "module example.com/app\n\ngo 1.27\n\nrequire "+lib+" v0.1.0\n")
 		write(t, app, "app.go", "package main\n\nfunc main() {}\n")
 		goMod(t, app, env, "mod", "tidy")
 

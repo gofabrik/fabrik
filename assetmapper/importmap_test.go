@@ -240,7 +240,7 @@ func TestImportmap_RenderIsKeySorted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		next, err := im.Render(m)
 		if err != nil {
 			t.Fatal(err)

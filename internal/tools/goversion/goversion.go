@@ -1,5 +1,4 @@
-// Package goversion asserts the repository declares a single Go version, sourced
-// from go.work's go directive.
+// Package goversion checks repository Go version declarations against go.work.
 package goversion
 
 import (
@@ -16,9 +15,9 @@ import (
 	"github.com/gofabrik/fabrik/internal/tools/modset"
 )
 
-// missing marks a Finding where the go directive, file, or pin is absent
-// rather than present with the wrong value.
 const missing = "(missing)"
+
+const none = "(none)"
 
 // Finding describes one location where the declared Go version disagrees with go.work.
 type Finding struct {
@@ -31,10 +30,7 @@ func (f Finding) String() string {
 	return fmt.Sprintf("%s: found %s, want %s", f.Path, f.Found, f.Expected)
 }
 
-// Check compares every go.mod, the starter template, the engine fixtures, and the
-// workflow go-version pins against go.work's go directive. A missing go directive,
-// template, or fixture section is itself a Finding, not an error, so one run lists
-// every mismatch; a genuine read failure still aborts with an error.
+// Check reports missing or inconsistent Go and toolchain declarations across the repository.
 func Check(cfg *modset.Config) ([]Finding, error) {
 	wf, err := loadWork(cfg.Root)
 	if err != nil {
@@ -44,10 +40,15 @@ func Check(cfg *modset.Config) ([]Finding, error) {
 		return nil, fmt.Errorf("go.work: missing go directive")
 	}
 
+	var wantToolchain string
+	if wf.Toolchain != nil {
+		wantToolchain = wf.Toolchain.Name
+	}
+
 	var findings []Finding
 	for _, check := range []func() ([]Finding, error){
-		func() ([]Finding, error) { return checkGoMods(cfg, wf.Go.Version) },
-		func() ([]Finding, error) { return checkTemplate(cfg.Root, wf.Go.Version) },
+		func() ([]Finding, error) { return checkGoMods(cfg, wf.Go.Version, wantToolchain) },
+		func() ([]Finding, error) { return checkTemplate(cfg.Root, wf.Go.Version, wantToolchain) },
 		func() ([]Finding, error) { return checkFixtures(cfg.Root, wf.Go.Version) },
 		func() ([]Finding, error) { return checkWorkflows(cfg.Root, wf) },
 	} {
@@ -72,11 +73,8 @@ func loadWork(root string) (*modfile.WorkFile, error) {
 	return modfile.ParseWork(path, data, nil)
 }
 
-// checkGoMods compares every workspace member's go.mod, plus internal/tools' own
-// go.mod (outside the workspace), against go.work's go directive. A go.mod that
-// parses but has no go directive is a Finding; a go.mod that cannot be read or
-// parsed at all is an error - that is a broken workspace member, not drift.
-func checkGoMods(cfg *modset.Config, want string) ([]Finding, error) {
+// Unreadable or invalid go.mod files are errors; missing directives are findings.
+func checkGoMods(cfg *modset.Config, want, wantToolchain string) ([]Finding, error) {
 	paths := make([]string, 0, len(cfg.Modules)+1)
 	for _, dir := range cfg.Modules {
 		paths = append(paths, filepath.Join(dir, "go.mod"))
@@ -102,43 +100,68 @@ func checkGoMods(cfg *modset.Config, want string) ([]Finding, error) {
 		if found != want {
 			findings = append(findings, Finding{Path: relPath(cfg.Root, p), Found: found, Expected: want})
 		}
+		foundToolchain := ""
+		if mf.Toolchain != nil {
+			foundToolchain = mf.Toolchain.Name
+		}
+		if f, e, ok := toolchainFinding(foundToolchain, wantToolchain); ok {
+			findings = append(findings, Finding{Path: relPath(cfg.Root, p), Found: f, Expected: e})
+		}
 	}
 	return findings, nil
 }
 
-var goDirectiveRE = regexp.MustCompile(`(?m)^go (\S+)\s*$`)
+func toolchainFinding(found, want string) (string, string, bool) {
+	switch {
+	case found == want:
+		return "", "", false
+	case want == "":
+		return found, none, true
+	case found == "":
+		return missing, want, true
+	default:
+		return found, want, true
+	}
+}
 
-// checkTemplate scans the starter's go.mod.tmpl as text: it is not valid go.mod
-// syntax once the templated require block is included. A deleted template or a
-// template with no go line is a Finding, not an error - both are legitimate
-// drift the gate should report alongside every other mismatch.
-func checkTemplate(root, want string) ([]Finding, error) {
+var (
+	goDirectiveRE        = regexp.MustCompile(`(?m)^go (\S+)\s*$`)
+	toolchainDirectiveRE = regexp.MustCompile(`(?m)^toolchain (\S+)\s*$`)
+)
+
+// Scan the template as text because its rendered require block is not valid go.mod syntax.
+func checkTemplate(root, want, wantToolchain string) ([]Finding, error) {
 	path := filepath.Join(root, "fabrik", "templates", "starter", "go.mod.tmpl")
+	rel := relPath(root, path)
 	// #nosec G304 -- reads a build/workspace path
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []Finding{{Path: relPath(root, path), Found: missing, Expected: want}}, nil
+			return []Finding{{Path: rel, Found: missing, Expected: want}}, nil
 		}
 		return nil, err
 	}
+	var findings []Finding
 	found := missing
 	if m := goDirectiveRE.FindStringSubmatch(string(data)); m != nil {
 		found = m[1]
 	}
-	if found == want {
-		return nil, nil
+	if found != want {
+		findings = append(findings, Finding{Path: rel, Found: found, Expected: want})
 	}
-	return []Finding{{Path: relPath(root, path), Found: found, Expected: want}}, nil
+	foundToolchain := ""
+	if m := toolchainDirectiveRE.FindStringSubmatch(string(data)); m != nil {
+		foundToolchain = m[1]
+	}
+	if f, e, ok := toolchainFinding(foundToolchain, wantToolchain); ok {
+		findings = append(findings, Finding{Path: rel, Found: f, Expected: e})
+	}
+	return findings, nil
 }
 
 var txtarHeaderRE = regexp.MustCompile(`^-- (\S.*?) --$`)
 
-// checkFixtures scans each engine testdata fixture's embedded "-- go.mod --"
-// section as text, matching the txtar file format directly rather than pulling
-// in the txtar dependency for a single-line scan. A fixture with no such section,
-// or a section with no go line, is a Finding, not an error; a fixture that cannot
-// be read at all is a real IO error.
+// Fixtures omit toolchain directives because the harness supplies GOTOOLCHAIN.
 func checkFixtures(root, want string) ([]Finding, error) {
 	dir := filepath.Join(root, "fabrik", "internal", "engine", "testdata")
 	matches, err := filepath.Glob(filepath.Join(dir, "*.txt"))
@@ -155,23 +178,29 @@ func checkFixtures(root, want string) ([]Finding, error) {
 			return nil, err
 		}
 		found := missing
+		foundToolchain := ""
 		if section, ok := goModSection(string(data)); ok {
 			if m := goDirectiveRE.FindStringSubmatch(section); m != nil {
 				found = m[1]
+			}
+			if m := toolchainDirectiveRE.FindStringSubmatch(section); m != nil {
+				foundToolchain = m[1]
 			}
 		}
 		if found != want {
 			findings = append(findings, Finding{Path: relPath(root, p), Found: found, Expected: want})
 		}
+		if f, e, ok := toolchainFinding(foundToolchain, ""); ok {
+			findings = append(findings, Finding{Path: relPath(root, p), Found: f, Expected: e})
+		}
 	}
 	return findings, nil
 }
 
-// goModSection extracts a txtar fixture's "-- go.mod --" file section.
 func goModSection(data string) (string, bool) {
 	inSection := false
 	var block []string
-	for _, line := range strings.Split(data, "\n") {
+	for line := range strings.SplitSeq(data, "\n") {
 		if m := txtarHeaderRE.FindStringSubmatch(line); m != nil {
 			if inSection {
 				break
@@ -195,13 +224,7 @@ var majorMinorRE = regexp.MustCompile(`^(\d+\.\d+)`)
 
 const setupGoUsesPrefix = "actions/setup-go@"
 
-// checkWorkflows compares every actions/setup-go step's go-version pin against
-// go.work, across both *.yml and *.yaml workflow files. Each file is parsed as
-// YAML (not scanned as text), so comments and unrelated keys such as env cannot
-// be mistaken for a step or its pin. A setup-go step whose with.go-version is
-// absent or empty is itself a Finding. With a toolchain directive present,
-// pins match it (either spelling); otherwise pins match the go directive's
-// major.minor (a patched go directive like "1.27.0" accepts "1.27").
+// Workflow pins match the toolchain directive, or the go directive's major.minor without one.
 func checkWorkflows(root string, wf *modfile.WorkFile) ([]Finding, error) {
 	dir := filepath.Join(root, ".github", "workflows")
 	var matches []string
@@ -253,17 +276,12 @@ func checkWorkflows(root string, wf *modfile.WorkFile) ([]Finding, error) {
 	return findings, nil
 }
 
-// setupGoPin is one actions/setup-go step's resolved go-version pin.
 type setupGoPin struct {
 	value string
 	line  int
 }
 
-// setupGoPins walks a parsed workflow document's jobs[*].steps[*] and returns
-// the go-version pin for every step whose uses starts with the setup-go
-// action. A step with no with.go-version key, or an empty one, reports
-// missing at the uses line; yaml.v3 already strips comments and separates
-// env from with, so neither can be mistaken for a real pin.
+// Missing or empty go-version pins are reported at the setup-go uses line.
 func setupGoPins(doc *yaml.Node) []setupGoPin {
 	if len(doc.Content) == 0 {
 		return nil
@@ -296,8 +314,6 @@ func setupGoPins(doc *yaml.Node) []setupGoPin {
 	return pins
 }
 
-// mapValue returns the value node for key in a YAML mapping node, or nil if n
-// is not a mapping or has no such key.
 func mapValue(n *yaml.Node, key string) *yaml.Node {
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
@@ -324,7 +340,6 @@ func workflowPinMatches(found, expected string, hasToolchain bool) bool {
 	return err == nil && canon == expected
 }
 
-// majorMinor reduces a go directive value ("1.27" or "1.27.0") to "major.minor".
 func majorMinor(v string) (string, error) {
 	m := majorMinorRE.FindStringSubmatch(v)
 	if m == nil {
@@ -339,9 +354,7 @@ var (
 	bareVersionRE   = regexp.MustCompile(`^(\d+)\.(\d+)(?:\.(\d+))?$`)
 )
 
-// canonicalVersion normalizes a Go version spelling - toolchain style ("go1.27rc2")
-// or setup-go style ("1.27.0-rc.2") - to "major.minor.patch[-pre.N]" so the two
-// spellings compare equal.
+// canonicalVersion normalizes toolchain and setup-go spellings for comparison.
 func canonicalVersion(s string) (string, error) {
 	s = strings.TrimPrefix(s, "go")
 	if m := hyphenVersionRE.FindStringSubmatch(s); m != nil {

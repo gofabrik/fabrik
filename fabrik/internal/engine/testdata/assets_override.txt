@@ -3,7 +3,7 @@ the contributed map in the generated Load call) and draws a warning.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require (
 	github.com/gofabrik/fabrik/assetmapper v0.0.0

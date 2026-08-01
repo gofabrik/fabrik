@@ -26,7 +26,7 @@ func TestWireTemplateOverlay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/templates v0.0.0\n\nreplace github.com/gofabrik/fabrik/templates => "+templateDir+"\n")
+	write("go.mod", "module app\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/templates v0.0.0\n\nreplace github.com/gofabrik/fabrik/templates => "+templateDir+"\n")
 	write("main.go", "package main\n\nfunc main() { _ = run }\n")
 	write("web/templates.go", "package web\n\nimport \"embed\"\n\n//fabrik:templates\n//go:embed all:templates\nvar Templates embed.FS\n")
 	write("web/templates/_default/_layout.html", `{{ block "content" . }}{{ end }}`)

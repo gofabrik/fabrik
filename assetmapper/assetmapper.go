@@ -198,7 +198,7 @@ func cleanLogical(p string) string {
 		return ""
 	}
 	p = strings.TrimPrefix(p, "/")
-	for _, segment := range strings.Split(p, "/") {
+	for segment := range strings.SplitSeq(p, "/") {
 		if segment == "." || segment == ".." {
 			return ""
 		}
@@ -224,7 +224,7 @@ func validateMount(m string) error {
 	if strings.HasSuffix(m, "/") {
 		return fmt.Errorf("%q has a trailing slash", m)
 	}
-	for _, seg := range strings.Split(m, "/") {
+	for seg := range strings.SplitSeq(m, "/") {
 		switch seg {
 		case "":
 			return fmt.Errorf("%q has an empty segment", m)

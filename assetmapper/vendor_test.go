@@ -1180,8 +1180,8 @@ func (f *fetchRedirectResolver) Resolve(ctx context.Context, reqs []assetmapper.
 }
 
 func (f *fetchRedirectResolver) Fetch(ctx context.Context, url string) ([]byte, error) {
-	if strings.HasPrefix(url, f.Prefix) {
-		url = f.Replace + strings.TrimPrefix(url, f.Prefix)
+	if after, ok := strings.CutPrefix(url, f.Prefix); ok {
+		url = f.Replace + after
 	}
 	return f.Inner.Fetch(ctx, url)
 }

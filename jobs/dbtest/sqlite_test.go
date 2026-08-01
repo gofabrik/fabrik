@@ -230,7 +230,7 @@ func TestSQLiteConcurrentUniqueKey(t *testing.T) {
 	const n = 16
 	var wg sync.WaitGroup
 	dups := make([]bool, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -264,10 +264,8 @@ func TestSQLiteConcurrentFireSchedule(t *testing.T) {
 	const n = 10
 	var wg sync.WaitGroup
 	var wins atomic.Int32
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			won, _, err := store.FireSchedule(ctx, jobs.ScheduleFire{
 				Name: "s", ExpectedLastRun: sql.NullTime{Valid: false},
 				NewLastRun: now, NewNextRun: now.Add(time.Second), Now: now, Jobs: []jobs.Job{job},
@@ -275,7 +273,7 @@ func TestSQLiteConcurrentFireSchedule(t *testing.T) {
 			if err == nil && won {
 				wins.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	// One scheduler wins each tick.
@@ -408,7 +406,7 @@ func TestSQLiteNoDoubleClaim(t *testing.T) {
 	for _, id := range makeWorkers(t, m, 2) {
 		_ = id
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if _, err := m.Enqueue(context.Background(), Task{ID: i}); err != nil {
 			t.Fatal(err)
 		}
@@ -435,7 +433,7 @@ type Task struct {
 func makeWorkers(t *testing.T, m *jobs.Manager, count int) []string {
 	t.Helper()
 	ids := make([]string, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		w, err := jobs.NewWorker(m, jobs.WorkerConfig{
 			Concurrency:       4,
 			PollInterval:      3 * time.Millisecond,

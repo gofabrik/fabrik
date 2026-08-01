@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 )
 
 // checkStageable reports ErrAlreadyCommitted before data validation.
@@ -176,9 +177,7 @@ func (m *core) cellUpdate(ctx context.Context, key string, fn func(prev cellRaw)
 		}
 
 		merged := make(map[string]cellRaw, len(st.cells)+1)
-		for k, v := range st.cells {
-			merged[k] = v
-		}
+		maps.Copy(merged, st.cells)
 		merged[key] = out
 		payload, err := encodeEnvelope(merged)
 		if err != nil {

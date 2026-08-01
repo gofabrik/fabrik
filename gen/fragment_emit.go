@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/types"
+	"slices"
 	"sort"
 	"strings"
 
@@ -180,11 +181,8 @@ func (g *Gen) SingletonAttribution(key string) func() {
 func (g *Gen) flowNodes(flow string) []Node {
 	var out []Node
 	for _, sn := range g.frag.nodes {
-		for _, u := range g.nodeUsage(sn) {
-			if u == flow {
-				out = append(out, sn.n)
-				break
-			}
+		if slices.Contains(g.nodeUsage(sn), flow) {
+			out = append(out, sn.n)
 		}
 	}
 	return out
@@ -546,13 +544,7 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 	if nodesHaveCheck(memberNodes) {
 		b.WriteString("var err error\n")
 	}
-	hasErrSite := false
-	for _, n := range memberNodes {
-		if nodeHasErrTail(n) {
-			hasErrSite = true
-			break
-		}
-	}
+	hasErrSite := slices.ContainsFunc(memberNodes, nodeHasErrTail)
 	ec := &errCtx{zeros: g.regionZeros(reg), unwind: hasCleanup && hasErrSite}
 
 	type section struct {
@@ -597,9 +589,9 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 		b.WriteString("var " + strings.Join(cleanups, ", ") + " func() error\n")
 		b.WriteString("cleanup := func() error {\n")
 		b.WriteString("var errs []error\n")
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			b.WriteString("if " + cleanups[i] + " != nil {\n")
-			b.WriteString("errs = append(errs, " + cleanups[i] + "())\n")
+		for _, cleanup := range slices.Backward(cleanups) {
+			b.WriteString("if " + cleanup + " != nil {\n")
+			b.WriteString("errs = append(errs, " + cleanup + "())\n")
 			b.WriteString("}\n")
 		}
 		b.WriteString("return " + errsPkg + ".Join(errs...)\n")

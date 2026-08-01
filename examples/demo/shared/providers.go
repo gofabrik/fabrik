@@ -84,9 +84,7 @@ func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ticker := time.NewTicker(time.Hour)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-ticker.C:
@@ -97,7 +95,7 @@ func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 				return
 			}
 		}
-	}()
+	})
 	return store, func() error {
 		ticker.Stop()
 		cancel()

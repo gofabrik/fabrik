@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -921,7 +922,7 @@ func rateLimitFlow(t *testing.T, base string) {
 	var last *http.Response
 	successes := 0
 	got429 := false
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		last = post()
 		if last.StatusCode == http.StatusTooManyRequests {
 			got429 = true
@@ -1025,6 +1026,8 @@ func gracefulShutdown(t *testing.T, server *exec.Cmd, out *bytes.Buffer) {
 
 func copyDemoWithLocalReplaces(t *testing.T, demoDir, repoRoot string) string {
 	t.Helper()
+	// Resolve the copied module with the running test toolchain.
+	t.Setenv("GOTOOLCHAIN", runtime.Version())
 	dst := filepath.Join(t.TempDir(), "demo-src")
 	if err := os.CopyFS(dst, os.DirFS(demoDir)); err != nil {
 		t.Fatalf("copy demo: %v", err)

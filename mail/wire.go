@@ -87,7 +87,7 @@ func addressHeader(b *strings.Builder, name string, addrs []string) error {
 // is valid RFC 5322 folding when the first word does not fit.
 func foldHeader(b *strings.Builder, name, value string) {
 	line := name + ":"
-	for _, word := range strings.Split(value, " ") {
+	for word := range strings.SplitSeq(value, " ") {
 		if len(line)+1+len(word) > 78 {
 			b.WriteString(line)
 			b.WriteString("\r\n")

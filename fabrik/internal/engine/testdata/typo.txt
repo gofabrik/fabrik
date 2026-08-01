@@ -2,7 +2,7 @@ Near-miss directive prefixes warn instead of vanishing.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -60,6 +61,8 @@ func TestEndToEnd(t *testing.T) {
 	t.Chdir(tmp)
 	// Keep dependency resolution local.
 	t.Setenv("GOPROXY", "off")
+	// Resolve the scratch module with the running test toolchain.
+	t.Setenv("GOTOOLCHAIN", runtime.Version())
 	err = newCmd([]string{"hello"})
 	if err == nil || !strings.Contains(err.Error(), "dependencies could not be resolved") {
 		t.Fatalf("fabrik new offline: err = %v, want unresolved-dependencies failure", err)

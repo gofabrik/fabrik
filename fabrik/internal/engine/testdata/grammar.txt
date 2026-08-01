@@ -3,7 +3,7 @@ unterminated quote, digit-led option key.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

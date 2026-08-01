@@ -2,7 +2,7 @@ Directives separated from their declaration warn instead of vanishing.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

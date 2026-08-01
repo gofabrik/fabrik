@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 )
 
 // decodeEnvelope parses payload bytes into the cell map.
@@ -37,9 +38,7 @@ func encodeEnvelope(cells map[string]cellRaw) ([]byte, error) {
 // mergedView returns stored cells overlaid with staged writes.
 func (st *state) mergedView() map[string]cellRaw {
 	out := make(map[string]cellRaw, len(st.cells)+len(st.staged))
-	for k, v := range st.cells {
-		out[k] = v
-	}
+	maps.Copy(out, st.cells)
 	for k, v := range st.staged {
 		if v == nil {
 			delete(out, k)

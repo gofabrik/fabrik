@@ -2,7 +2,7 @@ Misuse of hooks, handle, and static.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

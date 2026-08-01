@@ -14,10 +14,8 @@ func TestLoadSharesOneCall(t *testing.T) {
 	var runs atomic.Int32
 	release := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			v, err := g.Do(context.Background(), "k", func(func(func()) bool) (any, error) {
 				runs.Add(1)
 				<-release
@@ -26,7 +24,7 @@ func TestLoadSharesOneCall(t *testing.T) {
 			if err != nil || v != "shared" {
 				t.Errorf("Do = %v, %v", v, err)
 			}
-		}()
+		})
 	}
 	for runs.Load() == 0 {
 		time.Sleep(time.Millisecond)
@@ -216,7 +214,7 @@ func TestRetryClassification(t *testing.T) {
 
 // A canceled caller gets its context error even if completion is ready.
 func TestLoadCanceledCallerNeverGetsResult(t *testing.T) {
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		g := newLoadGroup()
 		started := make(chan struct{})
 		release := make(chan struct{})

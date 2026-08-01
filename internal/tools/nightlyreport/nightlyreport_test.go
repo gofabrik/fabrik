@@ -271,7 +271,7 @@ func TestRenderByteBudget(t *testing.T) {
 
 func TestRenderMandatoryExceedsBudget(t *testing.T) {
 	var results []ModuleResult
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		results = append(results, ModuleResult{Module: "./module-with-a-longish-name", Lint: StatusFindings})
 	}
 	out := Render(results, StatusClean, nil, Meta{}, 500)

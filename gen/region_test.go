@@ -134,7 +134,6 @@ type B struct{}
 	wrapA := types.NewPointer(pkg.Scope().Lookup("A").Type())
 	wrapB := types.NewPointer(pkg.Scope().Lookup("B").Type())
 	for name, tt := range map[string]types.Type{"A": wrapA, "B": wrapB} {
-		name, tt := name, tt
 		g.BindLazy(tt, "", func() (string, diag.Diagnostics) {
 			cache, ds, ok := g.Instance(w.cache, "")
 			if !ok {
@@ -378,7 +377,6 @@ type E struct{}
 		return v, nil
 	})
 	for _, name := range []string{"B", "C", "D", "E"} {
-		name := name
 		tt := tOf(name)
 		g.BindLazy(tt, "", func() (string, diag.Diagnostics) {
 			a, ds, ok := g.Instance(base, "hub")

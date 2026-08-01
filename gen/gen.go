@@ -1063,7 +1063,6 @@ func (g *Gen) RenderFiles() (map[string][]byte, error) {
 	}
 	taken := map[string]bool{g.mainFileName(): true}
 	for _, reg := range g.regionEmitOrder() {
-		reg := reg
 		base := "fragments_" + strings.ToLower(reg.fn)
 		name := base + ".gen.go"
 		for n := 2; taken[name]; n++ {

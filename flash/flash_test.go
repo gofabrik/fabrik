@@ -329,7 +329,7 @@ func TestConcurrentAddsAllSurvive(t *testing.T) {
 	const n = 20
 	errs := make([]error, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -358,7 +358,7 @@ func TestConcurrentTakesDeliverOnce(t *testing.T) {
 	m, fl := managerWithRetries(t, 100)
 	const msgs = 5
 	sid := serve(t, m, "", func(ctx context.Context) {
-		for i := 0; i < msgs; i++ {
+		for i := range msgs {
 			_ = fl.Add(ctx, "info", fmt.Sprintf("m%d", i))
 		}
 	})
@@ -367,7 +367,7 @@ func TestConcurrentTakesDeliverOnce(t *testing.T) {
 	results := make([][]Message, takers)
 	errs := make([]error, takers)
 	var wg sync.WaitGroup
-	for i := 0; i < takers; i++ {
+	for i := range takers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

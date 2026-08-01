@@ -741,16 +741,14 @@ func TestConcurrentFirstServe(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	fails := make(chan string, n)
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			<-start
 			rr := do(t, r, "GET", "/a")
 			if b := body(t, rr); rr.Code != 200 || b != "ok" {
 				fails <- fmt.Sprintf("%d %q", rr.Code, b)
 			}
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

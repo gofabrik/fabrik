@@ -546,7 +546,7 @@ func kebabCase(name string) string {
 // helpAndLong removes directives, derives Help with go/doc, and preserves the remaining source as Long.
 func helpAndLong(text string) (help, long string) {
 	var kept []string
-	for _, ln := range strings.Split(text, "\n") {
+	for ln := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(ln), "fabrik:") {
 			continue
 		}

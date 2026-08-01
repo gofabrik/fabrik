@@ -14,6 +14,7 @@ import (
 	htmltpl "html/template"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"sort"
 	"strings"
@@ -69,9 +70,7 @@ func Load(fsys fs.FS, dir string, funcMaps ...FuncMap) (*Set, error) {
 func LoadSources(sources []Source, funcMaps ...FuncMap) (*Set, error) {
 	merged := DefaultFuncs()
 	for _, fm := range funcMaps {
-		for k, v := range fm {
-			merged[k] = v
-		}
+		maps.Copy(merged, fm)
 	}
 	if err := checkFuncs(merged); err != nil {
 		return nil, err

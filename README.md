@@ -9,6 +9,8 @@ release.
 
 ## Install
 
+Requires Go 1.27 or later.
+
 ```sh
 go install github.com/gofabrik/fabrik/fabrik@latest
 ```

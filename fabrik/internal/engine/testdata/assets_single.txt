@@ -3,7 +3,7 @@ An app without templates still gets the compiled binding and the
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/assetmapper v0.0.0
 

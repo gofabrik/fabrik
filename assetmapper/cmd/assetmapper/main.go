@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -145,9 +146,7 @@ func loadOrEmptyImportmap(path string) (*assetmapper.Importmap, error) {
 
 func entriesCopy(im *assetmapper.Importmap) map[string]assetmapper.ImportmapEntry {
 	out := make(map[string]assetmapper.ImportmapEntry, len(im.Entries))
-	for k, e := range im.Entries {
-		out[k] = e
-	}
+	maps.Copy(out, im.Entries)
 	return out
 }
 

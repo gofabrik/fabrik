@@ -24,7 +24,7 @@ func main() {
 	flag.Parse()
 
 	var results []nightlyreport.ModuleResult
-	for _, m := range strings.Split(*modules, ",") {
+	for m := range strings.SplitSeq(*modules, ",") {
 		m = strings.TrimSpace(m)
 		if m == "" {
 			continue

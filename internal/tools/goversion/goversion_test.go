@@ -10,17 +10,15 @@ import (
 	"github.com/gofabrik/fabrik/internal/tools/modset"
 )
 
-// tree describes one fixture repository. Every field defaults to a
-// self-consistent tree at goVersion with no toolchain directive; a test
-// overrides exactly the field it wants to skew.
+// tree defaults to a consistent repository; tests override fields to introduce drift.
 type tree struct {
 	goVersion    string
 	toolchain    string
-	modVersions  map[string]string // module dir -> go.mod's go version
+	modVersions  map[string]string
 	toolsVersion string
 	tmplVersion  string
-	fixtures     map[string]string // testdata filename -> go.mod section's go version
-	workflows    map[string]string // workflow filename -> raw file content
+	fixtures     map[string]string
+	workflows    map[string]string
 }
 
 func defaultTree() tree {
@@ -37,8 +35,6 @@ func defaultTree() tree {
 	}
 }
 
-// toolchainTree is a self-consistent tree pinned to an rc toolchain, for tests
-// that exercise toolchain-aware workflow matching.
 func toolchainTree() tree {
 	return tree{
 		goVersion:    "1.27",
@@ -50,8 +46,6 @@ func toolchainTree() tree {
 	}
 }
 
-// patchedGoTree is a self-consistent tree whose go directive carries a patch
-// version, for tests that exercise the major.minor workflow comparison.
 func patchedGoTree() tree {
 	return tree{
 		goVersion:    "1.27.0",
@@ -62,8 +56,6 @@ func patchedGoTree() tree {
 	}
 }
 
-// workflowContent renders one job per pin, each with a single-quoted go-version
-// under a setup-go step, matching the repo's actual workflow style.
 func workflowContent(pins []string) string {
 	var b strings.Builder
 	b.WriteString("name: x\non: push\njobs:\n")
@@ -73,7 +65,6 @@ func workflowContent(pins []string) string {
 	return b.String()
 }
 
-// stepWorkflow wraps one already-indented step (or steps) in a single job.
 func stepWorkflow(step string) string {
 	return "name: x\non: push\njobs:\n  job0:\n    steps:\n" + step
 }
@@ -97,15 +88,21 @@ func build(t *testing.T, tr tree) *modset.Config {
 	work += "\nuse (\n" + uses.String() + ")\n"
 	write(t, root, "go.work", work)
 
+	// Modules and the template inherit the workspace toolchain; fixtures do not.
+	tcLine := ""
+	if tr.toolchain != "" {
+		tcLine = "\ntoolchain " + tr.toolchain + "\n"
+	}
+
 	for dir, v := range tr.modVersions {
-		write(t, root, dir+"/go.mod", "module example.com/"+dir+"\n\ngo "+v+"\n")
+		write(t, root, dir+"/go.mod", "module example.com/"+dir+"\n\ngo "+v+"\n"+tcLine)
 	}
 
 	write(t, root, "internal/tools/go.mod",
-		"module github.com/gofabrik/fabrik/internal/tools\n\ngo "+tr.toolsVersion+"\n")
+		"module github.com/gofabrik/fabrik/internal/tools\n\ngo "+tr.toolsVersion+"\n"+tcLine)
 
 	write(t, root, "fabrik/templates/starter/go.mod.tmpl",
-		"module {{.Module}}\n\ngo "+tr.tmplVersion+"\n{{- if .FabrikVersion}}\n\nrequire (\n"+
+		"module {{.Module}}\n\ngo "+tr.tmplVersion+"\n"+tcLine+"{{- if .FabrikVersion}}\n\nrequire (\n"+
 			"{{- range .FabrikModules}}\n\t{{.}} {{$.FabrikVersion}}\n{{- end}}\n)\n{{- end}}\n")
 
 	for name, v := range tr.fixtures {
@@ -302,11 +299,137 @@ func TestCheckFixture(t *testing.T) {
 	}
 }
 
-// TestCheckWorkflow covers every single-step shape the setup-go scanner must
-// get right: each YAML scalar spelling (matching and mismatching), a step
-// with no pin at all, a step that isn't setup-go, and the two structural
-// bypasses a text scanner is prone to - a pin under env instead of with, and
-// a commented-out uses line that must not be read as a step.
+func TestCheckToolchainClean(t *testing.T) {
+	cfg := build(t, toolchainTree())
+	findings, err := Check(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("want no findings for a self-consistent toolchain tree, got %v", findings)
+	}
+}
+
+func TestCheckToolchain(t *testing.T) {
+	const (
+		tmplPath    = "fabrik/templates/starter/go.mod.tmpl"
+		toolsPath   = "internal/tools/go.mod"
+		fixturePath = "fabrik/internal/engine/testdata/assets.txt"
+	)
+	tmpl := func(goV, tc string) string {
+		body := "module {{.Module}}\n\ngo " + goV + "\n"
+		if tc != "" {
+			body += "\ntoolchain " + tc + "\n"
+		}
+		return body + "{{- if .FabrikVersion}}\n\nrequire (\n{{- range .FabrikModules}}\n\t{{.}} {{$.FabrikVersion}}\n{{- end}}\n)\n{{- end}}\n"
+	}
+	fixture := func(goV, tc string) string {
+		body := "fixture description\n-- go.mod --\nmodule app\n\ngo " + goV + "\n"
+		if tc != "" {
+			body += "\ntoolchain " + tc + "\n"
+		}
+		return body + "-- main.go --\npackage main\n"
+	}
+	tests := []struct {
+		name         string
+		base         tree
+		mutate       func(t *testing.T, cfg *modset.Config)
+		wantPath     string
+		wantFound    string
+		wantExpected string
+	}{
+		{
+			name: "member differing toolchain",
+			base: toolchainTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, "b/go.mod", "module example.com/b\n\ngo 1.27\n\ntoolchain go1.27rc1\n")
+			},
+			wantPath: "b/go.mod", wantFound: "go1.27rc1", wantExpected: "go1.27rc2",
+		},
+		{
+			name: "member missing toolchain when required",
+			base: toolchainTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, "b/go.mod", "module example.com/b\n\ngo 1.27\n")
+			},
+			wantPath: "b/go.mod", wantFound: missing, wantExpected: "go1.27rc2",
+		},
+		{
+			name: "member toolchain when forbidden",
+			base: defaultTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, "b/go.mod", "module example.com/b\n\ngo 1.26\n\ntoolchain go1.26.0\n")
+			},
+			wantPath: "b/go.mod", wantFound: "go1.26.0", wantExpected: none,
+		},
+		{
+			name: "tools module differing toolchain",
+			base: toolchainTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, toolsPath, "module github.com/gofabrik/fabrik/internal/tools\n\ngo 1.27\n\ntoolchain go1.27rc1\n")
+			},
+			wantPath: toolsPath, wantFound: "go1.27rc1", wantExpected: "go1.27rc2",
+		},
+		{
+			name: "template differing toolchain",
+			base: toolchainTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, tmplPath, tmpl("1.27", "go1.27rc1"))
+			},
+			wantPath: tmplPath, wantFound: "go1.27rc1", wantExpected: "go1.27rc2",
+		},
+		{
+			name: "template missing toolchain when required",
+			base: toolchainTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, tmplPath, tmpl("1.27", ""))
+			},
+			wantPath: tmplPath, wantFound: missing, wantExpected: "go1.27rc2",
+		},
+		{
+			name: "template toolchain when forbidden",
+			base: defaultTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, tmplPath, tmpl("1.26", "go1.26.0"))
+			},
+			wantPath: tmplPath, wantFound: "go1.26.0", wantExpected: none,
+		},
+		{
+			name: "fixture with toolchain, go.work has toolchain",
+			base: toolchainTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, fixturePath, fixture("1.27", "go1.27rc2"))
+			},
+			wantPath: fixturePath, wantFound: "go1.27rc2", wantExpected: none,
+		},
+		{
+			name: "fixture with toolchain, go.work has no toolchain",
+			base: defaultTree(),
+			mutate: func(t *testing.T, cfg *modset.Config) {
+				write(t, cfg.Root, fixturePath, fixture("1.26", "go1.26.0"))
+			},
+			wantPath: fixturePath, wantFound: "go1.26.0", wantExpected: none,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := build(t, tt.base)
+			tt.mutate(t, cfg)
+			findings, err := Check(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(findings) != 1 {
+				t.Fatalf("want exactly one finding, got %v", findings)
+			}
+			got := findings[0]
+			if got.Path != tt.wantPath || got.Found != tt.wantFound || got.Expected != tt.wantExpected {
+				t.Fatalf("want %s: found %s, want %s; got %+v", tt.wantPath, tt.wantFound, tt.wantExpected, got)
+			}
+		})
+	}
+}
+
 func TestCheckWorkflow(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -332,8 +455,7 @@ func TestCheckWorkflow(t *testing.T) {
 			wantFound: "1.25",
 		},
 		{
-			// The trailing comment doubles as a regression check that yaml.v3
-			// strips it rather than folding it into the scalar value.
+			// Exclude the trailing YAML comment from the scalar value.
 			name:    "unquoted match with trailing comment",
 			content: stepWorkflow("      - uses: actions/setup-go@v7\n        with:\n          go-version: 1.26 # pinned\n"),
 		},
@@ -460,7 +582,7 @@ func TestCheckWorkflowToolchainAwareAcceptsBothSpellings(t *testing.T) {
 func TestCheckWorkflowToolchainAwareMismatch(t *testing.T) {
 	tr := toolchainTree()
 	tr.workflows = map[string]string{
-		"ci.yml": workflowContent([]string{"1.27"}), // stale pin: go directive's minor, not the rc toolchain
+		"ci.yml": workflowContent([]string{"1.27"}), // the go directive's minor does not match the rc toolchain
 	}
 	cfg := build(t, tr)
 	findings, err := Check(cfg)

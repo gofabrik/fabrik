@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 )
 
@@ -119,9 +120,7 @@ func (a *Adapter) Wrap(fn func(*Request) (Response, error)) http.HandlerFunc {
 			for key := range h {
 				delete(h, key)
 			}
-			for key, values := range snapshot {
-				h[key] = values
-			}
+			maps.Copy(h, snapshot)
 			a.onError(cw, r, err)
 		}
 	}

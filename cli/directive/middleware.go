@@ -140,7 +140,7 @@ func knownMiddlewareHelp(f *family) string {
 func splitMiddleware(a gen.Annotation, attr gen.Arg) ([]string, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	var out []string
-	for _, name := range strings.Split(attr.Text, ",") {
+	for name := range strings.SplitSeq(attr.Text, ",") {
 		if !tokenRE.MatchString(name) {
 			ds.Error(a.ArgPos(attr.Col), fmt.Sprintf("invalid CLI token %q in middleware=", name),
 				"references are single lowercase kebab-case tokens")

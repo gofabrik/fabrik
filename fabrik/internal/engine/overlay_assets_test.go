@@ -29,7 +29,7 @@ func TestWireAssetOverlay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/assetmapper v0.0.0\n\nreplace github.com/gofabrik/fabrik/assetmapper => "+assetsDir+"\n")
+	write("go.mod", "module app\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/assetmapper v0.0.0\n\nreplace github.com/gofabrik/fabrik/assetmapper => "+assetsDir+"\n")
 	write("main.go", "package main\n\nfunc main() { _ = run }\n")
 	write("shared/assets.go", "package shared\n\nimport \"embed\"\n\n//fabrik:assets\n//go:embed all:assets\nvar Assets embed.FS\n")
 	write("shared/assets/style.css", "body {}\n")

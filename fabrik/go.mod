@@ -1,6 +1,8 @@
 module github.com/gofabrik/fabrik/fabrik
 
-go 1.26
+go 1.27
+
+toolchain go1.27rc2
 
 require (
 	github.com/gofabrik/fabrik/assetmapper v0.1.0
