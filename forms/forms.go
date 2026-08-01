@@ -13,7 +13,8 @@
 package forms
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -111,7 +112,7 @@ func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
 				return nil, jsonErr(err)
 			}
 			// Unmarshal decodes the whole body and rejects trailing content.
-			if err := json.Unmarshal(body, &form.Data); err != nil {
+			if err := json.Unmarshal(body, &form.Data, jsonv1.DefaultOptionsV1()); err != nil {
 				return nil, jsonErr(err)
 			}
 			if err := rejectJSONFiles(&form.Data); err != nil {

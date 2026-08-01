@@ -1,7 +1,8 @@
 package web
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"net/http"
 )
@@ -43,7 +44,7 @@ type JSON struct {
 }
 
 func (j JSON) Respond(w http.ResponseWriter, r *http.Request) error {
-	buf, err := json.Marshal(j.Value)
+	buf, err := json.Marshal(j.Value, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return err
 	}
