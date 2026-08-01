@@ -318,8 +318,8 @@ func mwAttrKind(meta gen.Meta, key string) (gen.ValueKind, bool) {
 }
 
 func (s *lspServer) middlewareCompletions(uri, partial, directive string) []completionItem {
-	if i := strings.LastIndex(partial, ","); i >= 0 {
-		partial = partial[i+1:]
+	if _, after, found := strings.CutLast(partial, ","); found {
+		partial = after
 	}
 	root := s.rootForURI(uri)
 	if root == "" {

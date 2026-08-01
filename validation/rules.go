@@ -34,8 +34,8 @@ var emailRule Rule[string] = func(s string) error {
 	if err != nil || addr.Address != s {
 		return errors.New("must be a valid email address")
 	}
-	at := strings.LastIndex(s, "@")
-	if at < 0 || !strings.Contains(s[at+1:], ".") {
+	_, after, found := strings.CutLast(s, "@")
+	if !found || !strings.Contains(after, ".") {
 		return errors.New("must be a valid email address")
 	}
 	return nil

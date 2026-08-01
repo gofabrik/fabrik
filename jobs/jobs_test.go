@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -85,6 +86,44 @@ func jobState(t *testing.T, m *Manager, id string) State {
 		t.Fatalf("GetJob: %v", err)
 	}
 	return info.State
+}
+
+func TestNewIDTextualLayout(t *testing.T) {
+	id := NewID()
+	if len(id) != 36 {
+		t.Fatalf("NewID() = %q, length %d, want 36", id, len(id))
+	}
+	for i, c := range []byte(id) {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				t.Fatalf("NewID() = %q, byte %d = %q, want '-'", id, i, c)
+			}
+		default:
+			isLowerHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+			if !isLowerHex {
+				t.Fatalf("NewID() = %q, byte %d = %q, want lowercase hex", id, i, c)
+			}
+		}
+	}
+}
+
+func TestNewIDVersionAndVariant(t *testing.T) {
+	id := NewID()
+	versionNibble, err := strconv.ParseUint(id[14:15], 16, 8)
+	if err != nil {
+		t.Fatalf("NewID() = %q, version nibble not hex: %v", id, err)
+	}
+	if versionNibble != 4 {
+		t.Fatalf("NewID() = %q, version nibble = %d, want 4", id, versionNibble)
+	}
+	variantNibble, err := strconv.ParseUint(id[19:20], 16, 8)
+	if err != nil {
+		t.Fatalf("NewID() = %q, variant nibble not hex: %v", id, err)
+	}
+	if variantNibble&0xc != 0x8 { // top two bits of the nibble must read 10
+		t.Fatalf("NewID() = %q, variant nibble = %x, want top bits 10xx", id, variantNibble)
+	}
 }
 
 func TestRegistrationConflicts(t *testing.T) {

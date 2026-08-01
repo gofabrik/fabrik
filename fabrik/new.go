@@ -192,8 +192,8 @@ func repinFabrik(dir, version string) error {
 // module path element: my-app -> MY_APP.
 func envPrefix(module string) string {
 	base := module
-	if i := strings.LastIndexByte(base, '/'); i >= 0 {
-		base = base[i+1:]
+	if _, after, found := strings.CutLast(base, "/"); found {
+		base = after
 	}
 	var b strings.Builder
 	for _, r := range strings.ToUpper(base) {

@@ -501,11 +501,11 @@ func versionFromJSPMURL(raw string) string {
 		p = p[i+1:]
 	}
 	// Scoped packages can contain slashes, so the last "@" marks the version.
-	at := strings.LastIndex(p, "@")
-	if at <= 0 {
+	before, after, found := strings.CutLast(p, "@")
+	if !found || before == "" {
 		return ""
 	}
-	rest := p[at+1:]
+	rest := after
 	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
 		rest = rest[:slash]
 	}

@@ -407,21 +407,20 @@ func reportPkgErrors(errs []packages.Error, ds *diag.Diagnostics) {
 // errorPosition parses packages.Error positions from the right.
 func errorPosition(e packages.Error) token.Position {
 	pos := token.Position{Filename: e.Pos}
-	rest := e.Pos
-	i := strings.LastIndexByte(rest, ':')
-	if i < 0 {
+	rest, lastStr, found := strings.CutLast(e.Pos, ":")
+	if !found {
 		return pos
 	}
-	last, err := strconv.Atoi(rest[i+1:])
+	last, err := strconv.Atoi(lastStr)
 	if err != nil {
 		return pos
 	}
-	if j := strings.LastIndexByte(rest[:i], ':'); j >= 0 {
-		if line, err := strconv.Atoi(rest[j+1 : i]); err == nil {
-			return token.Position{Filename: rest[:j], Line: line, Column: last}
+	if filename, lineStr, found := strings.CutLast(rest, ":"); found {
+		if line, err := strconv.Atoi(lineStr); err == nil {
+			return token.Position{Filename: filename, Line: line, Column: last}
 		}
 	}
-	return token.Position{Filename: rest[:i], Line: last}
+	return token.Position{Filename: rest, Line: last}
 }
 
 func splitFirst(s string) (head, rest string) {

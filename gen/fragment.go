@@ -470,8 +470,8 @@ func (g *Gen) embedSharedRoots(ps *planState, regions []*region) {
 // typeBaseName extracts the bare type name from a rendered type.
 func typeBaseName(t string) string {
 	t = strings.TrimLeft(t, "*")
-	if i := strings.LastIndexByte(t, '.'); i >= 0 {
-		t = t[i+1:]
+	if _, after, found := strings.CutLast(t, "."); found {
+		t = after
 	}
 	if t == "" || !isIdentifierExpr(t) {
 		return "root"

@@ -127,8 +127,8 @@ func run(args []string, out io.Writer) error {
 
 // splitPackageVersion keeps scoped-package prefixes intact.
 func splitPackageVersion(s string) (pkg, version string) {
-	if at := strings.LastIndex(s, "@"); at > 0 {
-		return s[:at], s[at+1:]
+	if before, after, found := strings.CutLast(s, "@"); found && before != "" {
+		return before, after
 	}
 	return s, ""
 }
