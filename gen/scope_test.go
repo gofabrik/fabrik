@@ -507,6 +507,292 @@ func TestScopeReservesRenderAliases(t *testing.T) {
 	}
 }
 
+// lateImportAliases renders g and returns the aliases of the imports Render
+// registers itself, after scope identifiers have frozen.
+func lateImportAliases(t *testing.T, g *Gen) map[string]bool {
+	t.Helper()
+	if ds := g.WalkFlows(); ds.HasFatal() {
+		t.Fatalf("WalkFlows: %v", ds)
+	}
+	if ds := g.PlanFragments(); ds.HasFatal() {
+		t.Fatalf("PlanFragments: %v", ds)
+	}
+	early := map[string]bool{}
+	for path := range g.imports {
+		early[path] = true
+	}
+	if _, err := g.Render(); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	late := map[string]bool{}
+	for path, alias := range g.imports {
+		if !early[path] {
+			late[alias] = true
+		}
+	}
+	return late
+}
+
+// lateAliases must mirror the imports Render registers for itself after
+// identifier allocation: an alias missing from the list is unreserved, and a
+// listed alias no import claims reserves a name for nothing. The worlds below
+// cover every late registration path - the command shell, a command surface
+// without scopes, the plain run shell, and embedded entrypoints with cleanup.
+func TestLateAliasesMatchRenderRegisteredImports(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/late", `package late
+
+type Conn struct{}
+`)
+	conn := types.NewPointer(pkg.Scope().Lookup("Conn").Type())
+
+	commands := newRegionWorld(t, "db")
+	commands.addCommand("alpha", ScopeRoot{Type: commands.cache})
+	commands.addCommand("beta", ScopeRoot{Type: commands.cache})
+
+	rootOnly := New()
+	rootOnly.SetModule("demo")
+	rootOnly.SetCommandRoot(RootSpec{Version: "1.2.3"})
+
+	plain := New()
+	plain.SetModule("demo")
+	plain.Node(&Call{Base: Base{Phase: PhaseWire}, Var: "app", Fn: "app.New"})
+
+	embedded := New()
+	embedded.SetModule("demo")
+	embedded.EmbeddedOutput("appwire")
+	embedded.BindLazy(conn, "", func() (string, diag.Diagnostics) {
+		v := embedded.Var("conn")
+		embedded.Node(&Call{
+			Base:    Base{Phase: PhaseWire},
+			Var:     v,
+			Fn:      embedded.Import("example.com/late") + ".Open",
+			Err:     ErrReturn,
+			Cleanup: embedded.Var(v + "Close"),
+			Type:    conn,
+		})
+		return v, nil
+	})
+	for _, name := range []string{"alpha", "beta"} {
+		s := embedded.AddScope("build"+upperFirst(name), token.Position{}, ScopeRoot{Type: conn})
+		embedded.AddCommandFunc(CommandFunc{Name: name, Fn: "late.Run" + upperFirst(name), Scope: s})
+	}
+
+	registered := map[string]bool{}
+	for _, g := range []*Gen{commands.g, rootOnly, plain, embedded} {
+		for alias := range lateImportAliases(t, g) {
+			registered[alias] = true
+		}
+	}
+
+	listed := map[string]bool{}
+	for _, a := range lateAliases {
+		listed[a] = true
+	}
+	for alias := range registered {
+		if !listed[alias] {
+			t.Errorf("Render registers alias %q late; add it to lateAliases", alias)
+		}
+	}
+	for _, a := range lateAliases {
+		if !registered[a] {
+			t.Errorf("lateAliases reserves %q, which no rendered world registers late", a)
+		}
+	}
+}
+
+// declaredIdents collects the identifiers a generated file defines.
+func declaredIdents(t *testing.T, src string) map[string]bool {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "main.gen.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	names := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok != token.DEFINE {
+				return true
+			}
+			for _, lhs := range n.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok {
+					names[id.Name] = true
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				names[id.Name] = true
+			}
+		case *ast.Field:
+			for _, id := range n.Names {
+				names[id.Name] = true
+			}
+		}
+		return true
+	})
+	return names
+}
+
+// claimLateNames emits one call per lateAliases name so generated
+// identifiers pre-claim every reserved name, and returns the last variable.
+func claimLateNames(g *Gen, alias string, typ types.Type) string {
+	var prev, v string
+	for _, name := range lateAliases {
+		v = g.Var(name)
+		var args []string
+		if prev != "" {
+			args = []string{prev}
+		}
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire},
+			Var:  v,
+			Fn:   alias + ".New",
+			Args: args,
+			Err:  ErrReturn,
+			Type: typ,
+		})
+		prev = v
+	}
+	return v
+}
+
+// assertAliasesUnshadowed checks that the claimed names reached the output
+// and that no generated declaration hides an import alias.
+func assertAliasesUnshadowed(t *testing.T, g *Gen, src string) {
+	t.Helper()
+	declared := declaredIdents(t, src)
+	for _, name := range lateAliases {
+		if !declared[name] && !declared[name+"2"] {
+			t.Errorf("generated code never claims %q, so the collision is untested:\n%s", name, src)
+		}
+	}
+	for path, alias := range g.imports {
+		if declared[alias] {
+			t.Errorf("generated declaration shadows import %q under alias %q:\n%s", path, alias, src)
+		}
+	}
+}
+
+// appImporter resolves the packages a generated file imports from checked
+// test packages and every other path from one toolchain importer, which
+// keeps transitively shared types identical.
+type appImporter struct {
+	pkgs map[string]*types.Package
+	std  types.Importer
+}
+
+func (ai appImporter) Import(path string) (*types.Package, error) {
+	if p, ok := ai.pkgs[path]; ok {
+		return p, nil
+	}
+	return ai.std.Import(path)
+}
+
+// typecheckRendered compiles generated source against pkgs and the stdlib.
+func typecheckRendered(t *testing.T, src string, pkgs ...*types.Package) {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "fabrik.gen.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	imp := appImporter{pkgs: map[string]*types.Package{}, std: importer.Default()}
+	for _, p := range pkgs {
+		imp.pkgs[p.Path()] = p
+	}
+	conf := types.Config{Importer: imp}
+	if _, err := conf.Check(f.Name.Name, fset, []*ast.File{f}, nil); err != nil {
+		t.Fatalf("rendered output does not compile: %v\n%s", err, src)
+	}
+}
+
+// Generated identifiers may claim every lateAliases name: the late imports
+// take suffixed aliases instead, and the rendered file keeps every import
+// alias unshadowed. Each shell that registers late imports claims them.
+func TestLateAliasNamesSurviveIdentifierCollision(t *testing.T) {
+	pkg := typecheckScopePkg(t, "example.com/claim", `package claim
+
+type Node struct{}
+
+func New(deps ...*Node) (*Node, error) { return nil, nil }
+
+func Open(n *Node) (*Node, func() error, error) { return nil, nil, nil }
+
+func Use(n *Node) error { return nil }
+
+func Run(ctx any, n *Node) error { return nil }
+`)
+	nodeT := types.NewPointer(pkg.Scope().Lookup("Node").Type())
+	// The stand-in carries what the command shell references; the engine
+	// fixtures own conformance with the real cli package.
+	cliPkg := typecheckScopePkg(t, "github.com/gofabrik/fabrik/cli", `package cli
+
+type Context struct{}
+
+type Option func()
+
+type Command struct {
+	Name        string
+	Subcommands []*Command
+	Run         func(Context) error
+}
+
+func (c *Command) Exec(args []string, opts ...Option) int { return 0 }
+
+func WithSignalContext(ctx any) Option { return nil }
+`)
+
+	t.Run("command shell", func(t *testing.T) {
+		g := New()
+		g.SetModule("demo")
+		g.BindLazy(nodeT, "", func() (string, diag.Diagnostics) {
+			return claimLateNames(g, g.Import("example.com/claim"), nodeT), nil
+		})
+		s := g.AddScope("buildNode", token.Position{}, ScopeRoot{Type: nodeT})
+		g.AddCommandFunc(CommandFunc{Name: "node", Fn: "claim.Run", Scope: s})
+		src := renderScopes(t, g)
+		assertAliasesUnshadowed(t, g, src)
+		typecheckRendered(t, src, pkg, cliPkg)
+	})
+
+	t.Run("plain run shell", func(t *testing.T) {
+		g := New()
+		g.SetModule("demo")
+		alias := g.Import("example.com/claim")
+		last := claimLateNames(g, alias, nodeT)
+		g.Node(&Call{Base: Base{Phase: PhaseWire}, Fn: alias + ".Use", Args: []string{last}, Err: ErrInline})
+		src := renderScopes(t, g)
+		assertAliasesUnshadowed(t, g, src)
+		typecheckRendered(t, src, pkg)
+	})
+
+	t.Run("embedded entrypoint", func(t *testing.T) {
+		g := New()
+		g.SetModule("demo")
+		g.EmbeddedOutput("appwire")
+		g.BindLazy(nodeT, "", func() (string, diag.Diagnostics) {
+			alias := g.Import("example.com/claim")
+			last := claimLateNames(g, alias, nodeT)
+			v := g.Var("conn")
+			g.Node(&Call{
+				Base:    Base{Phase: PhaseWire},
+				Var:     v,
+				Fn:      alias + ".Open",
+				Args:    []string{last},
+				Err:     ErrReturn,
+				Cleanup: g.Var(v + "Close"),
+				Type:    nodeT,
+			})
+			return v, nil
+		})
+		s := g.AddScope("buildNode", token.Position{}, ScopeRoot{Type: nodeT})
+		g.AddCommandFunc(CommandFunc{Name: "node", Fn: "claim.Run", Scope: s})
+		src := renderScopes(t, g)
+		assertAliasesUnshadowed(t, g, src)
+		typecheckRendered(t, src, pkg)
+	})
+}
+
 func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 	w := newScopeWorld(t)
 	g := w.g
