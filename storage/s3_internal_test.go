@@ -13,11 +13,12 @@ import (
 
 func testS3(t *testing.T, region string, handler http.HandlerFunc) *S3 {
 	t.Helper()
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
+	srv := httptest.NewTestServer(t, handler)
+	// Client() initializes the server; URL is empty until it runs.
+	client := srv.Client()
 	s, err := NewS3(S3Options{
 		Endpoint: srv.URL, Bucket: "bkt", AccessKey: "a", SecretKey: "s",
-		Region: region, AllowInsecure: true,
+		Region: region, AllowInsecure: true, Client: client,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -68,15 +69,17 @@ func TestCreateBucketConflictSemantics(t *testing.T) {
 }
 
 func TestRedirectsAreRefused(t *testing.T) {
+	// Redirect within the test server so a followed request reaches /steal.
 	var stolen int
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		stolen++
-	}))
-	t.Cleanup(target.Close)
 	s := testS3(t, "us-east-1", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+"/steal", http.StatusTemporaryRedirect)
+		if r.URL.Path == "/steal" {
+			stolen++
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/steal", http.StatusTemporaryRedirect)
 	})
-	// Redirects must not replay a signed request to another host.
+	// Redirects must not be followed and replay a signed request elsewhere.
 	if err := s.Put(context.Background(), "k", strings.NewReader("x")); err == nil {
 		t.Fatal("redirected put must fail")
 	}

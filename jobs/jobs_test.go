@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -256,23 +257,25 @@ func (f *flakyStore) Complete(ctx context.Context, jobID, workerID string, now t
 }
 
 func TestCompleteRetriesTransientFailure(t *testing.T) {
-	fs := &flakyStore{Store: NewMemoryStore()}
-	fs.failCompletes.Store(2)
-	m := testManager(t, fs)
-	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
-	// Completion retries continue beyond the original claim deadline.
-	runWorker(t, m, WorkerConfig{
-		PollInterval: 5 * time.Millisecond, LeaseDuration: 60 * time.Millisecond,
-		HeartbeatInterval: 20 * time.Millisecond, SweepInterval: 10 * time.Second,
+	synctest.Test(t, func(t *testing.T) {
+		fs := &flakyStore{Store: NewMemoryStore()}
+		fs.failCompletes.Store(2)
+		m := testManager(t, fs)
+		requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
+		// Completion retries continue beyond the original claim deadline.
+		runWorker(t, m, WorkerConfig{
+			PollInterval: 5 * time.Millisecond, LeaseDuration: 60 * time.Millisecond,
+			HeartbeatInterval: 20 * time.Millisecond, SweepInterval: 10 * time.Second,
+		})
+		id, err := m.Enqueue(context.Background(), Email{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool {
+			i, _ := m.GetJob(context.Background(), id)
+			return i != nil && i.State == StateSucceeded
+		}, "succeeded after transient completion failures past the original lease")
 	})
-	id, err := m.Enqueue(context.Background(), Email{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	eventually(t, func() bool {
-		i, _ := m.GetJob(context.Background(), id)
-		return i != nil && i.State == StateSucceeded
-	}, "succeeded after transient completion failures past the original lease")
 }
 
 func TestCompleteDoesNotRegressUpdatedAt(t *testing.T) {
@@ -429,42 +432,52 @@ func TestShutdownTimeoutDefault(t *testing.T) {
 }
 
 func TestShutdownDeadlineReturns(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	started := make(chan struct{})
-	release := make(chan struct{})
-	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
-		close(started)
-		<-release
-		return nil
-	}))
-	w, err := NewWorker(m, WorkerConfig{
-		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
-		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	startDone := make(chan error, 1)
-	go func() { startDone <- w.Start(context.Background()) }()
-	if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
-		t.Fatal(err)
-	}
-	<-started
-	// Shutdown deadlines bound non-cooperative handlers.
-	stopCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Stop = %v, want DeadlineExceeded (handler ignores cancel)", err)
-	}
-	select {
-	case err := <-startDone:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("Start = %v, want DeadlineExceeded", err)
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseOnce)
+		requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
+			close(started)
+			<-release
+			return nil
+		}))
+		w, err := NewWorker(m, WorkerConfig{
+			PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
+			HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Start did not return after the Stop deadline")
-	}
-	close(release)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			// #nosec G104 -- best-effort worker cleanup after the test completes
+			w.Stop(ctx) //nolint:errcheck // best-effort worker cleanup after the test completes
+		})
+		startDone := make(chan error, 1)
+		go func() { startDone <- w.Start(context.Background()) }()
+		if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		// Shutdown deadlines bound non-cooperative handlers.
+		stopCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Stop = %v, want DeadlineExceeded (handler ignores cancel)", err)
+		}
+		select {
+		case err := <-startDone:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Start = %v, want DeadlineExceeded", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Start did not return after the Stop deadline")
+		}
+		releaseOnce()
+	})
 }
 
 // decodePause blocks decoding before the handler-start transition.
@@ -486,161 +499,189 @@ func (*blockDecodeMsg) UnmarshalJSON([]byte) error {
 }
 
 func TestHandlerNotStartedAfterAbandon(t *testing.T) {
-	pause := &decodePause{entered: make(chan struct{}), release: make(chan struct{})}
-	decodeHook.Store(pause)
-	defer decodeHook.Store(nil)
+	synctest.Test(t, func(t *testing.T) {
+		pause := &decodePause{entered: make(chan struct{}), release: make(chan struct{})}
+		releaseOnce := sync.OnceFunc(func() { close(pause.release) })
+		t.Cleanup(releaseOnce)
+		decodeHook.Store(pause)
+		defer decodeHook.Store(nil)
 
-	m := testManager(t, NewMemoryStore())
-	var ran atomic.Bool
-	requireNoError(t, Handle[blockDecodeMsg](m, "block", func(Context, blockDecodeMsg) error {
-		ran.Store(true)
-		return nil
-	}))
-	w, err := NewWorker(m, WorkerConfig{
-		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
-		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
+		m := testManager(t, NewMemoryStore())
+		var ran atomic.Bool
+		requireNoError(t, Handle[blockDecodeMsg](m, "block", func(Context, blockDecodeMsg) error {
+			ran.Store(true)
+			return nil
+		}))
+		w, err := NewWorker(m, WorkerConfig{
+			PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
+			HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			// #nosec G104 -- best-effort worker cleanup after the test completes
+			w.Stop(ctx) //nolint:errcheck // best-effort worker cleanup after the test completes
+		})
+		startDone := make(chan error, 1)
+		go func() { startDone <- w.Start(context.Background()) }()
+		if _, err := m.Enqueue(context.Background(), blockDecodeMsg{}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Drain wins while the attempt is still registered.
+		<-pause.entered
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Stop = %v, want DeadlineExceeded", err)
+		}
+		// The registered to running transition must fail after abandonment.
+		releaseOnce()
+		<-startDone
+		synctest.Sleep(50 * time.Millisecond)
+		if ran.Load() {
+			t.Fatal("handler was invoked after its attempt was abandoned")
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	startDone := make(chan error, 1)
-	go func() { startDone <- w.Start(context.Background()) }()
-	if _, err := m.Enqueue(context.Background(), blockDecodeMsg{}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Drain wins while the attempt is still registered.
-	<-pause.entered
-	stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Stop = %v, want DeadlineExceeded", err)
-	}
-	// The registered to running transition must fail after abandonment.
-	close(pause.release)
-	<-startDone
-	time.Sleep(50 * time.Millisecond)
-	if ran.Load() {
-		t.Fatal("handler was invoked after its attempt was abandoned")
-	}
 }
 
 func TestAbandonedRunEmitsFinishHook(t *testing.T) {
-	var finishes atomic.Int32
-	var committed atomic.Bool
-	committed.Store(true)
-	store := NewMemoryStore()
-	m, err := New(store, Config{
-		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DefaultBackoff: ExponentialBackoff{Base: time.Millisecond, Max: 5 * time.Millisecond},
-		Hooks: Hooks{OnAttemptFinish: func(_ context.Context, e AttemptFinishEvent) {
-			finishes.Add(1)
-			committed.Store(e.Committed)
-		}},
+	synctest.Test(t, func(t *testing.T) {
+		var finishes atomic.Int32
+		var committed atomic.Bool
+		committed.Store(true)
+		store := NewMemoryStore()
+		m, err := New(store, Config{
+			Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+			DefaultBackoff: ExponentialBackoff{Base: time.Millisecond, Max: 5 * time.Millisecond},
+			Hooks: Hooks{OnAttemptFinish: func(_ context.Context, e AttemptFinishEvent) {
+				finishes.Add(1)
+				committed.Store(e.Committed)
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseOnce)
+		requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
+			close(started)
+			<-release
+			return nil
+		}))
+		w, err := NewWorker(m, WorkerConfig{
+			PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
+			HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			// #nosec G104 -- best-effort worker cleanup after the test completes
+			w.Stop(ctx) //nolint:errcheck // best-effort worker cleanup after the test completes
+		})
+		go func() { _ = w.Start(context.Background()) }()
+		if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		stopCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Stop = %v, want DeadlineExceeded", err)
+		}
+		// An abandoned run reports an uncommitted finish after the handler returns.
+		releaseOnce()
+		eventually(t, func() bool { return finishes.Load() == 1 }, "OnAttemptFinish fired once")
+		if committed.Load() {
+			t.Fatal("abandoned attempt's OnAttemptFinish must have Committed=false")
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	started := make(chan struct{})
-	release := make(chan struct{})
-	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
-		close(started)
-		<-release
-		return nil
-	}))
-	w, err := NewWorker(m, WorkerConfig{
-		PollInterval: 5 * time.Millisecond, LeaseDuration: time.Second,
-		HeartbeatInterval: 100 * time.Millisecond, SweepInterval: time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() { _ = w.Start(context.Background()) }()
-	if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
-		t.Fatal(err)
-	}
-	<-started
-	stopCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	if err := w.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Stop = %v, want DeadlineExceeded", err)
-	}
-	// An abandoned run reports an uncommitted finish after the handler returns.
-	close(release)
-	eventually(t, func() bool { return finishes.Load() == 1 }, "OnAttemptFinish fired once")
-	if committed.Load() {
-		t.Fatal("abandoned attempt's OnAttemptFinish must have Committed=false")
-	}
 }
 
 func TestTimeoutIsCooperative(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	started := make(chan struct{})
-	release := make(chan struct{})
-	requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
-		close(started)
-		<-release
-		return c.Err()
-	}))
-	runWorker(t, m, WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond})
-	id, err := m.Enqueue(context.Background(), Email{}, Timeout(50*time.Millisecond), TimeoutAction(TimeoutFail))
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-started
-	// Timeout cancels the context but does not terminate the handler.
-	time.Sleep(200 * time.Millisecond)
-	info, err := m.GetJob(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.State != StateRunning {
-		t.Fatalf("state = %q while the handler ignores its timeout, want running", info.State)
-	}
-	// Timeout policy applies after the handler returns.
-	close(release)
-	eventually(t, func() bool {
-		i, _ := m.GetJob(context.Background(), id)
-		return i != nil && i.State == StateFailed
-	}, "timeout policy applied after return")
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseOnce)
+		requireNoError(t, Handle[Email](m, "email", func(c Context, e Email) error {
+			close(started)
+			<-release
+			return c.Err()
+		}))
+		runWorker(t, m, WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond})
+		id, err := m.Enqueue(context.Background(), Email{}, Timeout(50*time.Millisecond), TimeoutAction(TimeoutFail))
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		// Timeout cancels the context but does not terminate the handler.
+		synctest.Sleep(200 * time.Millisecond)
+		info, err := m.GetJob(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.State != StateRunning {
+			t.Fatalf("state = %q while the handler ignores its timeout, want running", info.State)
+		}
+		// Timeout policy applies after the handler returns.
+		releaseOnce()
+		eventually(t, func() bool {
+			i, _ := m.GetJob(context.Background(), id)
+			return i != nil && i.State == StateFailed
+		}, "timeout policy applied after return")
+	})
 }
 
 func TestStartRejectsSecondStart(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	w, err := NewWorker(m, WorkerConfig{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	firstErr := make(chan error, 1)
-	go func() { firstErr <- w.Start(ctx) }()
-	eventually(t, func() bool { return w.started.Load() }, "worker started")
-	if err := w.Start(ctx); !errors.Is(err, ErrWorkerAlreadyStarted) {
-		t.Fatalf("second Start = %v, want ErrWorkerAlreadyStarted", err)
-	}
-	cancel()
-	if err := <-firstErr; err != nil {
-		t.Fatalf("first Start returned %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		w, err := NewWorker(m, WorkerConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		firstErr := make(chan error, 1)
+		go func() { firstErr <- w.Start(ctx) }()
+		eventually(t, func() bool { return w.started.Load() }, "worker started")
+		if err := w.Start(ctx); !errors.Is(err, ErrWorkerAlreadyStarted) {
+			t.Fatalf("second Start = %v, want ErrWorkerAlreadyStarted", err)
+		}
+		cancel()
+		if err := <-firstErr; err != nil {
+			t.Fatalf("first Start returned %v", err)
+		}
+	})
 }
 
 func TestEnqueueRunsHandler(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	var got atomic.Value
-	if err := Handle[Email](m, "email", func(ctx Context, e Email) error {
-		got.Store(e.To)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	runWorker(t, m, WorkerConfig{})
-	id, err := m.Enqueue(context.Background(), Email{To: "a@b.c"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	eventually(t, func() bool { return got.Load() == "a@b.c" }, "handler ran")
-	eventually(t, func() bool { return jobState(t, m, id) == StateSucceeded }, "job succeeded")
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		var got atomic.Value
+		if err := Handle[Email](m, "email", func(ctx Context, e Email) error {
+			got.Store(e.To)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		runWorker(t, m, WorkerConfig{})
+		id, err := m.Enqueue(context.Background(), Email{To: "a@b.c"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool { return got.Load() == "a@b.c" }, "handler ran")
+		eventually(t, func() bool { return jobState(t, m, id) == StateSucceeded }, "job succeeded")
+	})
 }
 
 func TestEnqueueRequiresExactlyOneHandler(t *testing.T) {
@@ -660,20 +701,22 @@ func TestEnqueueRequiresExactlyOneHandler(t *testing.T) {
 }
 
 func TestPublishFanOut(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	requireNoError(t, Register[OrderPlaced](m, "order.placed"))
-	var a, b atomic.Int32
-	requireNoError(t, On[OrderPlaced](m, "email", func(Context, OrderPlaced) error { a.Add(1); return nil }))
-	requireNoError(t, On[OrderPlaced](m, "inventory", func(Context, OrderPlaced) error { b.Add(1); return nil }))
-	runWorker(t, m, WorkerConfig{})
-	res, err := m.Publish(context.Background(), OrderPlaced{ID: 7})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res) != 2 {
-		t.Fatalf("want 2 publish results, got %d", len(res))
-	}
-	eventually(t, func() bool { return a.Load() == 1 && b.Load() == 1 }, "both handlers ran once")
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		requireNoError(t, Register[OrderPlaced](m, "order.placed"))
+		var a, b atomic.Int32
+		requireNoError(t, On[OrderPlaced](m, "email", func(Context, OrderPlaced) error { a.Add(1); return nil }))
+		requireNoError(t, On[OrderPlaced](m, "inventory", func(Context, OrderPlaced) error { b.Add(1); return nil }))
+		runWorker(t, m, WorkerConfig{})
+		res, err := m.Publish(context.Background(), OrderPlaced{ID: 7})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res) != 2 {
+			t.Fatalf("want 2 publish results, got %d", len(res))
+		}
+		eventually(t, func() bool { return a.Load() == 1 && b.Load() == 1 }, "both handlers ran once")
+	})
 }
 
 func TestUniqueKeyDedup(t *testing.T) {
@@ -693,144 +736,160 @@ func TestUniqueKeyDedup(t *testing.T) {
 }
 
 func TestRetryThenDiscardAndLedger(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	var runs atomic.Int32
-	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error {
-		runs.Add(1)
-		return errors.New("boom")
-	}))
-	runWorker(t, m, WorkerConfig{})
-	id, err := m.Enqueue(context.Background(), Email{}, MaxAttempts(2))
-	if err != nil {
-		t.Fatal(err)
-	}
-	eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "discarded after retries")
-	if got := runs.Load(); got != 2 {
-		t.Fatalf("want 2 runs, got %d", got)
-	}
-	atts, err := m.ListJobAttempts(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(atts) != 2 || atts[0].Attempt != 1 || atts[1].Attempt != 2 {
-		t.Fatalf("want 2 numbered attempts, got %+v", atts)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		var runs atomic.Int32
+		requireNoError(t, Handle[Email](m, "email", func(Context, Email) error {
+			runs.Add(1)
+			return errors.New("boom")
+		}))
+		runWorker(t, m, WorkerConfig{})
+		id, err := m.Enqueue(context.Background(), Email{}, MaxAttempts(2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "discarded after retries")
+		if got := runs.Load(); got != 2 {
+			t.Fatalf("want 2 runs, got %d", got)
+		}
+		atts, err := m.ListJobAttempts(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(atts) != 2 || atts[0].Attempt != 1 || atts[1].Attempt != 2 {
+			t.Fatalf("want 2 numbered attempts, got %+v", atts)
+		}
+	})
 }
 
 func TestPermanentError(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error {
-		return errors.Join(ErrPermanent, errors.New("nope"))
-	}))
-	runWorker(t, m, WorkerConfig{})
-	id, _ := m.Enqueue(context.Background(), Email{}, MaxAttempts(10))
-	eventually(t, func() bool { return jobState(t, m, id) == StateFailed }, "permanent -> failed")
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		requireNoError(t, Handle[Email](m, "email", func(Context, Email) error {
+			return errors.Join(ErrPermanent, errors.New("nope"))
+		}))
+		runWorker(t, m, WorkerConfig{})
+		id, _ := m.Enqueue(context.Background(), Email{}, MaxAttempts(10))
+		eventually(t, func() bool { return jobState(t, m, id) == StateFailed }, "permanent -> failed")
+	})
 }
 
 func TestCancelRunning(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	started := make(chan struct{})
-	requireNoError(t, Handle[Email](m, "email", func(ctx Context, e Email) error {
-		close(started)
-		<-ctx.Done()
-		return ctx.Err()
-	}))
-	runWorker(t, m, WorkerConfig{})
-	id, _ := m.Enqueue(context.Background(), Email{})
-	<-started
-	immediate, err := m.CancelJob(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if immediate {
-		t.Fatal("running cancel should be deferred, not immediate")
-	}
-	eventually(t, func() bool { return jobState(t, m, id) == StateCancelled }, "cancelled via heartbeat")
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		started := make(chan struct{})
+		requireNoError(t, Handle[Email](m, "email", func(ctx Context, e Email) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}))
+		runWorker(t, m, WorkerConfig{})
+		id, _ := m.Enqueue(context.Background(), Email{})
+		<-started
+		immediate, err := m.CancelJob(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if immediate {
+			t.Fatal("running cancel should be deferred, not immediate")
+		}
+		eventually(t, func() bool { return jobState(t, m, id) == StateCancelled }, "cancelled via heartbeat")
+	})
 }
 
 func TestTimeoutFail(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	requireNoError(t, Handle[Email](m, "email", func(ctx Context, e Email) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}))
-	runWorker(t, m, WorkerConfig{})
-	id, _ := m.Enqueue(context.Background(), Email{}, Timeout(20*time.Millisecond), TimeoutAction(TimeoutFail))
-	eventually(t, func() bool { return jobState(t, m, id) == StateFailed }, "timeout -> failed")
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		requireNoError(t, Handle[Email](m, "email", func(ctx Context, e Email) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}))
+		runWorker(t, m, WorkerConfig{})
+		id, _ := m.Enqueue(context.Background(), Email{}, Timeout(20*time.Millisecond), TimeoutAction(TimeoutFail))
+		eventually(t, func() bool { return jobState(t, m, id) == StateFailed }, "timeout -> failed")
+	})
 }
 
 func TestPanicRecovered(t *testing.T) {
-	m := testManager(t, NewMemoryStore())
-	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { panic("boom") }))
-	runWorker(t, m, WorkerConfig{})
-	id, _ := m.Enqueue(context.Background(), Email{}, MaxAttempts(1))
-	eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "panic recovered -> discarded")
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { panic("boom") }))
+		runWorker(t, m, WorkerConfig{})
+		id, _ := m.Enqueue(context.Background(), Email{}, MaxAttempts(1))
+		eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "panic recovered -> discarded")
+	})
 }
 
 func TestDecodePayloadPark(t *testing.T) {
-	store := NewMemoryStore()
-	m := testManager(t, store)
-	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
-	_, err := store.Insert(context.Background(), time.Now().UTC(), []Job{{
-		Kind: "email", HandlerID: "email", Payload: []byte("not json"),
-		Queue: "default", MaxAttempts: 3, AvailableAt: time.Now(),
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runWorker(t, m, WorkerConfig{})
-	eventually(t, func() bool {
+	synctest.Test(t, func(t *testing.T) {
+		store := NewMemoryStore()
+		m := testManager(t, store)
+		requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
+		_, err := store.Insert(context.Background(), time.Now().UTC(), []Job{{
+			Kind: "email", HandlerID: "email", Payload: []byte("not json"),
+			Queue: "default", MaxAttempts: 3, AvailableAt: time.Now(),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runWorker(t, m, WorkerConfig{})
+		eventually(t, func() bool {
+			page, _ := m.ListJobs(context.Background(), ListFilter{States: []State{StateFailed}})
+			return len(page.Jobs) == 1
+		}, "decode park -> failed")
 		page, _ := m.ListJobs(context.Background(), ListFilter{States: []State{StateFailed}})
-		return len(page.Jobs) == 1
-	}, "decode park -> failed")
-	page, _ := m.ListJobs(context.Background(), ListFilter{States: []State{StateFailed}})
-	if page.Jobs[0].Error == "" {
-		t.Fatal("expected decode error recorded")
-	}
+		if page.Jobs[0].Error == "" {
+			t.Fatal("expected decode error recorded")
+		}
+	})
 }
 
 func TestClaimFilterSkipsUnrunnable(t *testing.T) {
-	store := NewMemoryStore()
-	m := testManager(t, store)
-	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
-	now := time.Now().UTC()
-	res, _ := store.Insert(context.Background(), now, []Job{{
-		Kind: "email", HandlerID: "other", Payload: []byte(`{}`),
-		Queue: "default", MaxAttempts: 3, AvailableAt: now,
-	}})
-	id := res[0].ID
-	runWorker(t, m, WorkerConfig{})
-	time.Sleep(150 * time.Millisecond)
-	if st := jobState(t, m, id); st != StateAvailable {
-		t.Fatalf("unrunnable job should stay available, got %s", st)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		store := NewMemoryStore()
+		m := testManager(t, store)
+		requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
+		now := time.Now().UTC()
+		res, _ := store.Insert(context.Background(), now, []Job{{
+			Kind: "email", HandlerID: "other", Payload: []byte(`{}`),
+			Queue: "default", MaxAttempts: 3, AvailableAt: now,
+		}})
+		id := res[0].ID
+		runWorker(t, m, WorkerConfig{})
+		synctest.Sleep(150 * time.Millisecond)
+		if st := jobState(t, m, id); st != StateAvailable {
+			t.Fatalf("unrunnable job should stay available, got %s", st)
+		}
+	})
 }
 
 func TestOnAttemptFinishCommitted(t *testing.T) {
-	store := NewMemoryStore()
-	var finishState atomic.Value
-	var committed atomic.Bool
-	var fired atomic.Bool
-	m, err := New(store, Config{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Hooks: Hooks{
-			OnAttemptFinish: func(_ context.Context, e AttemptFinishEvent) {
-				finishState.Store(e.State)
-				committed.Store(e.Committed)
-				fired.Store(true)
+	synctest.Test(t, func(t *testing.T) {
+		store := NewMemoryStore()
+		var finishState atomic.Value
+		var committed atomic.Bool
+		var fired atomic.Bool
+		m, err := New(store, Config{
+			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Hooks: Hooks{
+				OnAttemptFinish: func(_ context.Context, e AttemptFinishEvent) {
+					finishState.Store(e.State)
+					committed.Store(e.Committed)
+					fired.Store(true)
+				},
 			},
-		},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
+		runWorker(t, m, WorkerConfig{})
+		if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, fired.Load, "OnAttemptFinish fired")
+		if finishState.Load() != StateSucceeded || !committed.Load() {
+			t.Fatalf("want succeeded+committed, got %v committed=%v", finishState.Load(), committed.Load())
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
-	runWorker(t, m, WorkerConfig{})
-	if _, err := m.Enqueue(context.Background(), Email{}); err != nil {
-		t.Fatal(err)
-	}
-	eventually(t, fired.Load, "OnAttemptFinish fired")
-	if finishState.Load() != StateSucceeded || !committed.Load() {
-		t.Fatalf("want succeeded+committed, got %v committed=%v", finishState.Load(), committed.Load())
-	}
 }

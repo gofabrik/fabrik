@@ -15,6 +15,7 @@ import (
 // resolver, and leaves ordinary committed sources behind.
 func TestAssetsRequire(t *testing.T) {
 	var srv *httptest.Server
+	// Use real TCP because assetsCmd constructs a resolver with the default client.
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/generate":

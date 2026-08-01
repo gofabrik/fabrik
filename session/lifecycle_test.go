@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -475,66 +476,68 @@ func TestDestroyNeverDecodesEnvelope(t *testing.T) {
 }
 
 func TestOutOfBandTrioAndAbsence(t *testing.T) {
-	mem := NewMemoryStore()
-	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
-	other, _ := Use(m, NewKey[otherShape]("other"))
-	sid := establish(t, m, h, "alice")
-	ctx := context.Background()
+	synctest.Test(t, func(t *testing.T) {
+		mem := NewMemoryStore()
+		m := newTestManager(t, func(c *Config) { c.Store = mem })
+		h := m.app
+		other, _ := Use(m, NewKey[otherShape]("other"))
+		sid := establish(t, m, h, "alice")
+		ctx := context.Background()
 
-	// Out-of-band operations do not create missing sessions.
-	if _, err := h.Load(ctx, "missing"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Load missing = %v", err)
-	}
-	if err := h.UpdateSID(ctx, "missing", func(*appSession) error { return nil }); !errors.Is(err, ErrNotFound) {
-		t.Errorf("UpdateSID missing = %v", err)
-	}
-	if err := h.ClearSID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("ClearSID missing = %v", err)
-	}
-	if _, err := mem.Load(ctx, "missing"); !errors.Is(err, ErrNotFound) {
-		t.Error("out-of-band op minted a session")
-	}
-
-	// Absent cells read as zero values.
-	if v, err := other.Load(ctx, sid); err != nil || v.Count != 0 {
-		t.Errorf("Load absent cell = %+v, %v", v, err)
-	}
-	if err := other.UpdateSID(ctx, sid, func(s *otherShape) error {
-		if s.Count != 0 {
-			t.Errorf("UpdateSID base = %+v, want zero", s)
+		// Out-of-band operations do not create missing sessions.
+		if _, err := h.Load(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Load missing = %v", err)
 		}
-		s.Count = 7
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := other.ClearSID(ctx, sid); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := hasOutOfBand(m, sid, other.Key()); ok {
-		t.Error("ClearSID left the cell")
-	}
+		if err := h.UpdateSID(ctx, "missing", func(*appSession) error { return nil }); !errors.Is(err, ErrNotFound) {
+			t.Errorf("UpdateSID missing = %v", err)
+		}
+		if err := h.ClearSID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("ClearSID missing = %v", err)
+		}
+		if _, err := mem.Load(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+			t.Error("out-of-band op minted a session")
+		}
 
-	// Out-of-band operations do not bump idle TTL.
-	before, _ := mem.Load(ctx, sid)
-	time.Sleep(2 * time.Millisecond)
-	_ = h.UpdateSID(ctx, sid, func(s *appSession) error { s.Name = "job"; return nil })
-	after, _ := mem.Load(ctx, sid)
-	if after.IdleExpiry.After(before.IdleExpiry) {
-		t.Error("out-of-band update slid the idle expiry")
-	}
+		// Absent cells read as zero values.
+		if v, err := other.Load(ctx, sid); err != nil || v.Count != 0 {
+			t.Errorf("Load absent cell = %+v, %v", v, err)
+		}
+		if err := other.UpdateSID(ctx, sid, func(s *otherShape) error {
+			if s.Count != 0 {
+				t.Errorf("UpdateSID base = %+v, want zero", s)
+			}
+			s.Count = 7
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := other.ClearSID(ctx, sid); err != nil {
+			t.Fatal(err)
+		}
+		if ok, _ := hasOutOfBand(m, sid, other.Key()); ok {
+			t.Error("ClearSID left the cell")
+		}
 
-	// DestroySID is idempotent.
-	if err := m.DestroySID(ctx, "missing"); err != nil {
-		t.Errorf("DestroySID missing = %v", err)
-	}
-	if err := m.DestroySID(ctx, sid); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := mem.Load(ctx, sid); !errors.Is(err, ErrNotFound) {
-		t.Fatal("DestroySID left the record")
-	}
+		// Out-of-band operations do not bump idle TTL.
+		before, _ := mem.Load(ctx, sid)
+		time.Sleep(2 * time.Millisecond)
+		_ = h.UpdateSID(ctx, sid, func(s *appSession) error { s.Name = "job"; return nil })
+		after, _ := mem.Load(ctx, sid)
+		if after.IdleExpiry.After(before.IdleExpiry) {
+			t.Error("out-of-band update slid the idle expiry")
+		}
+
+		// DestroySID is idempotent.
+		if err := m.DestroySID(ctx, "missing"); err != nil {
+			t.Errorf("DestroySID missing = %v", err)
+		}
+		if err := m.DestroySID(ctx, sid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mem.Load(ctx, sid); !errors.Is(err, ErrNotFound) {
+			t.Fatal("DestroySID left the record")
+		}
+	})
 }
 
 func hasOutOfBand(m *Manager[appSession], sid, key string) (bool, error) {

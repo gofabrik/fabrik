@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gofabrik/fabrik/cache"
@@ -106,26 +107,28 @@ func TestZeroTTLNeverExpires(t *testing.T) {
 }
 
 func TestGetOrLoadSharesConcurrentLoad(t *testing.T) {
-	ctx := context.Background()
-	c := newCache[rollup](t)
-	var loads atomic.Int32
-	var wg sync.WaitGroup
-	for range 50 {
-		wg.Go(func() {
-			v, err := c.GetOrLoad(ctx, "daily", time.Minute, func(context.Context) (rollup, error) {
-				loads.Add(1)
-				time.Sleep(10 * time.Millisecond)
-				return rollup{Total: 42}, nil
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		c := newCache[rollup](t)
+		var loads atomic.Int32
+		var wg sync.WaitGroup
+		for range 50 {
+			wg.Go(func() {
+				v, err := c.GetOrLoad(ctx, "daily", time.Minute, func(context.Context) (rollup, error) {
+					loads.Add(1)
+					time.Sleep(10 * time.Millisecond)
+					return rollup{Total: 42}, nil
+				})
+				if err != nil || v.Total != 42 {
+					t.Errorf("GetOrLoad = %+v, %v", v, err)
+				}
 			})
-			if err != nil || v.Total != 42 {
-				t.Errorf("GetOrLoad = %+v, %v", v, err)
-			}
-		})
-	}
-	wg.Wait()
-	if loads.Load() != 1 {
-		t.Fatalf("loads = %d, want 1", loads.Load())
-	}
+		}
+		wg.Wait()
+		if loads.Load() != 1 {
+			t.Fatalf("loads = %d, want 1", loads.Load())
+		}
+	})
 }
 
 func TestGetOrLoadLoadErrorPropagatesUncached(t *testing.T) {
@@ -283,23 +286,25 @@ func (b *blockingStore) Get(ctx context.Context, key string, now time.Time) (cac
 }
 
 func TestGetOrLoadCanceledDuringReadDoesNotLoad(t *testing.T) {
-	c, err := cache.New[string](&blockingStore{Store: cache.NewMemoryStore(cache.MemoryOptions{})})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(5 * time.Millisecond); cancel() }()
-	loaded := false
-	_, err = c.GetOrLoad(ctx, "k", time.Minute, func(context.Context) (string, error) {
-		loaded = true
-		return "", nil
+	synctest.Test(t, func(t *testing.T) {
+		c, err := cache.New[string](&blockingStore{Store: cache.NewMemoryStore(cache.MemoryOptions{})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(5 * time.Millisecond); cancel() }()
+		loaded := false
+		_, err = c.GetOrLoad(ctx, "k", time.Minute, func(context.Context) (string, error) {
+			loaded = true
+			return "", nil
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v", err)
+		}
+		if loaded {
+			t.Fatal("load ran after cancellation during the store read")
+		}
 	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v", err)
-	}
-	if loaded {
-		t.Fatal("load ran after cancellation during the store read")
-	}
 }
 
 // cancelingSetStore cancels its context during Set and returns its error.
@@ -389,43 +394,47 @@ func (g *gateStore) Delete(ctx context.Context, key string) error {
 }
 
 func TestDeleteDuringAdmittedWriteStillWins(t *testing.T) {
-	ctx := context.Background()
-	gs := &gateStore{
-		Store:   cache.NewMemoryStore(cache.MemoryOptions{}),
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-	c, err := cache.New[string](gs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loaded := make(chan struct{})
-	go func() {
-		defer close(loaded)
-		if v, err := c.GetOrLoad(ctx, "k", time.Minute, func(context.Context) (string, error) {
-			return "stale", nil
-		}); err != nil || v != "stale" {
-			t.Errorf("GetOrLoad = %q %v", v, err)
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		gs := &gateStore{
+			Store:   cache.NewMemoryStore(cache.MemoryOptions{}),
+			entered: make(chan struct{}),
+			release: make(chan struct{}),
 		}
-	}()
-	<-gs.entered
-	// Delete must not reach the store while a publish is in progress.
-	shortCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
-	defer cancel()
-	if err := c.Delete(shortCtx, "k"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("bounded delete during admitted write: %v", err)
-	}
-	if gs.deletes.Load() != 0 {
-		t.Fatal("expired delete still reached the store")
-	}
-	close(gs.release)
-	<-loaded
-	if err := c.Delete(ctx, "k"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, _ := c.Get(ctx, "k"); ok {
-		t.Fatal("delete lost to a store write already under way")
-	}
+		c, err := cache.New[string](gs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		releaseOnce := sync.OnceFunc(func() { close(gs.release) })
+		t.Cleanup(releaseOnce)
+		loaded := make(chan struct{})
+		go func() {
+			defer close(loaded)
+			if v, err := c.GetOrLoad(ctx, "k", time.Minute, func(context.Context) (string, error) {
+				return "stale", nil
+			}); err != nil || v != "stale" {
+				t.Errorf("GetOrLoad = %q %v", v, err)
+			}
+		}()
+		<-gs.entered
+		// Delete must not reach the store while a publish is in progress.
+		shortCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		defer cancel()
+		if err := c.Delete(shortCtx, "k"); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("bounded delete during admitted write: %v", err)
+		}
+		if gs.deletes.Load() != 0 {
+			t.Fatal("expired delete still reached the store")
+		}
+		releaseOnce()
+		<-loaded
+		if err := c.Delete(ctx, "k"); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, _ := c.Get(ctx, "k"); ok {
+			t.Fatal("delete lost to a store write already under way")
+		}
+	})
 }
 
 func TestGetOrLoadServesFreshHitWithoutLoading(t *testing.T) {

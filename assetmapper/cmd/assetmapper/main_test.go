@@ -16,6 +16,7 @@ import (
 func jspmMirror(t *testing.T) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
+	// Use real TCP because the CLI constructs a resolver with the default client.
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/generate":
@@ -96,6 +97,7 @@ func TestRequireRemovePrune(t *testing.T) {
 // A failed batch publishes none of its packages.
 func TestRequireBatchFailureIsAtomic(t *testing.T) {
 	var srv *httptest.Server
+	// Use real TCP because the CLI constructs a resolver with the default client.
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/generate":
