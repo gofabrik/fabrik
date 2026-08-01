@@ -5,7 +5,9 @@ package genfiles
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -71,7 +73,7 @@ func readManifest(dir string) (manifest, bool, error) {
 		return manifest{}, false, err
 	}
 	var m manifest
-	if err := json.Unmarshal(data, &m); err != nil {
+	if err := json.Unmarshal(data, &m, jsonv1.DefaultOptionsV1()); err != nil {
 		return manifest{}, false, fmt.Errorf("%s: %w", ManifestName, err)
 	}
 	if err := validSums(m.Files); err != nil {
@@ -89,7 +91,7 @@ func readJournal(dir string) (manifest, bool, error) {
 		return manifest{}, false, err
 	}
 	var j manifest
-	if err := json.Unmarshal(data, &j); err != nil {
+	if err := json.Unmarshal(data, &j, jsonv1.DefaultOptionsV1()); err != nil {
 		return manifest{}, false, fmt.Errorf("%s: %w", journalName, err)
 	}
 	if err := validSums(j.Files); err != nil {
@@ -192,7 +194,7 @@ func stagePrune(dir string, files map[string][]byte, prune map[string]string, wi
 		// The journal remains authoritative until all renames finish.
 		j.Version = -j.Version
 	}
-	data, err := json.MarshalIndent(j, "", "  ")
+	data, err := json.Marshal(j, jsonv1.DefaultOptionsV1(), json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}
@@ -247,7 +249,7 @@ func commit(dir string, j manifest) (pruned, kept []string, err error) {
 	}
 	if withManifest {
 		m := manifest{Version: 1, Files: j.Files}
-		data, err := json.MarshalIndent(m, "", "  ")
+		data, err := json.Marshal(m, jsonv1.DefaultOptionsV1(), json.Deterministic(true), jsontext.WithIndent("  "))
 		if err != nil {
 			return nil, nil, err
 		}

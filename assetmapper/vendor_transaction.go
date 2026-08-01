@@ -1,7 +1,9 @@
 package assetmapper
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -22,7 +24,7 @@ type vendorTransaction struct {
 
 func (v *Vendor) publishMetadata(lock *VendorLock, next *Importmap) error {
 	transaction := vendorTransaction{Version: 1, Lock: lock, Entries: next.Entries}
-	data, err := json.MarshalIndent(transaction, "", "  ")
+	data, err := json.Marshal(transaction, jsonv1.DefaultOptionsV1(), json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return fmt.Errorf("assetmapper.Vendor: encode transaction: %w", err)
 	}
@@ -51,13 +53,12 @@ func (v *Vendor) recoverTransaction() error {
 		return fmt.Errorf("assetmapper.Vendor: open transaction journal: %w", err)
 	}
 	var transaction vendorTransaction
-	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&transaction); err != nil {
+	dec := jsontext.NewDecoder(file)
+	if err := json.UnmarshalDecode(dec, &transaction, jsonv1.DefaultOptionsV1(), json.RejectUnknownMembers(true)); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("assetmapper.Vendor: decode transaction journal: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	if err := json.UnmarshalDecode(dec, &struct{}{}, jsonv1.DefaultOptionsV1()); err != io.EOF {
 		_ = file.Close()
 		if err == nil {
 			return fmt.Errorf("assetmapper.Vendor: transaction journal contains multiple JSON values")
