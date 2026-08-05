@@ -22,10 +22,21 @@ type ErrorPages struct {
 	Templates *web.Templates
 }
 
+// NotFoundPage is the 404 page's view model.
+type NotFoundPage struct {
+	Path string
+}
+
+// MethodNotAllowedPage is the 405 page's view model.
+type MethodNotAllowedPage struct {
+	Method string
+	Path   string
+}
+
 //fabrik:http:notfound
 func (e *ErrorPages) NotFound(w http.ResponseWriter, r *http.Request) {
 	var page bytes.Buffer
-	if err := e.Templates.Render(&page, "errors/404", "", map[string]any{"Path": r.URL.Path}); err != nil {
+	if err := e.Templates.Render(&page, "errors/404", "", NotFoundPage{Path: r.URL.Path}); err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -35,7 +46,7 @@ func (e *ErrorPages) NotFound(w http.ResponseWriter, r *http.Request) {
 
 //fabrik:http:methodnotallowed
 func (e *ErrorPages) MethodNotAllowed(w http.ResponseWriter, r *http.Request) {
-	data := map[string]any{"Method": r.Method, "Path": r.URL.Path}
+	data := MethodNotAllowedPage{Method: r.Method, Path: r.URL.Path}
 	var page bytes.Buffer
 	if err := e.Templates.Render(&page, "errors/405", "", data); err != nil {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
