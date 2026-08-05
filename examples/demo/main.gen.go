@@ -435,6 +435,15 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Queries: sharedQueryDB,
 		Store:   sharedStorage,
 	}
+	webGreetingsList := &web.GreetingsList{
+		Queries: sharedQueryDB,
+	}
+	webGreetingEditor := &web.GreetingEditor{
+		Queries: sharedQueryDB,
+	}
+	webLive := &web.Live{
+		Queries: sharedQueryDB,
+	}
 
 	// Middleware
 	r.Use(shared.Logged)
@@ -488,6 +497,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
 	r.Method("GET", "/overview", adapter.Wrap(webOverview.Show))
+	r.Method("GET", "/greetings", adapter.Wrap(webGreetingsList.Show))
+	r.Method("GET", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Edit))
+	r.Method("POST", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Update))
+	r.Method("GET", "/live", adapter.Wrap(webLive.Show))
+	r.Method("GET", "/live/events", adapter.Wrap(webLive.Events))
 	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
 	return httpserver.New(r, sharedHttpServer), jobsManager, cleanup, nil

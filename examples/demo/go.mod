@@ -14,6 +14,7 @@ require (
 	github.com/gofabrik/fabrik/jobs v0.1.0
 	github.com/gofabrik/fabrik/mail v0.1.0
 	github.com/gofabrik/fabrik/migrations v0.1.0
+	github.com/gofabrik/fabrik/paging v0.1.0
 	github.com/gofabrik/fabrik/query v0.1.0
 	github.com/gofabrik/fabrik/ratelimit v0.1.0
 	github.com/gofabrik/fabrik/router v0.1.0

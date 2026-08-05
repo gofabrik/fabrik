@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strconv"
 	"time"
 
 	"demo/shared"
@@ -16,6 +17,7 @@ import (
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/forms"
 	"github.com/gofabrik/fabrik/jobs"
+	"github.com/gofabrik/fabrik/paging"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
@@ -306,6 +308,146 @@ func (o *Overview) Show(req *web.Request) (web.Response, error) {
 		files = append(files, info)
 	}
 	return web.Template("web/overview", OverviewPage{Recent: recent, Files: files, Started: started}).Fragment(), nil
+}
+
+// GreetingsPage is the paged greetings list view model.
+type GreetingsPage struct {
+	Rows []Greeting
+	Page paging.Page
+}
+
+type GreetingsList struct {
+	Queries *query.DB
+}
+
+//fabrik:web GET /greetings
+func (l *GreetingsList) Show(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	page, _ := strconv.Atoi(req.Query("page"))
+	total, err := query.Scalar[int](ctx, l.Queries, "SELECT COUNT(*) FROM greetings")
+	if err != nil {
+		return nil, err
+	}
+	found := paging.Of(page, 5, total)
+	rows, err := query.All[Greeting](ctx, l.Queries,
+		"SELECT * FROM greetings ORDER BY id DESC LIMIT ? OFFSET ?", found.Limit(), found.Offset())
+	if err != nil {
+		return nil, err
+	}
+	return web.Template("web/greetings", GreetingsPage{Rows: rows, Page: found}).Fragment(), nil
+}
+
+// GreetingEditPage is the edit form's view model.
+type GreetingEditPage struct {
+	ID   int64
+	Form *forms.Form[GreetInput]
+}
+
+// greetingName is the writable column set for a greeting update.
+type greetingName struct {
+	Name string
+}
+
+type GreetingEditor struct {
+	Queries *query.DB
+}
+
+//fabrik:web GET /greetings/{id}/edit
+func (e *GreetingEditor) Edit(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
+	if err != nil {
+		return web.Status(http.StatusNotFound), nil
+	}
+	g, err := query.One[Greeting](ctx, e.Queries, "SELECT * FROM greetings WHERE id = ? LIMIT 1", id)
+	if err != nil {
+		if errors.Is(err, query.ErrNotFound) {
+			return web.Status(http.StatusNotFound), nil
+		}
+		return nil, err
+	}
+	return web.Template("web/greeting-edit", GreetingEditPage{ID: g.ID, Form: forms.From(GreetInput{Name: g.Name})}), nil
+}
+
+//fabrik:web POST /greetings/{id}/edit
+func (e *GreetingEditor) Update(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
+	if err != nil {
+		return web.Status(http.StatusNotFound), nil
+	}
+	form, err := forms.Bind[GreetInput](req.HTTP())
+	if err != nil {
+		return nil, err
+	}
+	if !form.Valid() {
+		return web.Template("web/greeting-edit", GreetingEditPage{ID: id, Form: form}).Status(http.StatusUnprocessableEntity), nil
+	}
+	if err := e.Queries.UpdateOne(ctx, "greetings", "id = ?", greetingName{Name: form.Data.Name}, id); err != nil {
+		if errors.Is(err, query.ErrNotFound) {
+			return web.Status(http.StatusNotFound), nil
+		}
+		return nil, err
+	}
+	return web.Redirect("/greetings"), nil
+}
+
+type Live struct {
+	Queries *query.DB
+}
+
+//fabrik:web GET /live
+func (l *Live) Show(req *web.Request) (web.Response, error) {
+	return web.Template("web/live", nil), nil
+}
+
+func (l *Live) line(ctx context.Context) (string, error) {
+	visits, err := query.Scalar[int64](ctx, l.Queries,
+		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0)`)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Up %s, %d visits", time.Since(started).Round(time.Second), visits), nil
+}
+
+//fabrik:web GET /live/events
+func (l *Live) Events(req *web.Request) (web.Response, error) {
+	initial, err := l.line(req.Context())
+	if err != nil {
+		return nil, err
+	}
+
+	// The stream owns the ticker goroutine. OnClose cancels streamCtx however
+	// the stream ends, so the goroutine always returns; both sends race that
+	// cancellation, so a departed client never blocks it and events is never
+	// closed under a pending send.
+	streamCtx, stop := context.WithCancel(req.Context())
+	events := make(chan string)
+	go func() {
+		// The sole sender, so closing here is safe and ends the stream when
+		// a tick fails rather than leaving the response waiting forever.
+		defer close(events)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-streamCtx.Done():
+				return
+			case <-ticker.C:
+				line, err := l.line(streamCtx)
+				if err != nil {
+					return
+				}
+				select {
+				case events <- line:
+				case <-streamCtx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return web.EventStream(events).Initial(initial).OnClose(stop), nil
 }
 
 //fabrik:http GET /files/{key...}
