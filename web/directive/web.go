@@ -137,36 +137,43 @@ func typePath(t types.Type) string {
 	return types.TypeString(t, nil)
 }
 
+// ensureAdapter registers the shared adapter binding once, whichever web
+// directive demands it first.
+func (w *Web) ensureAdapter(g *gen.Gen, pos token.Position) {
+	if w.registered {
+		return
+	}
+	w.registered = true
+	g.BindLazyPathAt(adapterPath, pos, func() (string, diag.Diagnostics) {
+		var ds diag.Diagnostics
+		webPkg := g.Import(webPath)
+		var args []string
+		// Attach the template set only when one is declared.
+		if g.HasBindingPath(templatesPath) {
+			expr, ids, ok := g.InstancePath(templatesPath)
+			ds = append(ds, ids...)
+			if ok && len(ids) == 0 {
+				args = append(args, webPkg+".WithRenderer("+expr+")")
+			}
+		}
+		v := g.Var("adapter")
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseWire},
+			Var:  v,
+			Fn:   webPkg + ".NewAdapter",
+			Args: args,
+		})
+		return v, ds
+	})
+}
+
 // Emit registers the shared adapter binding and route.
 func (w *Web) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*webNode)
 	if nd.fn == "" {
 		return nil
 	}
-	if !w.registered {
-		w.registered = true
-		g.BindLazyPathAt(adapterPath, nd.pos, func() (string, diag.Diagnostics) {
-			var ds diag.Diagnostics
-			webPkg := g.Import(webPath)
-			var args []string
-			// Attach the template set only when one is declared.
-			if g.HasBindingPath(templatesPath) {
-				expr, ids, ok := g.InstancePath(templatesPath)
-				ds = append(ds, ids...)
-				if ok && len(ids) == 0 {
-					args = append(args, webPkg+".WithRenderer("+expr+")")
-				}
-			}
-			v := g.Var("adapter")
-			g.Node(&gen.Call{
-				Base: gen.Base{Phase: gen.PhaseWire},
-				Var:  v,
-				Fn:   webPkg + ".NewAdapter",
-				Args: args,
-			})
-			return v, ds
-		})
-	}
+	w.ensureAdapter(g, nd.pos)
 	return w.host.EmitRoute(g, nd.args, nd.recvObj, nd.pos, func() (string, diag.Diagnostics) {
 		handler, ds := w.host.HandlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 		adapter, ads, ok := g.InstancePath(adapterPath)

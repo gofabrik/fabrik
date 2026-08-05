@@ -7,6 +7,7 @@ toolchain go1.27rc2
 require (
 	github.com/gofabrik/fabrik/diag v0.1.0
 	github.com/gofabrik/fabrik/gen v0.1.0
+	github.com/gofabrik/fabrik/router v0.1.0
 	github.com/gofabrik/fabrik/router/directive v0.1.0
 	github.com/gofabrik/fabrik/web v0.1.0
 )

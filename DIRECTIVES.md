@@ -283,7 +283,7 @@ Options:
 
 **`//fabrik:http:methodnotallowed`**
 
-Sets the handler for requests whose path matches a route under a different method. One per app. The Allow header is set before it runs and the response defaults to 405.
+Sets the handler for requests whose path matches a route under a different method. One per app, exclusive with `//fabrik:web:methodnotallowed`. The Allow header is set before it runs and the response defaults to 405.
 
 ```go
 //fabrik:http:methodnotallowed
@@ -314,7 +314,7 @@ Options:
 
 **`//fabrik:http:notfound`**
 
-Sets the handler for requests that match no route. One per app. Standard handler signature; the response defaults to 404.
+Sets the handler for requests that match no route. One per app, exclusive with `//fabrik:web:notfound`. Standard handler signature; the response defaults to 404.
 
 ```go
 //fabrik:http:notfound
@@ -467,6 +467,28 @@ Positional arguments:
 Options:
 
 - `middleware=`
+
+## fabrik:web:methodnotallowed
+
+**`//fabrik:web:methodnotallowed`**
+
+Sets the typed handler for requests whose path matches a route under a different method. One per app, exclusive with `//fabrik:http:methodnotallowed`. The Allow header is set before it runs; a response that sets no status keeps the 405.
+
+```go
+//fabrik:web:methodnotallowed
+func (e *ErrorPages) MethodNotAllowed(req *web.Request) (web.Response, error) { ... }
+```
+
+## fabrik:web:notfound
+
+**`//fabrik:web:notfound`**
+
+Sets the typed handler for requests that match no route. One per app, exclusive with `//fabrik:http:notfound`. The handler renders through the app's adapter; a response that sets no status keeps the 404.
+
+```go
+//fabrik:web:notfound
+func (e *ErrorPages) NotFound(req *web.Request) (web.Response, error) { ... }
+```
 
 ## fabrik:web:templates
 

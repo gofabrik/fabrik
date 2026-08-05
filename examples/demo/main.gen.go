@@ -322,6 +322,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+	sharedErrorPages := &shared.ErrorPages{}
 	appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
@@ -332,9 +333,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -361,11 +360,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
 	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
 	sharedJobsConfig := shared.NewJobsConfig()
 	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
@@ -401,7 +400,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	webStatus := &web.Status{
 		Templates: appTemplates,
 	}
@@ -461,8 +459,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 
 	// Register
 	r.Handle("/assets/", assetServer.Handler())
-	r.NotFound(sharedErrorPages.NotFound)
-	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
+	r.NotFound(adapter.Wrap(sharedErrorPages.NotFound))
+	r.MethodNotAllowed(adapter.Wrap(sharedErrorPages.MethodNotAllowed))
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
 	r.Method("GET", "/uptime", webStatus.Uptime)

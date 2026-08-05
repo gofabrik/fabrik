@@ -28,6 +28,7 @@ func New() []gen.Directive {
 	mw := routerdir.NewMiddleware()
 	host := routerdir.NewHost(group, routes, mw)
 	tpl := webdir.NewTemplates()
+	webDirective := webdir.NewWeb(host)
 	cfg := configdir.New()
 	assetsConfig := assetOptionsSource{cfg: cfg}
 	provider := core.NewProvider(cfg)
@@ -46,7 +47,9 @@ func New() []gen.Directive {
 		mw,
 		routerdir.NewNotFound(host),
 		routerdir.NewMethodNotAllowed(host),
-		webdir.NewWeb(host),
+		webDirective,
+		webDirective.NewNotFound(),
+		webDirective.NewMethodNotAllowed(),
 		tpl,
 		webdir.NewFuncs(tpl),
 		assetsdir.NewAssets(host, tpl, assetsConfig),
