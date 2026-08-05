@@ -106,6 +106,36 @@ The `Renderer` is a one-method interface
 satisfying it plugs in, and each renderer owns what an empty block
 means.
 
+## Fragments: id is the region name
+
+`Template(name, data).Fragment()` answers one URL two ways: an htmx
+swap gets the region it targets, everything else gets the whole page.
+
+```go
+return web.Template("dash/page", data).Fragment(), nil
+```
+
+The convention that ties them together is a shared name. Give the swap
+target element an `id` equal to a declared region:
+
+```html
+{{ define "region/results" }}<div id="results">…</div>{{ end }}
+```
+
+htmx sends that id as `HX-Target`, the response resolves it against the
+page's regions (through a renderer that implements `RegionRenderer`,
+which `Templates` does), and answers with that region. A normal,
+boosted or history-restoring request is answered as it would be without
+`Fragment` - with `.Block(name)` if one is set, otherwise the adapter's
+default. Only an htmx swap is answered by target.
+
+A swap whose target has no id sends no `HX-Target` and is refused with
+400; a target naming no declared region is a 404; both are `no-store`.
+`Fragment` is for pieces whose stable id is their name - use `.Block`
+for row mutations and other targets a page will never declare. Fragment
+answers carry `Vary: HX-Request, HX-Boosted, HX-History-Restore-Request,
+HX-Target`, since one URL now has more than one representation.
+
 ## One adapter per response surface
 
 An adapter carries one renderer and one error handler, so give each

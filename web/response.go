@@ -31,11 +31,12 @@ func Template(name string, data any) TemplateResponse {
 // It is not comparable: it carries a header slice. [Status] and [Redirect]
 // are the responses that compare directly.
 type TemplateResponse struct {
-	name    string
-	block   string
-	data    any
-	status  int
-	headers []headerPair
+	name     string
+	block    string
+	data     any
+	status   int
+	headers  []headerPair
+	fragment bool
 }
 
 // Status returns a copy responding with code instead of 200.
@@ -56,6 +57,28 @@ func (v TemplateResponse) Header(key, value string) TemplateResponse {
 // whole document.
 func (v TemplateResponse) Block(name string) TemplateResponse {
 	v.block = name
+	return v
+}
+
+// Fragment returns a copy that answers an htmx swap with the one region the
+// request targets, and everything else with the whole page.
+//
+//	return web.Template("dash/page", data).Fragment(), nil
+//
+// The region comes from HX-Target, which htmx sets to the id of the element
+// being replaced, and is resolved against the regions the page declares - so
+// the target names one of them or the request is refused.
+//
+// A normal, boosted or history-restoring request is answered the way it would
+// have been without this: with [TemplateResponse.Block] if one is set, and
+// otherwise with the adapter's own. Only an htmx swap is answered by target.
+//
+// This is for regions whose id is a stable name of a piece of the page. A
+// swap aimed at an unidentified element, or at one id per row, has no such
+// name; answer those with [TemplateResponse.Block], which says what to render
+// rather than asking.
+func (v TemplateResponse) Fragment() TemplateResponse {
+	v.fragment = true
 	return v
 }
 

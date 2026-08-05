@@ -170,6 +170,9 @@ func (a *Adapter) respond(w http.ResponseWriter, r *http.Request, resp Response)
 		if a.renderer == nil {
 			return ErrNoTemplateRenderer
 		}
+		if v.fragment {
+			return a.renderFragment(w, r, v)
+		}
 		return a.render(w, v.name, a.blockFor(v.block), v.status, v.headers, v.data)
 	}
 	return resp.Respond(w, r)
