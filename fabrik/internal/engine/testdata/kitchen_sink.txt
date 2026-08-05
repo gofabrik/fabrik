@@ -19,7 +19,6 @@ require (
 	github.com/gofabrik/fabrik/assetmapper v0.0.0
 	github.com/gofabrik/fabrik/migrations v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
-	github.com/gofabrik/fabrik/templates v0.0.0
 	github.com/gofabrik/fabrik/web v0.0.0
 )
 
@@ -27,7 +26,6 @@ replace (
 	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
 	github.com/gofabrik/fabrik/migrations => MIGRATIONSDIR
 	github.com/gofabrik/fabrik/config => CONFIGDIR
-	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
 	github.com/gofabrik/fabrik/web => WEBDIR
 )
 -- main.go --
@@ -191,7 +189,7 @@ import (
 
 	"app/store"
 
-	"github.com/gofabrik/fabrik/templates"
+	fabrikweb "github.com/gofabrik/fabrik/web"
 	weblib "github.com/gofabrik/fabrik/web"
 )
 
@@ -199,7 +197,7 @@ import (
 type API struct {
 	Store     store.Store
 	Pool      *store.Pool
-	Templates *templates.Set
+	Templates *fabrikweb.Templates
 }
 
 //fabrik:http GET /items/{id}
@@ -213,7 +211,7 @@ func Metrics() http.Handler { return http.NotFoundHandler() }
 
 //fabrik:web GET /api/items.json
 func (a *API) ItemsJSON(req *weblib.Request) (weblib.Response, error) {
-	return weblib.JSON{Value: []string{"a"}}, nil
+	return weblib.JSON([]string{"a"}), nil
 }
 
 //fabrik:http:notfound
@@ -239,7 +237,6 @@ import (
 	"github.com/gofabrik/fabrik/httpserver"
 	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
 
 	"app/shared"
@@ -342,7 +339,7 @@ func run() int {
 					default:
 						return fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
 					}
-					webTemplates, err := templates.Load(web.Templates, "templates", assetCompiled.FuncMap(), templates.FuncMap{
+					webTemplates, err := web2.LoadTemplates(web.Templates, "templates", assetCompiled.FuncMap(), web2.FuncMap{
 						"shout": web.Shout,
 					})
 					if err != nil {

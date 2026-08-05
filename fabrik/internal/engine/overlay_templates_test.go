@@ -13,7 +13,7 @@ func TestWireTemplateOverlay(t *testing.T) {
 	if r, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = r
 	}
-	templateDir, err := filepath.Abs("../../../templates")
+	webDir, err := filepath.Abs("../../../web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestWireTemplateOverlay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/templates v0.0.0\n\nreplace github.com/gofabrik/fabrik/templates => "+templateDir+"\n")
+	write("go.mod", "module app\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/web v0.0.0\n\nreplace github.com/gofabrik/fabrik/web => "+webDir+"\n")
 	write("main.go", "package main\n\nfunc main() { _ = run }\n")
 	write("web/templates.go", "package web\n\nimport \"embed\"\n\n//fabrik:templates\n//go:embed all:templates\nvar Templates embed.FS\n")
 	write("web/templates/_default/_layout.html", `{{ block "content" . }}{{ end }}`)
@@ -36,16 +36,16 @@ func TestWireTemplateOverlay(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/gofabrik/fabrik/templates"
+	fabrikweb "github.com/gofabrik/fabrik/web"
 )
 
 type Handlers struct {
-	Templates *templates.Set
+	Templates *fabrikweb.Templates
 }
 
 //fabrik:http GET /
 func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {
-	h.Templates.Render(w, "home", nil)
+	h.Templates.Render(w, "home", "", nil)
 }
 `)
 

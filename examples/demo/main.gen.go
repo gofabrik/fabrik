@@ -19,7 +19,6 @@ import (
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
 
 	"demo/shared"
@@ -323,10 +322,10 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	appTemplates, err := templates.LoadSources([]templates.Source{
+	appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), templates.FuncMap{
+	}, assetServer.FuncMap(), web2.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})

@@ -4,9 +4,9 @@ module app
 
 go 1.27
 
-require github.com/gofabrik/fabrik/templates v0.0.0
+require github.com/gofabrik/fabrik/web v0.0.0
 
-replace github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+replace github.com/gofabrik/fabrik/web => WEBDIR
 -- main.go --
 package main
 
@@ -62,4 +62,4 @@ func run() int {
 }
 -- want/diags --
 warning: web/templates.go:8:1: templates Templates are never used
-  help: inject *templates.Set into a handler struct or provider, or remove the directive
+  help: inject *web.Templates into a handler struct or provider, or remove the directive

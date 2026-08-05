@@ -27,8 +27,6 @@ module-sets:
       - github.com/gofabrik/fabrik/router/directive
       - github.com/gofabrik/fabrik/session
       - github.com/gofabrik/fabrik/storage
-      - github.com/gofabrik/fabrik/templates
-      - github.com/gofabrik/fabrik/templates/directive
       - github.com/gofabrik/fabrik/validation
       - github.com/gofabrik/fabrik/web
       - github.com/gofabrik/fabrik/web/directive

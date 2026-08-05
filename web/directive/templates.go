@@ -1,4 +1,3 @@
-// Package directive integrates templates with the fabrik code generator.
 package directive
 
 import (
@@ -13,12 +12,8 @@ import (
 
 	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/gen"
-	"github.com/gofabrik/fabrik/templates"
+	"github.com/gofabrik/fabrik/web"
 )
-
-const templatePath = "github.com/gofabrik/fabrik/templates"
-
-const setPath = "*" + templatePath + ".Set"
 
 // Templates implements //fabrik:templates.
 type Templates struct {
@@ -58,7 +53,7 @@ func (*Templates) Meta() gen.Meta {
 		Synopsis: "Template set from an embedded tree: [dir=templates]",
 		Doc: "**`//fabrik:templates [dir=templates]`**\n\n" +
 			"Declared on an exported `embed.FS` variable: the tree loads at " +
-			"startup into a `*templates.Set`, injectable into handler structs " +
+			"startup into a `*web.Templates`, injectable into handler structs " +
 			"and providers. Templates live in sections; `_default` provides " +
 			"fallback layouts and partials. `dir=` names the subdirectory " +
 			"inside the FS. `*.html` files use html/template; non-HTML files " +
@@ -141,31 +136,31 @@ func (t *Templates) Check(n any, ty gen.Typed) diag.Diagnostics {
 	return ds
 }
 
-// Emit lazily binds one *templates.Set for all declared trees.
+// Emit lazily binds one *web.Templates for all declared trees.
 func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*tplNode)
 	if nd.varName == "" || t.registered {
 		return nil
 	}
 	t.registered = true
-	g.BindLazyPathAt(setPath, nd.pos, func() (string, diag.Diagnostics) {
+	g.BindLazyPathAt(templatesPath, nd.pos, func() (string, diag.Diagnostics) {
 		decls := t.sortedDecls()
 		for _, d := range decls {
 			if !g.InValidationScope() {
 				d.built = true
 			}
 		}
-		tplPkg := g.Import(templatePath)
+		webPkg := g.Import(webPath)
 		first := decls[0]
 
 		var args []string
-		fn := tplPkg + ".LoadSources"
+		fn := webPkg + ".LoadTemplateSources"
 		if len(decls) == 1 {
-			fn = tplPkg + ".Load"
+			fn = webPkg + ".LoadTemplates"
 			args = []string{g.ImportPkg(first.pkg) + "." + first.varName, fmt.Sprintf("%q", first.dir)}
 		} else {
 			var b strings.Builder
-			b.WriteString("[]" + tplPkg + ".Source{\n")
+			b.WriteString("[]" + webPkg + ".TemplateSource{\n")
 			for _, d := range decls {
 				fmt.Fprintf(&b, "{FS: %s.%s, Dir: %q},\n", g.ImportPkg(d.pkg), d.varName, d.dir)
 			}
@@ -181,7 +176,7 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 				args = append(args, expr)
 			}
 		}
-		if fm := t.funcMapExpr(g, tplPkg); fm != "" {
+		if fm := t.funcMapExpr(g, webPkg); fm != "" {
 			args = append(args, fm)
 		}
 
@@ -213,14 +208,14 @@ func (t *Templates) sortedDecls() []*tplNode {
 	return decls
 }
 
-func (t *Templates) funcMapExpr(g *gen.Gen, tplPkg string) string {
+func (t *Templates) funcMapExpr(g *gen.Gen, webPkg string) string {
 	if len(t.helpers) == 0 {
 		return ""
 	}
 	sorted := append([]*helperNode(nil), t.helpers...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
 	var b strings.Builder
-	b.WriteString(tplPkg + ".FuncMap{\n")
+	b.WriteString(webPkg + ".FuncMap{\n")
 	for _, h := range sorted {
 		fmt.Fprintf(&b, "%q: %s.%s,\n", h.name, g.ImportPkg(h.pkg), h.fn)
 	}
@@ -244,7 +239,7 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	owner := map[string]*tplNode{}
 	collided := false
 	for _, d := range decls {
-		names, err := templates.Sections(t.treeFS(d.srcDir), d.dir)
+		names, err := web.TemplateSections(t.treeFS(d.srcDir), d.dir)
 		if err != nil {
 			continue
 		}
@@ -269,7 +264,7 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	}
 
 	if !collided {
-		stubs := templates.FuncMap{}
+		stubs := web.FuncMap{}
 		for _, c := range t.contributed {
 			for _, name := range c.names {
 				stubs[name] = func(...any) any { return nil }
@@ -278,11 +273,11 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 		for _, h := range t.helpers {
 			stubs[h.name] = func(...any) any { return nil }
 		}
-		sources := make([]templates.Source, len(decls))
+		sources := make([]web.TemplateSource, len(decls))
 		for i, d := range decls {
-			sources[i] = templates.Source{FS: t.treeFS(d.srcDir), Dir: d.dir}
+			sources[i] = web.TemplateSource{FS: t.treeFS(d.srcDir), Dir: d.dir}
 		}
-		if _, err := templates.LoadSources(sources, stubs); err != nil {
+		if _, err := web.LoadTemplateSources(sources, stubs); err != nil {
 			ds.Error(decls[0].pos, err.Error(),
 				"the templates are loaded and parsed at generation time; fix the tree and rerun")
 		}
@@ -291,7 +286,7 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	for _, d := range decls {
 		if !d.built {
 			ds.Warn(d.pos, fmt.Sprintf("templates %s are never used", d.varName),
-				"inject *templates.Set into a handler struct or provider, or remove the directive")
+				"inject *web.Templates into a handler struct or provider, or remove the directive")
 		}
 	}
 	return ds
@@ -299,10 +294,10 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 
 // MissingHint explains that template sets are injected by pointer.
 func (t *Templates) MissingHint(ty types.Type) (string, bool) {
-	if types.TypeString(types.Unalias(ty), nil) != templatePath+".Set" {
+	if types.TypeString(types.Unalias(ty), nil) != webPath+".Templates" {
 		return "", false
 	}
-	return "template sets are injected as pointers; take *templates.Set", true
+	return "template sets are injected as pointers; take *web.Templates", true
 }
 
 // Funcs implements //fabrik:templates:func.

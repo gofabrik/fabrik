@@ -29,7 +29,6 @@ var starterFabrikModules = []string{
 	"github.com/gofabrik/fabrik/config",
 	"github.com/gofabrik/fabrik/httpserver",
 	"github.com/gofabrik/fabrik/router",
-	"github.com/gofabrik/fabrik/templates",
 	"github.com/gofabrik/fabrik/web",
 }
 

@@ -129,7 +129,6 @@ func compileFixture(dir, outDir, mainDir string, files map[string][]byte, replac
 var fixtureModules = []struct{ token, path, rel string }{
 	{"ROUTERDIR", "github.com/gofabrik/fabrik/router", "../../../router"},
 	{"CONFIGDIR", "github.com/gofabrik/fabrik/config", "../../../config"},
-	{"TEMPLATEDIR", "github.com/gofabrik/fabrik/templates", "../../../templates"},
 	{"WEBDIR", "github.com/gofabrik/fabrik/web", "../../../web"},
 	{"ASSETSDIR", "github.com/gofabrik/fabrik/assetmapper", "../../../assetmapper"},
 	{"MIGRATIONSDIR", "github.com/gofabrik/fabrik/migrations", "../../../migrations"},

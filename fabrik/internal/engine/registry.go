@@ -18,7 +18,6 @@ import (
 	jobsdir "github.com/gofabrik/fabrik/jobs/directive"
 	migdir "github.com/gofabrik/fabrik/migrations/directive"
 	routerdir "github.com/gofabrik/fabrik/router/directive"
-	tpldir "github.com/gofabrik/fabrik/templates/directive"
 	webdir "github.com/gofabrik/fabrik/web/directive"
 )
 
@@ -28,7 +27,7 @@ func New() []gen.Directive {
 	routes := routerdir.NewRouteTable()
 	mw := routerdir.NewMiddleware()
 	host := routerdir.NewHost(group, routes, mw)
-	tpl := tpldir.NewTemplates()
+	tpl := webdir.NewTemplates()
 	cfg := configdir.New()
 	assetsConfig := assetOptionsSource{cfg: cfg}
 	provider := core.NewProvider(cfg)
@@ -49,7 +48,7 @@ func New() []gen.Directive {
 		routerdir.NewMethodNotAllowed(host),
 		webdir.NewWeb(host),
 		tpl,
-		tpldir.NewFuncs(tpl),
+		webdir.NewFuncs(tpl),
 		assetsdir.NewAssets(host, tpl, assetsConfig),
 		migdir.NewMigrations(),
 		jobsJob,

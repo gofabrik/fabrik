@@ -19,7 +19,7 @@ const (
 	responsePath = webPath + ".Response"
 	adapterPath  = "*" + webPath + ".Adapter"
 
-	templatesSetPath = "*github.com/gofabrik/fabrik/templates.Set"
+	templatesPath = "*" + webPath + ".Templates"
 )
 
 // Web is the //fabrik:web directive.
@@ -44,8 +44,8 @@ func (*Web) Meta() gen.Meta {
 			"errors centralized in the generated adapter. Same grammar, groups, middleware " +
 			"names, and conflict table as `//fabrik:http`; typed and plain " +
 			"handlers mix freely, even on one struct. When " +
-			"`//fabrik:templates` is declared, `web.View` responses render " +
-			"through the app's template set.\n\n" +
+			"`//fabrik:templates` is declared, `web.Template` responses " +
+			"render through the app's template set.\n\n" +
 			"```go\n//fabrik:web POST /login\nfunc (h *Handlers) Login(req *web.Request) (web.Response, error) { ... }\n```",
 		Example: "//fabrik:web GET /login",
 		Tier:    gen.TierBind,
@@ -150,8 +150,8 @@ func (w *Web) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			webPkg := g.Import(webPath)
 			var args []string
 			// Attach the template set only when one is declared.
-			if g.HasBindingPath(templatesSetPath) {
-				expr, ids, ok := g.InstancePath(templatesSetPath)
+			if g.HasBindingPath(templatesPath) {
+				expr, ids, ok := g.InstancePath(templatesPath)
 				ds = append(ds, ids...)
 				if ok && len(ids) == 0 {
 					args = append(args, webPkg+".WithRenderer("+expr+")")

@@ -20,7 +20,6 @@ import (
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
 	"github.com/gofabrik/fabrik/storage"
-	"github.com/gofabrik/fabrik/templates"
 	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
 )
@@ -46,8 +45,6 @@ type Greeting struct {
 type visitCount struct {
 	Count int64
 }
-
-func (HomePage) Template() string { return "web/home" }
 
 type Handlers struct {
 	Greeter Greeter
@@ -97,7 +94,7 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent, Flashes: flashes}), nil
+	return web.Template("web/home", HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent, Flashes: flashes}), nil
 }
 
 // AboutPage is the about page's view model; it carries no template name.
@@ -113,13 +110,13 @@ func (h *Handlers) About(req *web.Request) (web.Response, error) {
 
 // Status renders through the template set directly, without the web adapter.
 type Status struct {
-	Templates *templates.Set
+	Templates *web.Templates
 }
 
 //fabrik:http GET /uptime
 func (s *Status) Uptime(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.Templates.Render(w, "web/uptime", map[string]any{"Started": started}); err != nil {
+	if err := s.Templates.Render(w, "web/uptime", "", map[string]any{"Started": started}); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }
@@ -151,8 +148,6 @@ type GreetForm struct {
 	Form *forms.Form[GreetInput]
 }
 
-func (GreetForm) Template() string { return "web/greet" }
-
 type Greetings struct {
 	Session *session.Manager[shared.Session]
 	Flash   *flash.Flash
@@ -163,7 +158,7 @@ type Greetings struct {
 
 //fabrik:web GET /greet
 func (h *Greetings) Show(req *web.Request) (web.Response, error) {
-	return web.View(GreetForm{Form: &forms.Form[GreetInput]{}}), nil
+	return web.Template("web/greet", GreetForm{Form: &forms.Form[GreetInput]{}}), nil
 }
 
 //fabrik:web POST /greet middleware=greetlimit
@@ -173,7 +168,7 @@ func (h *Greetings) Update(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 	if !form.Valid() {
-		return web.View(GreetForm{Form: form}), nil
+		return web.Template("web/greet", GreetForm{Form: form}), nil
 	}
 	ctx := req.Context()
 	if err := h.Session.Save(ctx, shared.Session{Name: form.Data.Name}); err != nil {
@@ -232,8 +227,6 @@ type FilesPage struct {
 	Form    *forms.Form[UploadForm]
 }
 
-func (FilesPage) Template() string { return "web/files" }
-
 type Files struct {
 	Store storage.Storage
 }
@@ -255,7 +248,7 @@ func (f *Files) Show(req *web.Request) (web.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return web.View(page), nil
+	return web.Template("web/files", page), nil
 }
 
 //fabrik:web POST /files
@@ -269,7 +262,7 @@ func (f *Files) Upload(req *web.Request) (web.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		return web.View(page), nil
+		return web.Template("web/files", page), nil
 	}
 	rc, err := form.Data.File.Open()
 	if err != nil {
