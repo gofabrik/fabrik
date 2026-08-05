@@ -44,7 +44,7 @@ func (*Web) Meta() gen.Meta {
 			"errors centralized in the generated adapter. Same grammar, groups, middleware " +
 			"names, and conflict table as `//fabrik:http`; typed and plain " +
 			"handlers mix freely, even on one struct. When " +
-			"`//fabrik:templates` is declared, `web.Template` responses " +
+			"`//fabrik:web:templates` is declared, `web.Template` responses " +
 			"render through the app's template set.\n\n" +
 			"```go\n//fabrik:web POST /login\nfunc (h *Handlers) Login(req *web.Request) (web.Response, error) { ... }\n```",
 		Example: "//fabrik:web GET /login",

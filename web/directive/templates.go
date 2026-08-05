@@ -15,7 +15,7 @@ import (
 	"github.com/gofabrik/fabrik/web"
 )
 
-// Templates implements //fabrik:templates.
+// Templates implements //fabrik:web:templates.
 type Templates struct {
 	decls       []*tplNode
 	registered  bool
@@ -46,12 +46,12 @@ func (t *Templates) ContributeFuncs(names []string, build func(g *gen.Gen) (stri
 	t.contributed = append(t.contributed, contribution{names: names, build: build})
 }
 
-func (*Templates) Name() string { return "templates" }
+func (*Templates) Name() string { return "web:templates" }
 
 func (*Templates) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Template set from an embedded tree: [dir=templates]",
-		Doc: "**`//fabrik:templates [dir=templates]`**\n\n" +
+		Doc: "**`//fabrik:web:templates [dir=templates]`**\n\n" +
 			"Declared on an exported `embed.FS` variable: the tree loads at " +
 			"startup into a `*web.Templates`, injectable into handler structs " +
 			"and providers. Templates live in sections; `_default` provides " +
@@ -63,8 +63,8 @@ func (*Templates) Meta() gen.Meta {
 			"each domain package ships its own section directories. A " +
 			"section provided twice is an error, and every tree is " +
 			"validated at generation time by loading it.\n\n" +
-			"```go\n//fabrik:templates\n//go:embed all:templates\nvar Templates embed.FS\n```",
-		Example: "//fabrik:templates",
+			"```go\n//fabrik:web:templates\n//go:embed all:templates\nvar Templates embed.FS\n```",
+		Example: "//fabrik:web:templates",
 		Attrs: []gen.AttrSpec{
 			{Key: "dir", Kind: gen.KindFreeform},
 		},
@@ -102,7 +102,7 @@ func checkEmbedPattern(a gen.Annotation, dir string, ds *diag.Diagnostics) {
 		return
 	}
 	if !found {
-		ds.Error(a.Pos, "//fabrik:templates variable has no //go:embed",
+		ds.Error(a.Pos, "//fabrik:web:templates variable has no //go:embed",
 			fmt.Sprintf("add //go:embed all:%s above the variable", dir))
 		return
 	}
@@ -116,7 +116,7 @@ func (t *Templates) Check(n any, ty gen.Typed) diag.Diagnostics {
 
 	v, ok := ty.Target.(*types.Var)
 	if !ok {
-		ds.Error(nd.pos, "//fabrik:templates must be on a package-level variable", "")
+		ds.Error(nd.pos, "//fabrik:web:templates must be on a package-level variable", "")
 		return ds
 	}
 	if !v.Exported() {
@@ -228,7 +228,7 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	if len(t.decls) == 0 {
 		for _, h := range t.helpers {
-			ds.Error(h.pos, "//fabrik:templates:func without any //fabrik:templates declaration",
+			ds.Error(h.pos, "//fabrik:web:templates:func without any //fabrik:web:templates declaration",
 				"declare a template set the helper can be parsed into")
 		}
 		return ds
@@ -300,27 +300,27 @@ func (t *Templates) MissingHint(ty types.Type) (string, bool) {
 	return "template sets are injected as pointers; take *web.Templates", true
 }
 
-// Funcs implements //fabrik:templates:func.
+// Funcs implements //fabrik:web:templates:func.
 type Funcs struct {
 	templates *Templates
 }
 
 func NewFuncs(t *Templates) *Funcs { return &Funcs{templates: t} }
 
-func (*Funcs) Name() string { return "templates:func" }
+func (*Funcs) Name() string { return "web:templates:func" }
 
 func (*Funcs) Meta() gen.Meta {
 	return gen.Meta{
 		Synopsis: "Template function: [name=NAME]",
-		Doc: "**`//fabrik:templates:func [name=NAME]`**\n\n" +
+		Doc: "**`//fabrik:web:templates:func [name=NAME]`**\n\n" +
 			"Adds a package-level function to the template set's FuncMap, " +
 			"visible to both HTML and text templates. " +
 			"The template-visible name defaults to the function name with a " +
 			"lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` " +
 			"overrides. The signature must be legal for the template " +
 			"engines: one result, or two with the second an `error`.\n\n" +
-			"```go\n//fabrik:templates:func\nfunc HumanizeAge(t time.Time) string { ... }\n```",
-		Example: "//fabrik:templates:func",
+			"```go\n//fabrik:web:templates:func\nfunc HumanizeAge(t time.Time) string { ... }\n```",
+		Example: "//fabrik:web:templates:func",
 		Attrs: []gen.AttrSpec{
 			{Key: "name", Kind: gen.KindFreeform},
 		},
@@ -357,12 +357,12 @@ func (f *Funcs) Check(n any, ty gen.Typed) diag.Diagnostics {
 
 	fn, ok := ty.Target.(*types.Func)
 	if !ok {
-		ds.Error(nd.pos, "//fabrik:templates:func must be on a function", "")
+		ds.Error(nd.pos, "//fabrik:web:templates:func must be on a function", "")
 		return ds
 	}
 	sig := fn.Signature()
 	if sig.Recv() != nil {
-		ds.Error(nd.pos, fmt.Sprintf("//fabrik:templates:func must be on a package-level function (func %s is a method)", fn.Name()),
+		ds.Error(nd.pos, fmt.Sprintf("//fabrik:web:templates:func must be on a package-level function (func %s is a method)", fn.Name()),
 			"move the helper out of the method set")
 		return ds
 	}

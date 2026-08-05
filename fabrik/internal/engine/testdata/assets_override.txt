@@ -33,14 +33,14 @@ body {}
 -- web/helpers.go --
 package web
 
-//fabrik:templates:func name=asset
+//fabrik:web:templates:func name=asset
 func CustomAsset(path string) string { return "/custom/" + path }
 -- web/templates.go --
 package web
 
 import "embed"
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 -- web/templates/_default/_layout.html --

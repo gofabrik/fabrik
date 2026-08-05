@@ -171,11 +171,11 @@ import (
 	"strings"
 )
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 
-//fabrik:templates:func
+//fabrik:web:templates:func
 func Shout(s string) string { return strings.ToUpper(s) }
 -- web/templates/_default/_layout.html --
 <html><head><link rel="stylesheet" href="{{ asset "style.css" }}"></head>{{ block "content" . }}{{ end }}</html>

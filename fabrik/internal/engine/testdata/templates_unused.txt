@@ -21,7 +21,7 @@ import (
 	"net/http"
 )
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 

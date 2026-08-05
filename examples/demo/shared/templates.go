@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-//fabrik:templates:func
+//fabrik:web:templates:func
 func Shout(s string) string { return strings.ToUpper(s) }
 
-//fabrik:templates:func
+//fabrik:web:templates:func
 func HumanizeAge(t time.Time) string {
 	d := time.Since(t).Round(time.Second)
 	switch {

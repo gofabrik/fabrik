@@ -23,19 +23,19 @@ import (
 	"time"
 )
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 
-//fabrik:templates:func
+//fabrik:web:templates:func
 func HumanizeAge(t time.Time) string { return t.String() }
 
-//fabrik:templates:func name=upper
+//fabrik:web:templates:func name=upper
 func UpperCase(s string) string { return strings.ToUpper(s) }
 -- shared/helpers.go --
 package shared
 
-//fabrik:templates:func
+//fabrik:web:templates:func
 func Reverse(s string) string {
 	b := []byte(s)
 	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {

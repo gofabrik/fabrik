@@ -448,42 +448,11 @@ Positional arguments:
 
 - `CONFIG-KEY`
 
-## fabrik:templates
-
-**`//fabrik:templates [dir=templates]`**
-
-Declared on an exported `embed.FS` variable: the tree loads at startup into a `*web.Templates`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
-
-```go
-//fabrik:templates
-//go:embed all:templates
-var Templates embed.FS
-```
-
-Options:
-
-- `dir=`
-
-## fabrik:templates:func
-
-**`//fabrik:templates:func [name=NAME]`**
-
-Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
-
-```go
-//fabrik:templates:func
-func HumanizeAge(t time.Time) string { ... }
-```
-
-Options:
-
-- `name=`
-
 ## fabrik:web
 
 **`//fabrik:web METHOD /path [middleware=name,name2]`**
 
-Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:templates` is declared, `web.Template` responses render through the app's template set.
+Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:web:templates` is declared, `web.Template` responses render through the app's template set.
 
 ```go
 //fabrik:web POST /login
@@ -498,3 +467,34 @@ Positional arguments:
 Options:
 
 - `middleware=`
+
+## fabrik:web:templates
+
+**`//fabrik:web:templates [dir=templates]`**
+
+Declared on an exported `embed.FS` variable: the tree loads at startup into a `*web.Templates`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
+
+```go
+//fabrik:web:templates
+//go:embed all:templates
+var Templates embed.FS
+```
+
+Options:
+
+- `dir=`
+
+## fabrik:web:templates:func
+
+**`//fabrik:web:templates:func [name=NAME]`**
+
+Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
+
+```go
+//fabrik:web:templates:func
+func HumanizeAge(t time.Time) string { ... }
+```
+
+Options:
+
+- `name=`
