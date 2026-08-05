@@ -42,10 +42,6 @@ type Greeting struct {
 	Created time.Time
 }
 
-type visitCount struct {
-	Count int64
-}
-
 type Handlers struct {
 	Greeter Greeter
 	Queries *query.DB
@@ -79,8 +75,8 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	if _, err := h.Jobs.Enqueue(ctx, Visit{Path: "/"}); err != nil {
 		return nil, err
 	}
-	visits, err := query.One[visitCount](ctx, h.Queries,
-		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0) AS count`)
+	visits, err := query.Scalar[int64](ctx, h.Queries,
+		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0)`)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +90,7 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	return web.Template("web/home", HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent, Flashes: flashes}), nil
+	return web.Template("web/home", HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits, Recent: recent, Flashes: flashes}), nil
 }
 
 // AboutPage is the about page's view model; it carries no template name.
@@ -108,6 +104,11 @@ func (h *Handlers) About(req *web.Request) (web.Response, error) {
 	return web.Template("web/about", AboutPage{Started: started, GoVersion: runtime.Version()}), nil
 }
 
+// UptimePage is the uptime page's view model.
+type UptimePage struct {
+	Started time.Time
+}
+
 // Status renders through the template set directly, without the web adapter.
 type Status struct {
 	Templates *web.Templates
@@ -116,7 +117,7 @@ type Status struct {
 //fabrik:http GET /uptime
 func (s *Status) Uptime(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.Templates.Render(w, "web/uptime", "", map[string]any{"Started": started}); err != nil {
+	if err := s.Templates.Render(w, "web/uptime", "", UptimePage{Started: started}); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }
@@ -158,7 +159,7 @@ type Greetings struct {
 
 //fabrik:web GET /greet
 func (h *Greetings) Show(req *web.Request) (web.Response, error) {
-	return web.Template("web/greet", GreetForm{Form: &forms.Form[GreetInput]{}}), nil
+	return web.Template("web/greet", GreetForm{Form: forms.Empty[GreetInput]()}), nil
 }
 
 //fabrik:web POST /greet middleware=greetlimit
@@ -244,7 +245,7 @@ func (f *Files) page(req *web.Request, form *forms.Form[UploadForm]) (FilesPage,
 
 //fabrik:web GET /files
 func (f *Files) Show(req *web.Request) (web.Response, error) {
-	page, err := f.page(req, &forms.Form[UploadForm]{})
+	page, err := f.page(req, forms.Empty[UploadForm]())
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +276,36 @@ func (f *Files) Upload(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 	return web.Redirect("/files"), nil
+}
+
+// OverviewPage carries every region's data for the overview page.
+type OverviewPage struct {
+	Recent  []Greeting
+	Files   []storage.Info
+	Started time.Time
+}
+
+type Overview struct {
+	Queries *query.DB
+	Store   storage.Storage
+}
+
+//fabrik:web GET /overview
+func (o *Overview) Show(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	recent, err := query.All[Greeting](ctx, o.Queries,
+		"SELECT * FROM greetings ORDER BY id DESC LIMIT 5")
+	if err != nil {
+		return nil, err
+	}
+	var files []storage.Info
+	for info, err := range o.Store.List(ctx, "") {
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, info)
+	}
+	return web.Template("web/overview", OverviewPage{Recent: recent, Files: files, Started: started}).Fragment(), nil
 }
 
 //fabrik:http GET /files/{key...}

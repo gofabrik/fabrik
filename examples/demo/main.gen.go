@@ -431,6 +431,10 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	webFiles := &web.Files{
 		Store: sharedStorage,
 	}
+	webOverview := &web.Overview{
+		Queries: sharedQueryDB,
+		Store:   sharedStorage,
+	}
 
 	// Middleware
 	r.Use(shared.Logged)
@@ -483,6 +487,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 
 	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
+	r.Method("GET", "/overview", adapter.Wrap(webOverview.Show))
 	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
 	return httpserver.New(r, sharedHttpServer), jobsManager, cleanup, nil
