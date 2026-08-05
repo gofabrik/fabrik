@@ -2,6 +2,6 @@ change_type: breaking
 
 component: web
 
-note: Move sectioned template loading into web, replace web.View with chainable template responses, and add fragments, regions, and server-sent event streams.
+note: Move sectioned template loading and directives into web, replace web.View with chainable template responses, add fragments, regions, server-sent event streams, typed 404 and 405 handlers, and new paging, form, and query helpers.
 
 issues: [0]

@@ -148,7 +148,6 @@ func (w *Web) ensureAdapter(g *gen.Gen, pos token.Position) {
 		var ds diag.Diagnostics
 		webPkg := g.Import(webPath)
 		var args []string
-		// Attach the template set only when one is declared.
 		if g.HasBindingPath(templatesPath) {
 			expr, ids, ok := g.InstancePath(templatesPath)
 			ds = append(ds, ids...)
