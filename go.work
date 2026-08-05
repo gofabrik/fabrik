@@ -25,6 +25,7 @@ use (
 	./migrations
 	./migrations/dbtest
 	./migrations/directive
+	./paging
 	./query
 	./query/dbtest
 	./ratelimit
@@ -61,6 +62,7 @@ replace (
 	github.com/gofabrik/fabrik/mail v0.1.0 => ./mail
 	github.com/gofabrik/fabrik/migrations v0.1.0 => ./migrations
 	github.com/gofabrik/fabrik/migrations/directive v0.1.0 => ./migrations/directive
+	github.com/gofabrik/fabrik/paging v0.1.0 => ./paging
 	github.com/gofabrik/fabrik/query v0.1.0 => ./query
 	github.com/gofabrik/fabrik/ratelimit v0.1.0 => ./ratelimit
 	github.com/gofabrik/fabrik/router v0.1.0 => ./router

@@ -128,6 +128,7 @@ together by the CLI:
 - [assetmapper](assetmapper/README.md) - import maps, vendored browser packages, and hashed assets.
 - [migrations](migrations/README.md) - forward-only SQL migrations for `database/sql`.
 - [query](query/README.md) - typed reads and struct-derived writes over `database/sql`.
+- [paging](paging/README.md) - offset page numbers for a store query and its controls.
 - [jobs](jobs/README.md) - background jobs.
 - [mail](mail/README.md) - transactional email with template-rendered bodies and pluggable transports.
 - [ratelimit](ratelimit/README.md) - keyed rate limiting with exact retry timing and pluggable stores.
