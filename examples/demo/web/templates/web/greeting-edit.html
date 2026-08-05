@@ -1,0 +1,11 @@
+{{ define "title" }}Edit greeting{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Edit greeting</h1>
+  <form method="post" action="/greetings/{{ .ID }}/edit">
+    <label>Name <input name="name" value="{{ .Form.Value "name" }}"></label>
+    {{ with .Form.Error "name" }}<span class="error">{{ . }}</span>{{ end }}
+    <button type="submit">Save</button>
+  </form>
+{{ end }}

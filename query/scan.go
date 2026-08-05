@@ -76,6 +76,65 @@ func One[T any](ctx context.Context, db Executor, query string, args ...any) (T,
 	return out, nil
 }
 
+// Scalar runs query and scans a single column from the first row into T,
+// for results that are one value rather than a row:
+//
+//	n, err := query.Scalar[int](ctx, db, "SELECT COUNT(*) FROM todos")
+//
+// It returns [ErrNotFound] when the query produces no rows, and an error when
+// the query returns more than one column.
+//
+// A bare aggregate produces a row whatever it counted, so a zero arrives as a
+// value rather than as [ErrNotFound]. That stops holding as soon as the query
+// groups: SELECT COUNT(*) ... GROUP BY or HAVING can produce no rows at all,
+// and then [ErrNotFound] is what comes back.
+//
+// T is scanned by database/sql, with the same time handling as [One].
+func Scalar[T any](ctx context.Context, db Executor, query string, args ...any) (T, error) {
+	var zero T
+	rows, err := db.QueryContext(ctx, query, normArgs(args)...)
+	if err != nil {
+		return zero, classify(err)
+	}
+	defer rows.Close() //nolint:errcheck // read errors are reported by rows.Err; Close is cleanup
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return zero, classify(err)
+	}
+	if len(cols) != 1 {
+		return zero, fmt.Errorf("query.Scalar: query returned %d columns, want 1", len(cols))
+	}
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return zero, classify(err)
+		}
+		return zero, ErrNotFound
+	}
+
+	var out T
+	if err := rows.Scan(scalarTarget(&out)); err != nil {
+		return zero, classify(err)
+	}
+	if err := rows.Err(); err != nil {
+		return zero, classify(err)
+	}
+	return out, nil
+}
+
+// scalarTarget adapts the destination so a scalar time column scans the same
+// way it would as a struct field.
+func scalarTarget(dst any) any {
+	switch d := dst.(type) {
+	case *time.Time:
+		return &timeScanner{dst: d}
+	case **time.Time:
+		return &ptrTimeScanner{dst: d}
+	}
+	return dst
+}
+
 // checkRowType rejects invalid read target types before querying.
 func checkRowType[T any]() error {
 	_, err := rowType[T]()

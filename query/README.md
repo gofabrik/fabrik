@@ -18,12 +18,23 @@ todos, err := query.All[Todo](ctx, db, "SELECT * FROM todos WHERE done = ?", fal
 user, err := query.One[User](ctx, db, "SELECT * FROM users WHERE id = $1", id)
 ```
 
-Results are always structs. A single scalar uses a one-field struct.
-Columns map to snake_case field names (`UserID` to `user_id`), with
-`db:"name"` overrides and `db:"-"` skips. Unmatched result columns are
-discarded. Duplicate result column names return an aliasing error.
-`One` scans the first row and returns `ErrNotFound` on none; express
-single-row intent with `LIMIT 1`.
+Row results are structs: columns map to snake_case field names
+(`UserID` to `user_id`), with `db:"name"` overrides and `db:"-"`
+skips. Unmatched result columns are discarded. Duplicate result
+column names return an aliasing error. `One` scans the first row and
+returns `ErrNotFound` on none; express single-row intent with
+`LIMIT 1`.
+
+A single value uses `Scalar` instead of a one-field struct:
+
+```go
+count, err := query.Scalar[int](ctx, db, "SELECT COUNT(*) FROM todos")
+```
+
+It returns `ErrNotFound` on no rows and rejects multi-column results.
+A bare aggregate always produces a row, so a zero count arrives as a
+value; a query with `GROUP BY` or `HAVING` can produce no rows at
+all, and then `ErrNotFound` is what comes back.
 
 Verbatim applies to SQL text only. Bind args are still normalized,
 notably `time.Time` to RFC3339Nano text.
@@ -61,6 +72,12 @@ n, err := query.Update(ctx, db, d, "users", "id = ?", patch, userID)
 n, err = query.Delete(ctx, db, d, "sessions", "expires < ?", now)
 ```
 
+`UpdateOne` and `DeleteOne` are `Update` and `Delete` for a `where`
+that identifies a single row: `ErrNotFound` when nothing matched, an
+error naming the count when more than one row was affected. The
+statement has already been applied by then, so run them inside a
+transaction if that has to be undone.
+
 Generated statements use `?`; on Postgres the whole statement is
 rebound to `$1`, `$2`, and so on. The `where` fragment is included,
 so always write `?` in `where`.
@@ -97,7 +114,8 @@ if _, err := query.Insert(ctx, db, d, "users", u); errors.Is(err, query.ErrUniqu
 ```
 
 `ErrUnique`, `ErrForeignKey`, and `ErrCheck` cover SQLite (modernc,
-mattn) and Postgres (pgx, lib/pq). `ErrNotFound` comes from `One`.
+mattn) and Postgres (pgx, lib/pq). `ErrNotFound` comes from `One`, `Scalar`,
+`UpdateOne`, and `DeleteOne`.
 Use `RegisterClassifier` for other engines.
 
 ## Transactions

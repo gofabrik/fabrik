@@ -6,9 +6,9 @@ module app
 
 go 1.27
 
-require github.com/gofabrik/fabrik/templates v0.0.0
+require github.com/gofabrik/fabrik/web v0.0.0
 
-replace github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+replace github.com/gofabrik/fabrik/web => WEBDIR
 -- main.go --
 package main
 
@@ -20,15 +20,15 @@ package web
 
 import "embed"
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed templates
 var Templates embed.FS
 
-//fabrik:templates dir=views
+//fabrik:web:templates dir=views
 //go:embed all:templates
 var Views embed.FS
 
-//fabrik:templates
+//fabrik:web:templates
 var Empty embed.FS
 -- web/templates/note.txt --
 placeholder so the plain pattern embeds something
@@ -41,5 +41,5 @@ error: web/templates.go:5:1: the go:embed pattern does not cover all:templates
   help: use //go:embed all:templates - plain patterns drop _-prefixed files, other directories load an empty tree
 error: web/templates.go:9:1: the go:embed pattern does not cover all:views
   help: use //go:embed all:views - plain patterns drop _-prefixed files, other directories load an empty tree
-error: web/templates.go:13:1: //fabrik:templates variable has no //go:embed
+error: web/templates.go:13:1: //fabrik:web:templates variable has no //go:embed
   help: add //go:embed all:templates above the variable

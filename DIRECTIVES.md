@@ -283,7 +283,7 @@ Options:
 
 **`//fabrik:http:methodnotallowed`**
 
-Sets the handler for requests whose path matches a route under a different method. One per app. The Allow header is set before it runs and the response defaults to 405.
+Sets the handler for requests whose path matches a route under a different method. One per app, exclusive with `//fabrik:web:methodnotallowed`. The Allow header is set before it runs and the response defaults to 405.
 
 ```go
 //fabrik:http:methodnotallowed
@@ -314,7 +314,7 @@ Options:
 
 **`//fabrik:http:notfound`**
 
-Sets the handler for requests that match no route. One per app. Standard handler signature; the response defaults to 404.
+Sets the handler for requests that match no route. One per app, exclusive with `//fabrik:web:notfound`. Standard handler signature; the response defaults to 404.
 
 ```go
 //fabrik:http:notfound
@@ -448,42 +448,11 @@ Positional arguments:
 
 - `CONFIG-KEY`
 
-## fabrik:templates
-
-**`//fabrik:templates [dir=templates]`**
-
-Declared on an exported `embed.FS` variable: the tree loads at startup into a `*templates.Set`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
-
-```go
-//fabrik:templates
-//go:embed all:templates
-var Templates embed.FS
-```
-
-Options:
-
-- `dir=`
-
-## fabrik:templates:func
-
-**`//fabrik:templates:func [name=NAME]`**
-
-Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
-
-```go
-//fabrik:templates:func
-func HumanizeAge(t time.Time) string { ... }
-```
-
-Options:
-
-- `name=`
-
 ## fabrik:web
 
 **`//fabrik:web METHOD /path [middleware=name,name2]`**
 
-Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:templates` is declared, `web.View` responses render through the app's template set.
+Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:web:templates` is declared, `web.Template` responses render through the app's template set.
 
 ```go
 //fabrik:web POST /login
@@ -498,3 +467,56 @@ Positional arguments:
 Options:
 
 - `middleware=`
+
+## fabrik:web:methodnotallowed
+
+**`//fabrik:web:methodnotallowed`**
+
+Sets the typed handler for requests whose path matches a route under a different method. One per app, exclusive with `//fabrik:http:methodnotallowed`. The Allow header is set before it runs; a response that sets no status keeps the 405.
+
+```go
+//fabrik:web:methodnotallowed
+func (e *ErrorPages) MethodNotAllowed(req *web.Request) (web.Response, error) { ... }
+```
+
+## fabrik:web:notfound
+
+**`//fabrik:web:notfound`**
+
+Sets the typed handler for requests that match no route. One per app, exclusive with `//fabrik:http:notfound`. The handler renders through the app's adapter; a response that sets no status keeps the 404.
+
+```go
+//fabrik:web:notfound
+func (e *ErrorPages) NotFound(req *web.Request) (web.Response, error) { ... }
+```
+
+## fabrik:web:templates
+
+**`//fabrik:web:templates [dir=templates]`**
+
+Declared on an exported `embed.FS` variable: the tree loads at startup into a `*web.Templates`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
+
+```go
+//fabrik:web:templates
+//go:embed all:templates
+var Templates embed.FS
+```
+
+Options:
+
+- `dir=`
+
+## fabrik:web:templates:func
+
+**`//fabrik:web:templates:func [name=NAME]`**
+
+Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
+
+```go
+//fabrik:web:templates:func
+func HumanizeAge(t time.Time) string { ... }
+```
+
+Options:
+
+- `name=`

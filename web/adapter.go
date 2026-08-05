@@ -1,16 +1,27 @@
 package web
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 	"net/http"
+	"sync"
 )
 
-// Renderer writes a named template with data.
+// Renderer writes a named template with data. The adapter passes the same
+// renderer to every Template response.
+//
+// block names what to execute within name, for a renderer whose templates
+// hold more than one thing: a whole document and the fragments of it that a
+// swap replaces. It is [WithBlock]'s value unless the response overrides it,
+// empty when neither chose, and each renderer owns what empty means:
+// [Templates] renders its default entry, and a renderer with nothing to
+// choose ignores it.
 type Renderer interface {
-	Render(w io.Writer, name string, data any) error
+	Render(w io.Writer, name, block string, data any) error
 }
 
 // ErrorHandler handles adapter and response failures.
@@ -19,16 +30,26 @@ type ErrorHandler func(http.ResponseWriter, *http.Request, error)
 // ErrNilResponse reports a handler that returned nil, nil.
 var ErrNilResponse = errors.New("web: handler returned nil response and nil error")
 
+// ErrNoTemplateRenderer reports a Template response on an adapter with no renderer.
+var ErrNoTemplateRenderer = errors.New("web: Template response without a renderer (configure WithRenderer)")
+
 // Adapter adapts typed handlers to net/http.
 type Adapter struct {
 	renderer Renderer
+	block    string
 	onError  ErrorHandler
 }
 
 // Option configures an Adapter.
 type Option func(*Adapter)
 
-// WithRenderer supplies the renderer View responses use.
+// WithBlock sets the block every rendered response asks for unless it says
+// otherwise, replacing the renderer's own default.
+func WithBlock(name string) Option {
+	return func(a *Adapter) { a.block = name }
+}
+
+// WithRenderer supplies the adapter's renderer.
 func WithRenderer(r Renderer) Option { return func(a *Adapter) { a.renderer = r } }
 
 // WithErrorHandler replaces the default handler, which logs errors and returns [ErrorStatus] or HTTP 500.
@@ -55,6 +76,19 @@ func ErrorStatus(err error) (int, bool) {
 		return 0, false
 	}
 	return status, true
+}
+
+// applyErrorHeaders sets the headers an error carries, including through
+// wrapping. It runs before the error handler, so a handler that answers
+// differently is still free to overwrite them.
+func applyErrorHeaders(h http.Header, err error) {
+	var he interface{ ResponseHeaders() []headerPair }
+	if !errors.As(err, &he) {
+		return
+	}
+	for _, pair := range he.ResponseHeaders() {
+		h.Set(pair.key, pair.value)
+	}
 }
 
 func defaultErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
@@ -121,6 +155,10 @@ func (a *Adapter) Wrap(fn func(*Request) (Response, error)) http.HandlerFunc {
 				delete(h, key)
 			}
 			maps.Copy(h, snapshot)
+			// After the restore, so a rejection that has something to say
+			// about its own response still says it. A response's headers are
+			// still dropped: these belong to the error, not to what failed.
+			applyErrorHeaders(h, err)
 			a.onError(cw, r, err)
 		}
 	}
@@ -128,15 +166,57 @@ func (a *Adapter) Wrap(fn func(*Request) (Response, error)) http.HandlerFunc {
 
 // respond handles renderer-backed responses through the adapter.
 func (a *Adapter) respond(w http.ResponseWriter, r *http.Request, resp Response) error {
-	if v, ok := resp.(renderResponse); ok {
+	if v, ok := resp.(TemplateResponse); ok {
 		if a.renderer == nil {
-			return errors.New("web: View/Template response without a renderer (configure WithRenderer)")
+			return ErrNoTemplateRenderer
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		return a.renderer.Render(w, v.name, v.data)
+		if v.fragment {
+			return a.renderFragment(w, r, v)
+		}
+		return a.render(w, v.name, a.blockFor(v.block), v.status, v.headers, v.data)
 	}
 	return resp.Respond(w, r)
 }
+
+func (a *Adapter) blockFor(block string) string {
+	if block != "" {
+		return block
+	}
+	return a.block
+}
+
+// render buffers before it writes.
+//
+// A status has to be chosen before any byte reaches the client, and whether a
+// render succeeds is not known until it has run. Rendering into a buffer first
+// is what lets a failure reach the error handler as a clean status rather than
+// arriving under one already sent.
+func (a *Adapter) render(w http.ResponseWriter, name, block string, status int, headers []headerPair, data any) error {
+	buf := renderBuffers.Get().(*bytes.Buffer)
+	defer func() {
+		if buf.Cap() <= maxPooledBuffer {
+			buf.Reset()
+			renderBuffers.Put(buf)
+		}
+	}()
+
+	if err := a.renderer.Render(buf, name, block, data); err != nil {
+		return fmt.Errorf("web: render %s: %w", name, err)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	applyHeaders(w, headers)
+	if status != 0 {
+		w.WriteHeader(status)
+	}
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+// maxPooledBuffer keeps unusually large render buffers out of the pool.
+const maxPooledBuffer = 64 << 10
+
+var renderBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
 // commitWriter tracks whether status or body bytes have been written.
 type commitWriter struct {

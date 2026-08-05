@@ -93,3 +93,13 @@ func (q *DB) Tx(ctx context.Context, fn func(*DB) error) error {
 		return fn(&DB{exec: tx, dialect: q.dialect})
 	})
 }
+
+// UpdateOne is [UpdateOne] with the bound executor and dialect.
+func (q *DB) UpdateOne(ctx context.Context, table, where string, row any, whereArgs ...any) error {
+	return UpdateOne(ctx, q.exec, q.dialect, table, where, row, whereArgs...)
+}
+
+// DeleteOne is [DeleteOne] with the bound executor and dialect.
+func (q *DB) DeleteOne(ctx context.Context, table, where string, whereArgs ...any) error {
+	return DeleteOne(ctx, q.exec, q.dialect, table, where, whereArgs...)
+}

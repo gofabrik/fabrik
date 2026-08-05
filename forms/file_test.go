@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -391,4 +392,133 @@ func TestBind_FailsClosedOnConsumedForm(t *testing.T) {
 			t.Errorf("%s: err = %v, want nil", c.name, err)
 		}
 	}
+}
+
+// pdf is the shortest thing http.DetectContentType calls application/pdf.
+const pdf = "%PDF-1.4\nnot really a document, but it sniffs like one\n"
+
+func bindFile(t *testing.T, content string) forms.File {
+	t.Helper()
+	r := multipartFiles(t, func(w *multipart.Writer) {
+		addFile(t, w, "file", "cv.pdf", content)
+	})
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return form.Data.File
+}
+
+func bindNoFile(t *testing.T) forms.File {
+	t.Helper()
+	r := multipartFiles(t, func(w *multipart.Writer) {})
+	form, err := forms.Bind[uploadInput](r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return form.Data.File
+}
+
+func TestFileReadAll(t *testing.T) {
+	t.Run("returns the content and closes the file", func(t *testing.T) {
+		file := bindFile(t, pdf)
+		got, err := file.ReadAll(1 << 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != pdf {
+			t.Fatalf("content = %q, want %q", got, pdf)
+		}
+	})
+
+	t.Run("exactly the limit is allowed", func(t *testing.T) {
+		file := bindFile(t, "1234567890")
+		got, err := file.ReadAll(10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 10 {
+			t.Fatalf("len = %d, want 10", len(got))
+		}
+	})
+
+	t.Run("one byte over is ErrFileTooLarge", func(t *testing.T) {
+		file := bindFile(t, "12345678901")
+		if _, err := file.ReadAll(10); !errors.Is(err, forms.ErrFileTooLarge) {
+			t.Fatalf("err = %v, want ErrFileTooLarge", err)
+		}
+	})
+
+	t.Run("MaxInt64 limit returns the content", func(t *testing.T) {
+		got, err := bindFile(t, pdf).ReadAll(math.MaxInt64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != pdf {
+			t.Fatalf("content = %q, want %q", got, pdf)
+		}
+	})
+
+	t.Run("closes the descriptor it opened", func(t *testing.T) {
+		r := multipartFiles(t, func(w *multipart.Writer) {
+			addFile(t, w, "file", "cv.pdf", pdf)
+		})
+		// A zero memory threshold spools the upload to disk, so ReadAll
+		// works on a real descriptor the count below can observe.
+		form, err := forms.Bind[uploadInput](r, forms.WithMaxMemory(0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := r.MultipartForm.RemoveAll(); err != nil {
+				t.Error(err)
+			}
+		})
+		before := openFDs(t)
+		if _, err := form.Data.File.ReadAll(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if after := openFDs(t); after != before {
+			t.Fatalf("open descriptors = %d, want %d: ReadAll left its file open", after, before)
+		}
+	})
+
+	t.Run("absent is ErrNoFile", func(t *testing.T) {
+		if _, err := bindNoFile(t).ReadAll(10); !errors.Is(err, forms.ErrNoFile) {
+			t.Fatalf("err = %v, want ErrNoFile", err)
+		}
+	})
+
+	t.Run("empty file reads as empty, not as absent", func(t *testing.T) {
+		got, err := bindFile(t, "").ReadAll(10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("len = %d, want 0", len(got))
+		}
+	})
+
+	t.Run("reading twice is allowed", func(t *testing.T) {
+		file := bindFile(t, pdf)
+		if _, err := file.ReadAll(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		again, err := file.ReadAll(1 << 20)
+		if err != nil {
+			t.Fatalf("second read: %v", err)
+		}
+		if string(again) != pdf {
+			t.Fatalf("second read = %q, want %q", again, pdf)
+		}
+	})
+}
+
+func openFDs(t *testing.T) int {
+	t.Helper()
+	ents, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		t.Skipf("cannot count descriptors: %v", err)
+	}
+	return len(ents)
 }

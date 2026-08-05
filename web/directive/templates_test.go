@@ -17,13 +17,13 @@ func TestCheckEmbedPattern(t *testing.T) {
 		dir  string
 		want string // "" means accepted
 	}{
-		{doc: []string{"//fabrik:templates", "//go:embed all:templates"}, want: ""},
-		{doc: []string{"//fabrik:templates", "//go:embed templates"}, want: "does not cover all:templates"},
-		{doc: []string{"//fabrik:templates", "//go:embed static all:templates"}, want: ""},
-		{doc: []string{"//fabrik:templates dir=views", "//go:embed all:templates"}, dir: "views", want: "does not cover all:views"},
-		{doc: []string{"//fabrik:templates"}, want: "has no //go:embed"},
-		{doc: []string{"//fabrik:templates", "//go:embed \"all:templates\""}, want: ""},
-		{doc: []string{"//fabrik:templates", "//go:embed `all:templates`"}, want: ""},
+		{doc: []string{"//fabrik:web:templates", "//go:embed all:templates"}, want: ""},
+		{doc: []string{"//fabrik:web:templates", "//go:embed templates"}, want: "does not cover all:templates"},
+		{doc: []string{"//fabrik:web:templates", "//go:embed static all:templates"}, want: ""},
+		{doc: []string{"//fabrik:web:templates dir=views", "//go:embed all:templates"}, dir: "views", want: "does not cover all:views"},
+		{doc: []string{"//fabrik:web:templates"}, want: "has no //go:embed"},
+		{doc: []string{"//fabrik:web:templates", "//go:embed \"all:templates\""}, want: ""},
+		{doc: []string{"//fabrik:web:templates", "//go:embed `all:templates`"}, want: ""},
 	}
 	for _, tt := range tests {
 		dir := tt.dir

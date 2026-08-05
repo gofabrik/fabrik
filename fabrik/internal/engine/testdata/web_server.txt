@@ -7,14 +7,12 @@ go 1.27
 require (
 	github.com/gofabrik/fabrik/cli v0.0.0
 	github.com/gofabrik/fabrik/httpserver v0.0.0
-	github.com/gofabrik/fabrik/templates v0.0.0
 	github.com/gofabrik/fabrik/web v0.0.0
 )
 
 replace (
 	github.com/gofabrik/fabrik/cli => CLIDIR
 	github.com/gofabrik/fabrik/httpserver => HTTPSERVERDIR
-	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
 	github.com/gofabrik/fabrik/web => WEBDIR
 )
 -- main.go --
@@ -28,7 +26,7 @@ package web
 
 import "embed"
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 -- web/templates/_default/_layout.html --
@@ -48,13 +46,11 @@ type HomePage struct {
 	Title string
 }
 
-func (HomePage) Template() string { return "home" }
-
 type Handlers struct{}
 
 //fabrik:web GET /home
 func (h *Handlers) Home(req *web.Request) (web.Response, error) {
-	return web.View(HomePage{Title: "hi"}), nil
+	return web.Template("home", HomePage{Title: "hi"}), nil
 }
 
 //fabrik:cli:command
@@ -76,7 +72,6 @@ import (
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/httpserver"
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
 
 	"app/web"
@@ -103,7 +98,7 @@ func run() int {
 				Run: func(ctx cli.Context) (err error) {
 					r := router.New()
 					webHandlers := &web.Handlers{}
-					webTemplates, err := templates.Load(web.Templates, "templates")
+					webTemplates, err := web2.LoadTemplates(web.Templates, "templates")
 					if err != nil {
 						return err
 					}

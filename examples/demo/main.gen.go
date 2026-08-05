@@ -19,7 +19,6 @@ import (
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
 
 	"demo/shared"
@@ -323,19 +322,18 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	appTemplates, err := templates.LoadSources([]templates.Source{
+	sharedErrorPages := &shared.ErrorPages{}
+	appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), templates.FuncMap{
+	}, assetServer.FuncMap(), web2.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -362,11 +360,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
 	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
 	sharedJobsConfig := shared.NewJobsConfig()
 	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
@@ -402,7 +400,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
 	webStatus := &web.Status{
 		Templates: appTemplates,
 	}
@@ -432,6 +429,19 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	webFiles := &web.Files{
 		Store: sharedStorage,
 	}
+	webOverview := &web.Overview{
+		Queries: sharedQueryDB,
+		Store:   sharedStorage,
+	}
+	webGreetingsList := &web.GreetingsList{
+		Queries: sharedQueryDB,
+	}
+	webGreetingEditor := &web.GreetingEditor{
+		Queries: sharedQueryDB,
+	}
+	webLive := &web.Live{
+		Queries: sharedQueryDB,
+	}
 
 	// Middleware
 	r.Use(shared.Logged)
@@ -449,8 +459,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 
 	// Register
 	r.Handle("/assets/", assetServer.Handler())
-	r.NotFound(sharedErrorPages.NotFound)
-	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
+	r.NotFound(adapter.Wrap(sharedErrorPages.NotFound))
+	r.MethodNotAllowed(adapter.Wrap(sharedErrorPages.MethodNotAllowed))
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
 	r.Method("GET", "/uptime", webStatus.Uptime)
@@ -484,6 +494,12 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 
 	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
+	r.Method("GET", "/overview", adapter.Wrap(webOverview.Show))
+	r.Method("GET", "/greetings", adapter.Wrap(webGreetingsList.Show))
+	r.Method("GET", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Edit))
+	r.Method("POST", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Update))
+	r.Method("GET", "/live", adapter.Wrap(webLive.Show))
+	r.Method("GET", "/live/events", adapter.Wrap(webLive.Events))
 	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
 	return httpserver.New(r, sharedHttpServer), jobsManager, cleanup, nil

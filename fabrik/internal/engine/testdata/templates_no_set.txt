@@ -14,11 +14,11 @@ package web
 
 import "net/http"
 
-//fabrik:templates:func
+//fabrik:web:templates:func
 func Shout(s string) string { return s }
 
 //fabrik:http GET /
 func Home(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
-error: web/web.go:5:1: //fabrik:templates:func without any //fabrik:templates declaration
+error: web/web.go:5:1: //fabrik:web:templates:func without any //fabrik:web:templates declaration
   help: declare a template set the helper can be parsed into

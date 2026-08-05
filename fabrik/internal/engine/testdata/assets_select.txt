@@ -8,13 +8,13 @@ go 1.27
 require (
 	github.com/gofabrik/fabrik/assetmapper v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
-	github.com/gofabrik/fabrik/templates v0.0.0
+	github.com/gofabrik/fabrik/web v0.0.0
 )
 
 replace (
 	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
 	github.com/gofabrik/fabrik/config => CONFIGDIR
-	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+	github.com/gofabrik/fabrik/web => WEBDIR
 )
 -- main.go --
 package main
@@ -44,7 +44,7 @@ package web
 
 import "embed"
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 -- web/templates/_default/_layout.html --
@@ -58,12 +58,12 @@ import (
 	"net/http"
 
 	"github.com/gofabrik/fabrik/assetmapper"
-	"github.com/gofabrik/fabrik/templates"
+	fabrikweb "github.com/gofabrik/fabrik/web"
 )
 
 type Handlers struct {
 	Assets    assetmapper.Server
-	Templates *templates.Set
+	Templates *fabrikweb.Templates
 }
 
 //fabrik:http GET /{$}
@@ -81,7 +81,7 @@ import (
 	"github.com/gofabrik/fabrik/assetmapper"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
+	web2 "github.com/gofabrik/fabrik/web"
 
 	"app/web"
 )
@@ -137,7 +137,7 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		webTemplates, err := templates.Load(web.Templates, "templates", assetServer.FuncMap())
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", assetServer.FuncMap())
 		if err != nil {
 			return err
 		}

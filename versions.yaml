@@ -20,14 +20,13 @@ module-sets:
       - github.com/gofabrik/fabrik/mail
       - github.com/gofabrik/fabrik/migrations
       - github.com/gofabrik/fabrik/migrations/directive
+      - github.com/gofabrik/fabrik/paging
       - github.com/gofabrik/fabrik/query
       - github.com/gofabrik/fabrik/ratelimit
       - github.com/gofabrik/fabrik/router
       - github.com/gofabrik/fabrik/router/directive
       - github.com/gofabrik/fabrik/session
       - github.com/gofabrik/fabrik/storage
-      - github.com/gofabrik/fabrik/templates
-      - github.com/gofabrik/fabrik/templates/directive
       - github.com/gofabrik/fabrik/validation
       - github.com/gofabrik/fabrik/web
       - github.com/gofabrik/fabrik/web/directive
