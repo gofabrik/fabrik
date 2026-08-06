@@ -6,15 +6,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"iter"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,14 +26,16 @@ import (
 
 // Store stores blobs in an S3-compatible bucket using path-style SigV4 requests.
 type Store struct {
-	endpoint     string
-	bucket       string
-	creds        credentials
-	client       *http.Client
-	now          func() time.Time
-	opTimeout    time.Duration
-	drainLimit   int64
-	maxListPages int
+	endpoint      string
+	bucket        string
+	creds         credentials
+	client        *http.Client
+	now           func() time.Time
+	opTimeout     time.Duration
+	drainLimit    int64
+	maxListPages  int
+	spoolDir      string
+	maxSpoolBytes int64
 }
 
 // Options configures New.
@@ -39,30 +44,33 @@ type Options struct {
 	Bucket    string
 	AccessKey string
 	SecretKey string
-	// SessionToken is the optional STS token for temporary credentials; when
-	// set it is sent and signed.
+	// SessionToken is the optional signed STS token for temporary credentials.
 	SessionToken string
 	Region       string // defaults to us-east-1
-	// Client supplies Transport, Timeout, and Jar; the store copies those
-	// and always refuses redirects. Defaults to http.DefaultClient.
+	// Client supplies Transport, Timeout, and Jar. New copies these fields and
+	// disables redirects. Nil uses http.DefaultClient.
 	Client *http.Client
 	// AllowInsecure permits HTTP endpoints, which provide no transport integrity
 	// for UNSIGNED-PAYLOAD bodies.
 	AllowInsecure bool
-	// OperationTimeout bounds one operation end to end: the request, releasing
-	// the response, and decoding it. Zero means 30s, negative is a construction
-	// error, and there is no unlimited value. List applies it to each page
-	// exchange. Put's budget encloses the whole upload, so callers sending
-	// large objects raise it.
+	// OperationTimeout bounds a request through response release and decoding,
+	// and bounds the entire Put upload. List applies it separately to each page.
+	// Zero means 30s, negative is invalid, and no value disables the timeout.
 	OperationTimeout time.Duration
 	// DrainLimit caps the bytes read while releasing a response body. Zero
-	// means 64 KiB, negative is a construction error.
+	// means 64 KiB; negative is invalid.
 	DrainLimit int64
-	// MaxListPages caps how many pages one List fetches before it gives up on a
-	// bucket that never stops paginating. Zero means 1,000, negative is a
-	// construction error. A List blocks at most MaxListPages*OperationTimeout,
-	// since the budget bounds each page exchange.
+	// MaxListPages caps pages per List and therefore bounds its total time by
+	// MaxListPages*OperationTimeout. Zero means 1,000; negative is invalid.
 	MaxListPages int
+	// SpoolDir stores temporary files for unknown-length uploads. Empty uses
+	// os.TempDir(); a configured directory must already exist.
+	SpoolDir string
+	// MaxSpoolBytes caps disk use for one unknown-length upload. Exceeding it
+	// returns storage.ErrTooLarge before sending a request. Known-length readers
+	// bypass the cap. Zero means 1 GiB, negative is invalid, and no value disables
+	// the limit.
+	MaxSpoolBytes int64
 }
 
 // New returns an S3 store for an existing bucket.
@@ -74,7 +82,7 @@ func New(opts Options) (*Store, error) {
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("storage: New: invalid endpoint %q", opts.Endpoint)
 	}
-	// Validate the raw endpoint to reject empty query or fragment suffixes.
+	// url.Parse accepts empty query and fragment suffixes, which endpoints forbid.
 	if u.User != nil || strings.ContainsAny(opts.Endpoint, "?#") ||
 		u.Path != "" || u.Hostname() == "" {
 		return nil, fmt.Errorf("storage: New: endpoint %q must be scheme://host[:port] only", opts.Endpoint)
@@ -103,6 +111,18 @@ func New(opts Options) (*Store, error) {
 	if opts.MaxListPages < 0 {
 		return nil, fmt.Errorf("storage: New: MaxListPages %d must be zero or positive", opts.MaxListPages)
 	}
+	if opts.MaxSpoolBytes < 0 {
+		return nil, fmt.Errorf("storage: New: MaxSpoolBytes %d must be zero or positive", opts.MaxSpoolBytes)
+	}
+	if opts.SpoolDir != "" {
+		fi, err := os.Stat(opts.SpoolDir)
+		if err != nil {
+			return nil, fmt.Errorf("storage: New: SpoolDir %q: %w", opts.SpoolDir, err)
+		}
+		if !fi.IsDir() {
+			return nil, fmt.Errorf("storage: New: SpoolDir %q is not a directory", opts.SpoolDir)
+		}
+	}
 	opTimeout := opts.OperationTimeout
 	if opTimeout == 0 {
 		opTimeout = defaultOperationTimeout
@@ -115,6 +135,10 @@ func New(opts Options) (*Store, error) {
 	if maxListPages == 0 {
 		maxListPages = defaultMaxListPages
 	}
+	maxSpoolBytes := opts.MaxSpoolBytes
+	if maxSpoolBytes == 0 {
+		maxSpoolBytes = defaultMaxSpoolBytes
+	}
 	region := opts.Region
 	if region == "" {
 		region = "us-east-1"
@@ -123,8 +147,7 @@ func New(opts Options) (*Store, error) {
 	if base == nil {
 		base = http.DefaultClient
 	}
-	// Copy the client and refuse redirects, which could replay credentials or
-	// bodies to another endpoint.
+	// Redirects could replay signed credentials or bodies to another endpoint.
 	client := &http.Client{
 		Transport:     base.Transport,
 		Timeout:       base.Timeout,
@@ -140,11 +163,13 @@ func New(opts Options) (*Store, error) {
 			sessionToken: opts.SessionToken,
 			region:       region,
 		},
-		client:       client,
-		now:          time.Now,
-		opTimeout:    opTimeout,
-		drainLimit:   drainLimit,
-		maxListPages: maxListPages,
+		client:        client,
+		now:           time.Now,
+		opTimeout:     opTimeout,
+		drainLimit:    drainLimit,
+		maxListPages:  maxListPages,
+		spoolDir:      opts.SpoolDir,
+		maxSpoolBytes: maxSpoolBytes,
 	}, nil
 }
 
@@ -152,22 +177,30 @@ const (
 	defaultOperationTimeout = 30 * time.Second
 	defaultDrainLimit       = 64 << 10
 	defaultMaxListPages     = 1000
+	defaultMaxSpoolBytes    = 1 << 30
 )
 
-// maxListEntries is the object count ListObjectsV2 returns in one page; a page
-// claiming more is malformed or hostile and is rejected before the surplus is
-// retained.
+// S3 limits each ListObjectsV2 page to 1,000 objects.
 const maxListEntries = 1000
 
-// maxListPageBytes caps the wire size the list decoder will read from one page.
 // A page holds at most 1,000 objects and a valid 1,024-byte key XML-escapes to
-// at most 5,120 bytes, so 1,000 keys cost about 5 MiB, plus each entry's Size,
-// LastModified, ETag, and StorageClass tags. 8 MiB covers a maximal legitimate
-// page with slack; a page that runs past it comes from a misbehaving endpoint.
+// at most 5,120 bytes, so keys cost about 5 MiB; 8 MiB leaves room for the
+// remaining metadata.
 const maxListPageBytes = 8 << 20
 
-// listPageBufSize is the decoder's read-ahead granularity over the page body.
 const listPageBufSize = 4096
+
+// Error decoding uses a protocol-sized cap independent of connection draining.
+const maxErrorDocBytes = 16 << 10
+
+// Legitimate listings nest at most four levels; the higher cap bounds parser state.
+const maxListXMLDepth = 16
+
+// S3 tags and text runs are only a few kilobytes; larger tokens are malformed.
+const maxListTokenBytes = 64 << 10
+
+// Legitimate listings use only the root xmlns attribute.
+const maxListElementAttrs = 8
 
 var errNoRedirects = fmt.Errorf("storage: s3 endpoint redirected; configure the correct endpoint")
 
@@ -175,8 +208,6 @@ var errNoRedirects = fmt.Errorf("storage: s3 endpoint redirected; configure the 
 // context, and wraps context.DeadlineExceeded so callers classify it as one.
 var errBudgetExceeded = fmt.Errorf("operation budget exceeded: %w", context.DeadlineExceeded)
 
-// budget derives the deadline every operation runs under, covering the
-// request, the drain, and the decode.
 func (s *Store) budget(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, s.opTimeout)
 }
@@ -197,7 +228,6 @@ func uriEscape(s string) string {
 	return b.String()
 }
 
-// objectURL applies the same segment escaping used by SigV4.
 func (s *Store) objectURL(key string) string {
 	segs := strings.Split(key, "/")
 	for i, seg := range segs {
@@ -224,7 +254,7 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) (retErr error)
 	ctx, cancel := s.budget(ctx)
 	defer cancel()
 	// S3 PutObject requires Content-Length, so unknown-length readers spool to disk.
-	body, length, cleanup, err := knownLength(ctx, r)
+	body, length, cleanup, err := s.knownLength(ctx, r)
 	if err != nil {
 		return fmt.Errorf("storage: put %q: %w", key, err)
 	}
@@ -262,16 +292,13 @@ func (s *Store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := opCheck(ctx, "open", key); err != nil {
 		return nil, err
 	}
-	// The budget covers the handshake and the error paths; the returned body
-	// then answers to the caller's context and to its own Close, so a download
-	// slower than the budget is not cut off.
+	// The internal budget covers the handshake and errors, not reading a successful body.
 	opCtx, cancel := context.WithCancelCause(ctx)
 	timer := time.AfterFunc(s.opTimeout, func() { cancel(errBudgetExceeded) })
 	resp, err := s.do(opCtx, "GET", s.objectURL(key), nil, emptyPayloadSHA)
 	if err != nil {
 		timer.Stop()
-		// The transport reports both budget expiry and caller cancellation as
-		// a canceled context, so the cause tells them apart.
+		// The cancellation cause distinguishes the internal budget from the caller.
 		if cause := context.Cause(opCtx); errors.Is(cause, errBudgetExceeded) {
 			err = cause
 		}
@@ -279,7 +306,7 @@ func (s *Store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("storage: open %q: %w", key, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		// The error paths stay inside the budget, so their drain cannot stall.
+		// Error response draining remains inside the operation budget.
 		status := fmt.Errorf("storage: open %q: s3 status %d", key, resp.StatusCode)
 		if resp.StatusCode == http.StatusNotFound {
 			status = fmt.Errorf("storage: open %q: %w", key, storage.ErrNotExist)
@@ -289,8 +316,7 @@ func (s *Store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 		cancel(nil)
 		return nil, errors.Join(status, drainErr)
 	}
-	// A timer that cannot be stopped has already fired, so the response raced
-	// the budget and lost.
+	// A fired timer makes the response late even if the transport returned it.
 	if !timer.Stop() {
 		drainErr := s.drainFor("open", key, resp)
 		cancel(nil)
@@ -299,7 +325,6 @@ func (s *Store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	return detachedBody{ReadCloser: resp.Body, cancel: cancel}, nil
 }
 
-// detachedBody releases the operation context when the caller is done reading.
 type detachedBody struct {
 	io.ReadCloser
 	cancel context.CancelCauseFunc
@@ -374,7 +399,9 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[storage.Info,
 			return
 		}
 		token := ""
-		seen := map[string]bool{}
+		// Tokens are retained as fixed-size digests so a hostile endpoint cannot
+		// grow the seen set by the size of its tokens across a long listing.
+		seen := map[[sha256.Size]byte]bool{}
 		pages := 0
 		for {
 			pages++
@@ -404,11 +431,27 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[storage.Info,
 				return
 			}
 			entries, truncated, next, decodeErr := s.listPage(resp.Body)
-			// The decoder reads only its own page, so the drain releases whatever
-			// the endpoint sent past it, up to DrainLimit. Both finish before any
-			// entry is yielded, so the page budget cannot race the caller.
+			// Validate and release the page within its budget before yielding entries.
 			drainErr := s.drainFor("list", prefix, resp)
 			cancel()
+			if err := errors.Join(decodeErr, drainErr); err != nil {
+				fail(err)
+				return
+			}
+			if truncated {
+				if next == "" {
+					fail(errors.New("truncated response has no continuation token"))
+					return
+				}
+				if seen[sha256.Sum256([]byte(next))] {
+					fail(errors.New("endpoint repeated a continuation token"))
+					return
+				}
+				if pages >= s.maxListPages {
+					fail(fmt.Errorf("listing exceeded %d pages", s.maxListPages))
+					return
+				}
+			}
 			for _, info := range entries {
 				if err := ctx.Err(); err != nil {
 					fail(err)
@@ -418,105 +461,147 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[storage.Info,
 					return
 				}
 			}
-			if err := errors.Join(decodeErr, drainErr); err != nil {
-				fail(err)
-				return
-			}
 			if !truncated {
 				return
 			}
-			if next == "" {
-				fail(errors.New("truncated response has no continuation token"))
-				return
-			}
-			if seen[next] {
-				fail(fmt.Errorf("continuation token %q repeated", next))
-				return
-			}
-			if pages >= s.maxListPages {
-				fail(fmt.Errorf("listing exceeded %d pages", s.maxListPages))
-				return
-			}
-			seen[next] = true
+			seen[sha256.Sum256([]byte(next))] = true
 			token = next
 		}
 	}
 }
 
-// listPage decodes one ListObjectsV2 page into a bounded slice so the caller
-// releases the body and its page budget before yielding any entry, keeping
-// caller processing time off the budget. It reads no further than
-// maxListPageBytes and rejects a page carrying more than maxListEntries before
-// the surplus entry is decoded; entries decoded before an error are still
-// returned. It reports whether the page is truncated, its continuation token,
-// and any decode error.
+// listPage buffers a bounded ListObjectsV2 page for validation before yielding.
+// Entries returned with an error are incomplete and must be discarded.
 func (s *Store) listPage(body io.Reader) (entries []storage.Info, truncated bool, next string, err error) {
-	// A dedicated buffer keeps the read-ahead granularity ours: bytes it pulls
-	// past the document were already read off the wire and are dropped, and the
-	// release then reads up to DrainLimit more from the body itself.
-	d := xml.NewDecoder(bufio.NewReaderSize(io.LimitReader(body, maxListPageBytes), listPageBufSize))
-	depth := 0
-	sawRoot := false
+	// RawToken avoids namespace state. The fixed buffer bounds read-ahead, while
+	// spanReader bounds individual tokens including that read-ahead.
+	span := &spanReader{r: io.LimitReader(body, maxListPageBytes), allow: maxListTokenBytes}
+	d := xml.NewDecoder(bufio.NewReaderSize(span, listPageBufSize))
+	var (
+		sawRoot    bool
+		depth      int
+		open       [maxListXMLDepth]xml.Name
+		inContents bool
+		entry      storage.Info
+		field      string
+		text       strings.Builder
+	)
 	for {
-		tok, terr := d.Token()
+		tok, terr := d.RawToken()
+		span.mark()
 		if terr == io.EOF {
 			if !sawRoot {
 				return entries, truncated, next, fmt.Errorf("empty list response")
 			}
+			if depth != 0 {
+				return entries, truncated, next, fmt.Errorf("response ended with %q unclosed", open[depth-1].Local)
+			}
 			return entries, truncated, next, nil
 		}
 		if terr != nil {
+			if errors.Is(terr, errTokenTooLong) {
+				return entries, truncated, next, errTokenTooLong
+			}
 			return entries, truncated, next, terr
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if !sawRoot {
+			if len(t.Attr) > maxListElementAttrs {
+				return entries, truncated, next, fmt.Errorf("element %q carries more than %d attributes", t.Name.Local, maxListElementAttrs)
+			}
+			if depth == maxListXMLDepth {
+				return entries, truncated, next, fmt.Errorf("response nests deeper than %d elements", maxListXMLDepth)
+			}
+			open[depth] = t.Name
+			depth++
+			switch {
+			case !sawRoot:
 				if t.Name.Local != "ListBucketResult" {
 					return entries, truncated, next, fmt.Errorf("unexpected root element %q", t.Name.Local)
 				}
 				sawRoot = true
-				depth++
-				continue
-			}
-			switch t.Name.Local {
-			case "Contents":
+			case field != "":
+				return entries, truncated, next, fmt.Errorf("unexpected element %q inside %s", t.Name.Local, field)
+			case depth == 2 && t.Name.Local == "Contents":
 				if len(entries) == maxListEntries {
 					return entries, truncated, next, fmt.Errorf("page returned more than %d entries", maxListEntries)
 				}
-				var c struct {
-					Key          string
-					Size         int64
-					LastModified time.Time
-				}
-				if derr := d.DecodeElement(&c, &t); derr != nil {
-					return entries, truncated, next, derr
-				}
-				entries = append(entries, storage.Info{Key: c.Key, Size: c.Size, ModTime: c.LastModified})
-			case "IsTruncated":
-				if derr := d.DecodeElement(&truncated, &t); derr != nil {
-					return entries, truncated, next, derr
-				}
-			case "NextContinuationToken":
-				if derr := d.DecodeElement(&next, &t); derr != nil {
-					return entries, truncated, next, derr
-				}
-			default:
-				depth++
+				inContents = true
+				entry = storage.Info{}
+			case inContents && depth == 3 && (t.Name.Local == "Key" || t.Name.Local == "Size" || t.Name.Local == "LastModified"),
+				!inContents && depth == 2 && (t.Name.Local == "IsTruncated" || t.Name.Local == "NextContinuationToken"):
+				field = t.Name.Local
+				text.Reset()
+			}
+		case xml.CharData:
+			if field != "" {
+				text.Write(t)
 			}
 		case xml.EndElement:
-			// The root closing tag returns depth to zero; stopping there leaves any
-			// trailing bytes to the drain instead of decoding into them.
-			depth--
-			if depth == 0 {
+			if depth == 0 || open[depth-1] != t.Name {
+				return entries, truncated, next, fmt.Errorf("unexpected closing element %q", t.Name.Local)
+			}
+			switch {
+			case field != "":
+				if perr := setListField(&entry, &truncated, &next, field, text.String()); perr != nil {
+					return entries, truncated, next, perr
+				}
+				field = ""
+			case inContents && depth == 2:
+				entries = append(entries, entry)
+				inContents = false
+			case depth == 1:
+				// Trailing bytes belong to the drain, not the decoder.
 				return entries, truncated, next, nil
 			}
+			depth--
 		}
 	}
 }
 
-// drainFor releases a response body, reading no more than DrainLimit. What is
-// left unread costs the connection, which net/http then tears down instead of
-// reusing.
+var errTokenTooLong = fmt.Errorf("element exceeds %d bytes", maxListTokenBytes)
+
+// spanReader limits bytes consumed between tokens, plus one buffered read.
+type spanReader struct {
+	r     io.Reader
+	n     int64
+	allow int64
+}
+
+func (s *spanReader) Read(p []byte) (int, error) {
+	if s.n > s.allow {
+		return 0, errTokenTooLong
+	}
+	n, err := s.r.Read(p)
+	s.n += int64(n)
+	return n, err
+}
+
+func (s *spanReader) mark() {
+	s.allow = s.n + maxListTokenBytes
+}
+
+func setListField(entry *storage.Info, truncated *bool, next *string, field, raw string) error {
+	var err error
+	switch field {
+	case "Key":
+		entry.Key = raw
+	case "Size":
+		entry.Size, err = strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	case "LastModified":
+		entry.ModTime, err = time.Parse(time.RFC3339, strings.TrimSpace(raw))
+	case "IsTruncated":
+		*truncated, err = strconv.ParseBool(strings.TrimSpace(raw))
+	case "NextContinuationToken":
+		*next = raw
+	}
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", field, err)
+	}
+	return nil
+}
+
+// drainFor reads at most DrainLimit; an incompletely read connection is not reused.
 func (s *Store) drainFor(op, key string, resp *http.Response) error {
 	_, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, s.drainLimit))
 	closeErr := resp.Body.Close()
@@ -548,7 +633,8 @@ func (s *Store) CreateBucket(ctx context.Context) error {
 	}
 	if resp.StatusCode == http.StatusConflict {
 		var e struct{ Code string }
-		decodeErr := xml.NewDecoder(io.LimitReader(resp.Body, s.drainLimit)).Decode(&e)
+		// DrainLimit must not determine whether a valid conflict body is recognized.
+		decodeErr := xml.NewDecoder(io.LimitReader(resp.Body, maxErrorDocBytes)).Decode(&e)
 		drainErr := s.drainFor("create bucket", s.bucket, resp)
 		if decodeErr == nil && e.Code == "BucketAlreadyOwnedByYou" {
 			return drainErr
@@ -606,9 +692,9 @@ func isIPv4Shaped(b string) bool {
 	return true
 }
 
-// knownLength returns a non-closing body, length, and cleanup function,
-// spooling unknown-length readers.
-func knownLength(ctx context.Context, r io.Reader) (io.Reader, int64, func() error, error) {
+// knownLength passes known-length readers through and spools all others under
+// MaxSpoolBytes.
+func (s *Store) knownLength(ctx context.Context, r io.Reader) (io.Reader, int64, func() error, error) {
 	none := func() error { return nil }
 	switch v := r.(type) {
 	case *bytes.Reader:
@@ -624,14 +710,14 @@ func knownLength(ctx context.Context, r io.Reader) (io.Reader, int64, func() err
 			}
 		}
 	}
-	spool, err := os.CreateTemp("", "storage-s3-put-*")
+	spool, err := os.CreateTemp(s.spoolDir, "storage-s3-put-*")
 	if err != nil {
 		return nil, 0, none, err
 	}
 	cleanup := func() error {
 		return errors.Join(spool.Close(), os.Remove(spool.Name()))
 	}
-	if err := spoolCopy(ctx, spool, r); err != nil {
+	if err := spoolCopy(ctx, spool, r, s.maxSpoolBytes); err != nil {
 		return nil, 0, none, errors.Join(err, cleanup())
 	}
 	length, err := spool.Seek(0, io.SeekCurrent)
@@ -644,15 +730,24 @@ func knownLength(ctx context.Context, r io.Reader) (io.Reader, int64, func() err
 	return noClose{spool}, length, cleanup, nil
 }
 
-// spoolCopy checks ctx between reads.
-func spoolCopy(ctx context.Context, dst io.Writer, src io.Reader) error {
+// spoolCopy reads one byte past the limit to distinguish an exact fit from overflow.
+func spoolCopy(ctx context.Context, dst io.Writer, src io.Reader, limit int64) error {
+	read := limit
+	if read < math.MaxInt64 {
+		read++
+	}
+	capped := io.LimitReader(src, read)
 	buf := make([]byte, 32*1024)
+	var written int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		n, err := src.Read(buf)
+		n, err := capped.Read(buf)
 		if n > 0 {
+			if written += int64(n); written > limit {
+				return fmt.Errorf("%w: unknown-length body exceeds the %d byte spool limit", storage.ErrTooLarge, limit)
+			}
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return werr
 			}

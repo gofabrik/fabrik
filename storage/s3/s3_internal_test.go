@@ -9,10 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gofabrik/fabrik/storage"
 )
 
 func testS3(t *testing.T, region string, handler http.HandlerFunc) *Store {
@@ -20,8 +24,6 @@ func testS3(t *testing.T, region string, handler http.HandlerFunc) *Store {
 	return testS3Opts(t, Options{Region: region}, handler)
 }
 
-// testS3Opts fills in the endpoint and credentials so a test states only the
-// options it exercises.
 func testS3Opts(t *testing.T, opts Options, handler http.HandlerFunc) *Store {
 	t.Helper()
 	srv := httptest.NewTestServer(t, handler)
@@ -83,7 +85,6 @@ func TestCreateBucketConflictSemantics(t *testing.T) {
 }
 
 func TestRedirectsAreRefused(t *testing.T) {
-	// Redirect within the test server so a followed request reaches /steal.
 	var stolen int
 	s := testS3(t, "us-east-1", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/steal" {
@@ -93,7 +94,6 @@ func TestRedirectsAreRefused(t *testing.T) {
 		}
 		http.Redirect(w, r, "/steal", http.StatusTemporaryRedirect)
 	})
-	// Redirects must not be followed and replay a signed request elsewhere.
 	if err := s.Put(context.Background(), "k", strings.NewReader("x")); err == nil {
 		t.Fatal("redirected put must fail")
 	}
@@ -156,7 +156,6 @@ func TestPutSendsEmptyObjectLength(t *testing.T) {
 	if _, err := past.Seek(100, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
-	// Zero-byte sources must use Content-Length: 0, not unknown-length framing.
 	for name, r := range map[string]io.Reader{
 		"sized":    strings.NewReader(""),
 		"spooled":  struct{ io.Reader }{strings.NewReader("")},
@@ -197,7 +196,7 @@ func TestPutDoesNotCloseCallerFile(t *testing.T) {
 	if err := s.Put(context.Background(), "k", f); err != nil {
 		t.Fatal(err)
 	}
-	// Shield the file because net/http closes io.ReadCloser request bodies.
+	// Put shields caller-owned files because net/http closes io.ReadCloser bodies.
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		t.Fatalf("caller's file closed by Put: %v", err)
 	}
@@ -244,8 +243,7 @@ func TestNewRejectsBadEndpointsAndBuckets(t *testing.T) {
 	}
 }
 
-// testBudget is short enough to keep the bound tests quick and long enough to
-// survive a loaded machine.
+// testBudget allows scheduler jitter without making bound tests slow.
 const testBudget = 100 * time.Millisecond
 
 // stall blocks until the client abandons the exchange. The ceiling keeps a
@@ -260,8 +258,7 @@ func stall(r *http.Request) {
 	}
 }
 
-// bounded runs op off the test goroutine so an unbounded operation fails the
-// test instead of hanging it.
+// bounded keeps an unbounded operation from hanging the test goroutine.
 func bounded(t *testing.T, op func() error) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -276,8 +273,6 @@ func bounded(t *testing.T, op func() error) error {
 }
 
 func TestOperationBudgetBoundsStalledHandshake(t *testing.T) {
-	// Every operation gives up at its own budget when the endpoint accepts the
-	// request and never answers. List budgets each page exchange.
 	ops := []struct {
 		name string
 		run  func(context.Context, *Store) error
@@ -317,9 +312,6 @@ func TestOperationBudgetBoundsStalledHandshake(t *testing.T) {
 }
 
 func TestOperationBudgetBoundsStalledBody(t *testing.T) {
-	// The budget covers draining and decoding too, on success and error status
-	// alike. Stat is absent because a HEAD response has no body to stall; its
-	// handshake bound is pinned above.
 	cases := []struct {
 		name   string
 		status int
@@ -374,9 +366,6 @@ func TestOperationBudgetBoundsStalledBody(t *testing.T) {
 }
 
 func TestDrainStopsAtDrainLimit(t *testing.T) {
-	// An oversized error body is abandoned at the cap: the endpoint cannot push
-	// the rest of it, and the connection is spent because net/http will not
-	// reuse one whose body was left unread.
 	const limit = 16
 	for _, tc := range []struct {
 		name      string
@@ -391,7 +380,7 @@ func TestDrainStopsAtDrainLimit(t *testing.T) {
 			var conns, wrote atomic.Int64
 			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
-				// A write cut short by the client is what the cap is for.
+				// Short writes are expected when the client stops at the cap.
 				n, _ := io.WriteString(w, strings.Repeat("x", tc.body))
 				wrote.Add(int64(n))
 			}))
@@ -425,8 +414,6 @@ func TestDrainStopsAtDrainLimit(t *testing.T) {
 }
 
 func TestOpenDetachesSlowBodyFromBudget(t *testing.T) {
-	// The budget covers the handshake only; a download slower than the budget
-	// must read to the end.
 	const chunks = 5
 	s := testS3Opts(t, Options{OperationTimeout: testBudget}, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -457,8 +444,6 @@ func TestOpenDetachesSlowBodyFromBudget(t *testing.T) {
 }
 
 func TestOpenBudgetExpiryIsDeadlineExceeded(t *testing.T) {
-	// Budget expiry classifies as a deadline, not as a cancellation, so callers
-	// can tell it from their own.
 	s := testS3Opts(t, Options{OperationTimeout: testBudget}, func(w http.ResponseWriter, r *http.Request) {
 		stall(r)
 	})
@@ -475,8 +460,6 @@ func TestOpenBudgetExpiryIsDeadlineExceeded(t *testing.T) {
 }
 
 func TestOpenCallerCancelPassesThrough(t *testing.T) {
-	// Caller cancellation must reach the caller unchanged, not disguised as the
-	// package's budget.
 	s := testS3Opts(t, Options{OperationTimeout: 5 * time.Second}, func(w http.ResponseWriter, r *http.Request) {
 		stall(r)
 	})
@@ -492,8 +475,6 @@ func TestOpenCallerCancelPassesThrough(t *testing.T) {
 	}
 }
 
-// captureCtx reports the context the transport sees, which is the store's
-// per-operation context.
 type captureCtx struct {
 	rt  http.RoundTripper
 	ctx chan context.Context
@@ -505,8 +486,6 @@ func (c captureCtx) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestOpenReleasesContextOnClose(t *testing.T) {
-	// The detached body keeps the operation context alive, so its Close must
-	// release it.
 	reqCtx := make(chan context.Context, 1)
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.WriteString(w, "payload"); err != nil {
@@ -567,11 +546,41 @@ func TestNewRejectsNegativeBounds(t *testing.T) {
 	if _, err := New(negativePages); err == nil {
 		t.Fatal("negative MaxListPages accepted")
 	}
+	negativeSpool := base
+	negativeSpool.MaxSpoolBytes = -1
+	if _, err := New(negativeSpool); err == nil {
+		t.Fatal("negative MaxSpoolBytes accepted")
+	}
 }
 
-// TestOpenErrorDrainClassification pins that a drain interrupted mid error
-// body keeps the budget-vs-caller distinction: expiry reads as
-// DeadlineExceeded, a caller cancel as Canceled and never as the budget.
+func TestNewRequiresExistingSpoolDir(t *testing.T) {
+	base := Options{
+		Endpoint: "http://host:9000", Bucket: "bkt",
+		AccessKey: "a", SecretKey: "s", AllowInsecure: true,
+	}
+	notADir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		dir     string
+		wantErr bool
+	}{
+		{"missing", filepath.Join(t.TempDir(), "absent"), true},
+		{"not a directory", notADir, true},
+		{"unset", "", false},
+		{"existing", t.TempDir(), false},
+	} {
+		o := base
+		o.SpoolDir = tc.dir
+		_, err := New(o)
+		if gotErr := err != nil; gotErr != tc.wantErr {
+			t.Fatalf("SpoolDir %s: error = %v, wantErr %v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
 func TestOpenErrorDrainClassification(t *testing.T) {
 	newStalled := func() *Store {
 		return testS3Opts(t, Options{OperationTimeout: testBudget}, func(w http.ResponseWriter, r *http.Request) {
@@ -605,14 +614,7 @@ func TestOpenErrorDrainClassification(t *testing.T) {
 	})
 }
 
-// TestDrainReadsExactlyTheCap counts the bytes the client reads from each
-// oversized response body: a pure drain reads exactly DrainLimit (a smaller or
-// omitted drain fails the floor, a larger one the ceiling), and the 409 paths
-// read exactly twice the cap: a capped decode, then the capped release. Each
-// case also asserts the operation outcome, so a drain skipped by an early
-// return cannot pass. A successful list page reads exactly its decoded bytes
-// plus one capped release: the decoder consumes only its own document and the
-// drain frees at most the cap of the trailing bytes.
+// In-memory bodies make decoder read-ahead deterministic enough to assert exact caps.
 func TestDrainReadsExactlyTheCap(t *testing.T) {
 	const limit = 128
 	ownedXML := "<Error><Code>BucketAlreadyOwnedByYou</Code></Error>"
@@ -640,9 +642,7 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 			}
 			return nil
 		}},
-		// Served from memory so the decoder's one buffer fill is a full
-		// listPageBufSize deterministically (TCP may deliver short reads); the
-		// release then reads exactly DrainLimit more from the body.
+		// The decoder reads one full buffer before DrainLimit applies.
 		{"list trailing success", http.StatusOK, listXML + garbage, listPageBufSize + limit, false, func(ctx context.Context, s *Store) error {
 			for _, err := range s.List(ctx, "") {
 				if err != nil {
@@ -652,8 +652,9 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 			return nil
 		}},
 		{"create bucket trailing success", http.StatusOK, garbage, limit, false, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
-		{"create bucket conflict", http.StatusConflict, garbage, 2 * limit, true, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
-		{"create bucket owned success", http.StatusConflict, ownedXML + garbage, 2 * limit, false, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
+		// Conflict decoding uses its own cap before release applies DrainLimit.
+		{"create bucket conflict", http.StatusConflict, garbage, maxErrorDocBytes + limit, true, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
+		{"create bucket owned success", http.StatusConflict, ownedXML + garbage, 4096 + limit, false, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
 		{"create bucket error", http.StatusInternalServerError, garbage, limit, true, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
 	}
 	for _, tc := range cases {
@@ -665,7 +666,7 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			client := srv.Client()
-			if strings.HasPrefix(tc.name, "list trailing") {
+			if strings.HasPrefix(tc.name, "list trailing") || strings.HasPrefix(tc.name, "create bucket conflict") || strings.HasPrefix(tc.name, "create bucket owned") {
 				client.Transport = cannedTransport{status: tc.status, body: tc.body, read: &read}
 			} else {
 				client.Transport = countingTransport{base: client.Transport, read: &read}
@@ -688,9 +689,7 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 	}
 }
 
-// listPageXML builds a ListObjectsV2 page. NextContinuationToken is emitted
-// before Contents so the tests also exercise element order the loop must not
-// depend on.
+// Pagination metadata precedes entries to exercise order-independent decoding.
 func listPageXML(entries []string, truncated bool, next string) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` +
@@ -706,18 +705,14 @@ func listPageXML(entries []string, truncated bool, next string) string {
 	return b.String()
 }
 
-// listServer answers each list request with page(token), where token is the
-// incoming continuation token ("" on the first request).
+// Write errors are expected when the client rejects a page before it is fully sent.
 func listServer(t *testing.T, opts Options, page func(token string) string) *Store {
 	t.Helper()
 	return testS3Opts(t, opts, func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.WriteString(w, page(r.URL.Query().Get("continuation-token"))); err != nil {
-			t.Errorf("write list page: %v", err)
-		}
+		io.WriteString(w, page(r.URL.Query().Get("continuation-token")))
 	})
 }
 
-// collectList drains a listing into its keys and the first error it yields.
 func collectList(s *Store, prefix string) (keys []string, err error) {
 	for info, e := range s.List(context.Background(), prefix) {
 		if e != nil {
@@ -730,8 +725,6 @@ func collectList(s *Store, prefix string) (keys []string, err error) {
 }
 
 func TestListRejectsOverfullPage(t *testing.T) {
-	// A page must not exceed the protocol maximum; the surplus entry is rejected
-	// before it is retained, and the entries already yielded stay yielded.
 	entries := make([]string, maxListEntries+1)
 	for i := range entries {
 		entries[i] = fmt.Sprintf("k%d", i)
@@ -743,8 +736,8 @@ func TestListRejectsOverfullPage(t *testing.T) {
 	if err == nil {
 		t.Fatal("overfull page must error")
 	}
-	if len(keys) != maxListEntries {
-		t.Fatalf("yielded %d entries, want exactly %d before rejection", len(keys), maxListEntries)
+	if len(keys) != 0 {
+		t.Fatalf("yielded %d entries from a failed page, want none", len(keys))
 	}
 	if want := fmt.Sprintf("more than %d entries", maxListEntries); !strings.Contains(err.Error(), want) {
 		t.Fatalf("error %q does not name the %q condition", err, want)
@@ -752,7 +745,6 @@ func TestListRejectsOverfullPage(t *testing.T) {
 }
 
 func TestListDecodesMaximumPage(t *testing.T) {
-	// A full legitimate page of the protocol maximum decodes and yields all of it.
 	entries := make([]string, maxListEntries)
 	for i := range entries {
 		entries[i] = fmt.Sprintf("k%05d", i)
@@ -770,27 +762,31 @@ func TestListDecodesMaximumPage(t *testing.T) {
 }
 
 func TestListPageByteBoundary(t *testing.T) {
-	// The page cap bounds decode memory independently of the entry count: a page
-	// whose XML fits under the cap decodes, one crossing it errors cleanly. A
-	// single long-keyed entry crosses the byte cap while staying under the entry
-	// cap, so the two limits are exercised in isolation.
+	// Individually valid keys isolate the page-size cap from token and entry caps.
+	pageOf := func(n, keyLen int) []string {
+		entries := make([]string, n)
+		for i := range entries {
+			entries[i] = strings.Repeat("a", keyLen) + fmt.Sprint(i)
+		}
+		return entries
+	}
 	t.Run("under the cap", func(t *testing.T) {
-		key := strings.Repeat("a", maxListPageBytes-4096)
+		entries := pageOf(maxListEntries, 5<<10)
 		s := listServer(t, Options{}, func(string) string {
-			return listPageXML([]string{key}, false, "")
+			return listPageXML(entries, false, "")
 		})
 		keys, err := collectList(s, "")
 		if err != nil {
 			t.Fatalf("page under the cap must decode: %v", err)
 		}
-		if len(keys) != 1 || keys[0] != key {
-			t.Fatalf("decoded %d entries, want the single long key", len(keys))
+		if len(keys) != maxListEntries {
+			t.Fatalf("decoded %d entries, want %d", len(keys), maxListEntries)
 		}
 	})
 	t.Run("over the cap", func(t *testing.T) {
-		key := strings.Repeat("a", maxListPageBytes+4096)
+		entries := pageOf(maxListEntries, 9<<10)
 		s := listServer(t, Options{}, func(string) string {
-			return listPageXML([]string{key}, false, "")
+			return listPageXML(entries, false, "")
 		})
 		if _, err := collectList(s, ""); err == nil {
 			t.Fatal("page over the cap must error")
@@ -893,11 +889,7 @@ func TestListTokenProgress(t *testing.T) {
 }
 
 func TestListBuffersPageBeforeYielding(t *testing.T) {
-	// A consumer slower than the page budget still receives the whole page: the
-	// page is decoded and released before any entry is yielded, so caller
-	// processing time never races the budget that bounds the exchange. The page
-	// is larger than the transport's read buffer, so a decode that read across
-	// yields would have to touch the connection after the budget fired.
+	// Exceeding the transport buffer exposes any decoding deferred until after a yield.
 	entries := make([]string, 500)
 	for i := range entries {
 		entries[i] = fmt.Sprintf("prefix/%03d/%s", i, strings.Repeat("k", 100))
@@ -946,8 +938,6 @@ func (b countingBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// TestListRejectsNonListBodies pins that a 200 whose body is not a
-// ListBucketResult document errors instead of reading as an empty listing.
 func TestListRejectsNonListBodies(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, want string
@@ -966,6 +956,137 @@ func TestListRejectsNonListBodies(t *testing.T) {
 	}
 }
 
+// unknownLength hides concrete reader types from Put's length detection.
+func unknownLength(r io.Reader) io.Reader { return struct{ io.Reader }{r} }
+
+// blockingReader closes started on its first read and waits for resume, so a
+// test can look at the spool directory while the copy is in flight.
+type blockingReader struct {
+	src     io.Reader
+	once    sync.Once
+	started chan struct{}
+	resume  chan struct{}
+}
+
+func newBlockingReader(src io.Reader) *blockingReader {
+	return &blockingReader{src: src, started: make(chan struct{}), resume: make(chan struct{})}
+}
+
+func (r *blockingReader) Read(p []byte) (int, error) {
+	r.once.Do(func() {
+		close(r.started)
+		<-r.resume
+	})
+	return r.src.Read(p)
+}
+
+func TestPutRejectsBodyOverSpoolCap(t *testing.T) {
+	const limit = 16
+	var requests atomic.Int64
+	dir := t.TempDir()
+	s := testS3Opts(t, Options{MaxSpoolBytes: limit, SpoolDir: dir}, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+	err := s.Put(context.Background(), "k", unknownLength(strings.NewReader(strings.Repeat("x", limit+1))))
+	if !errors.Is(err, storage.ErrTooLarge) {
+		t.Fatalf("over-cap upload = %v, want a storage.ErrTooLarge error", err)
+	}
+	if prefix := `storage: put "k":`; !strings.HasPrefix(err.Error(), prefix) {
+		t.Fatalf("error %q lost the %q prefix", err, prefix)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("endpoint received %d requests; the cap must reject before any", got)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("rejected put left %d files in the spool directory", len(entries))
+	}
+}
+
+func TestPutAcceptsBodyAtSpoolCap(t *testing.T) {
+	const limit = 16
+	var got int64 = -1
+	var body string
+	s := testS3Opts(t, Options{MaxSpoolBytes: limit}, func(w http.ResponseWriter, r *http.Request) {
+		got = r.ContentLength
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read upload body: %v", err)
+		}
+		body = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	want := strings.Repeat("x", limit)
+	if err := s.Put(context.Background(), "k", unknownLength(strings.NewReader(want))); err != nil {
+		t.Fatalf("body of exactly the cap must upload: %v", err)
+	}
+	if got != limit || body != want {
+		t.Fatalf("upload sent Content-Length=%d body=%q, want %d and %q", got, body, limit, want)
+	}
+}
+
+func TestPutSpoolsInConfiguredDir(t *testing.T) {
+	dir := t.TempDir()
+	s := testS3Opts(t, Options{SpoolDir: dir}, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("drain upload body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	body := newBlockingReader(strings.NewReader("spooled"))
+	done := make(chan error, 1)
+	go func() { done <- s.Put(context.Background(), "k", body) }()
+	<-body.started
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "storage-s3-put-") {
+		t.Fatalf("spool directory holds %v during the copy, want one storage-s3-put file", entries)
+	}
+	close(body.resume)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	entries, err = os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("spool file survived a successful put: %v", entries)
+	}
+}
+
+func TestPutSendsKnownLengthBodyPastTheSpoolCap(t *testing.T) {
+	dir := t.TempDir()
+	var got int64 = -1
+	s := testS3Opts(t, Options{MaxSpoolBytes: 8, SpoolDir: dir}, func(w http.ResponseWriter, r *http.Request) {
+		got = r.ContentLength
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("drain upload body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	const size = 64
+	if err := s.Put(context.Background(), "k", strings.NewReader(strings.Repeat("x", size))); err != nil {
+		t.Fatalf("known-length body past the cap must upload: %v", err)
+	}
+	if got != size {
+		t.Fatalf("upload sent Content-Length=%d, want %d", got, size)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("known-length body spooled %d files", len(entries))
+	}
+}
+
 // cannedTransport serves the response from memory, so body reads fill their
 // buffers deterministically instead of depending on TCP segment sizes.
 type cannedTransport struct {
@@ -981,4 +1102,147 @@ func (t cannedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		Body:       countingBody{ReadCloser: io.NopCloser(strings.NewReader(t.body)), read: t.read},
 		Request:    r,
 	}, nil
+}
+
+func TestListBoundsDecoderState(t *testing.T) {
+	t.Run("nesting past the cap", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return "<ListBucketResult>" + strings.Repeat("<a>", maxListXMLDepth+1)
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "nest") {
+			t.Fatalf("nesting past the cap must error on depth, got %v", err)
+		}
+	})
+	t.Run("element inside a field", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return "<ListBucketResult><Contents><Key><b>x</b></Key></Contents></ListBucketResult>"
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "unexpected element") {
+			t.Fatalf("markup inside a field must error, got %v", err)
+		}
+	})
+	t.Run("giant repeated token", func(t *testing.T) {
+		// Maximize retained token size without exceeding the per-token cap.
+		token := strings.Repeat("t", 32<<10)
+		s := listServer(t, Options{}, func(string) string {
+			return listPageXML([]string{"a"}, true, token)
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "repeated") {
+			t.Fatalf("a giant repeated token must still be detected, got %v", err)
+		}
+	})
+}
+
+func TestListValidatesPageBeforeYielding(t *testing.T) {
+	s := listServer(t, Options{}, func(token string) string {
+		if token == "" {
+			return listPageXML([]string{"p1"}, true, "A")
+		}
+		return listPageXML([]string{"p2"}, true, "A")
+	})
+	var keys []string
+	var lastErr error
+	for info, err := range s.List(context.Background(), "") {
+		if err != nil {
+			lastErr = err
+			break
+		}
+		keys = append(keys, info.Key)
+	}
+	if strings.Join(keys, ",") != "p1" {
+		t.Fatalf("yielded %v, want only the clean page's entry", keys)
+	}
+	if lastErr == nil || !strings.Contains(lastErr.Error(), "repeated") {
+		t.Fatalf("err = %v, want the repeated-token condition before p2 is yielded", lastErr)
+	}
+}
+
+func TestListBoundsTokenizerState(t *testing.T) {
+	t.Run("attribute-stuffed tag", func(t *testing.T) {
+		var b strings.Builder
+		b.WriteString("<ListBucketResult")
+		for i := 0; i < 200; i++ {
+			fmt.Fprintf(&b, ` xmlns:n%d="u%d"`, i, i)
+		}
+		b.WriteString("></ListBucketResult>")
+		s := listServer(t, Options{}, func(string) string { return b.String() })
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "attributes") {
+			t.Fatalf("attribute stuffing must error on the attribute bound, got %v", err)
+		}
+	})
+	t.Run("token spanning outsized input", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return "<ListBucketResult " + strings.Repeat("x", maxListTokenBytes+listPageBufSize+1)
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("an outsized token must be cut off, got %v", err)
+		}
+	})
+	t.Run("mismatched end tag", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return "<ListBucketResult><a></b></ListBucketResult>"
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "unexpected closing") {
+			t.Fatalf("a mismatched end tag must error, got %v", err)
+		}
+	})
+	t.Run("prefix-mismatched end tag", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return "<ListBucketResult><p:Contents></q:Contents></ListBucketResult>"
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "unexpected closing") {
+			t.Fatalf("a prefix-mismatched end tag must error, got %v", err)
+		}
+	})
+	t.Run("unclosed elements at EOF", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return "<ListBucketResult><Contents>"
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "unclosed") {
+			t.Fatalf("unclosed elements must error at EOF, got %v", err)
+		}
+	})
+}
+
+func TestListPageFieldParsing(t *testing.T) {
+	page := `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <IsTruncated>false</IsTruncated>
+  <Name>bkt</Name>
+  <Contents>
+    <Key>a&amp;b/c d.txt</Key>
+    <LastModified>2026-08-06T07:30:15.250Z</LastModified>
+    <ETag>&quot;abc&quot;</ETag>
+    <Size>2048</Size>
+    <Owner><ID>deadbeef</ID><DisplayName>o</DisplayName></Owner>
+    <StorageClass>STANDARD</StorageClass>
+  </Contents>
+</ListBucketResult>`
+	s := listServer(t, Options{}, func(string) string { return page })
+	var got []storage.Info
+	for info, err := range s.List(context.Background(), "") {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, info)
+	}
+	if len(got) != 1 {
+		t.Fatalf("yielded %d entries, want 1", len(got))
+	}
+	want := storage.Info{
+		Key:     "a&b/c d.txt",
+		Size:    2048,
+		ModTime: time.Date(2026, 8, 6, 7, 30, 15, 250000000, time.UTC),
+	}
+	if got[0].Key != want.Key || got[0].Size != want.Size || !got[0].ModTime.Equal(want.ModTime) {
+		t.Fatalf("entry = %+v, want %+v", got[0], want)
+	}
 }

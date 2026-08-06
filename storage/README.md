@@ -91,10 +91,22 @@ endpoint that sends more loses the connection instead of being read
 out. `List` fetches at most `MaxListPages` pages (default 1,000), so a
 listing blocks for at most `MaxListPages` times the budget before it
 gives up on a bucket that never stops paginating. Each page is decoded
-under an internal, protocol-derived byte cap and rejected if it carries
-more than the 1,000 objects a page may hold. `OperationTimeout`,
-`DrainLimit`, and `MaxListPages` reject negative values at
-construction, since none has an unlimited setting.
+under internal, protocol-derived caps and rejected if it carries more
+than the 1,000 objects a page may hold; a single XML element or text
+run past 64 KiB, deep nesting, or attribute stuffing is rejected the
+same way, so a response shaped unlike a real listing is cut off after
+a bounded read. Uploads whose length is
+not already known spool to disk first, since `PutObject` requires a
+`Content-Length`; `SpoolDir` chooses where (default `os.TempDir()`,
+and a set directory must exist), and `MaxSpoolBytes` caps how much
+one upload writes there (default 1 GiB). A body past the cap fails
+with `ErrTooLarge` before any request is sent, and the spool file is
+removed either way. Readers of known length, such as
+`*strings.Reader`, `*bytes.Reader`, `*bytes.Buffer`, and regular
+files, skip the spool and are not measured against the cap, which
+bounds host disk rather than object size. `OperationTimeout`,
+`DrainLimit`, `MaxListPages`, and `MaxSpoolBytes` reject negative
+values at construction, since none has an unlimited setting.
 
 The supported envelope is deliberate: path-style addressing, SigV4,
 static credentials with an optional session token, one attempt per

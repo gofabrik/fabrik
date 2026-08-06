@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +15,9 @@ import (
 
 // ErrNotExist reports a missing key and aliases fs.ErrNotExist.
 var ErrNotExist = fs.ErrNotExist
+
+// ErrTooLarge indicates that content exceeds a configured limit.
+var ErrTooLarge = errors.New("content too large")
 
 // Info describes a stored blob.
 type Info struct {
