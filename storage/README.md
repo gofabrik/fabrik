@@ -1,7 +1,8 @@
 # storage
 
-Package `storage` provides standard-library blob storage with memory,
-local, and S3-compatible backends.
+Package `storage` provides blob storage with memory, local, and
+S3-compatible backends. Everything outside `storage/s3` is standard
+library only.
 
 ```go
 func save(ctx context.Context, dir string, avatar io.Reader) error {
@@ -58,11 +59,12 @@ allows range serving with `http.ServeContent`.
 collation, and a key cannot coexist with another key for which it is a
 path prefix.
 
-`S3` implements path-style S3-compatible storage with SigV4 and
-ListObjectsV2 using only the standard library:
+`storage/s3` implements path-style S3-compatible storage with SigV4
+and ListObjectsV2. It is a separate package so that only applications
+using it link its signing dependency:
 
 ```go
-store, err := storage.NewS3(storage.S3Options{
+store, err := s3.New(s3.Options{
 	Endpoint:  "https://s3.eu-central-1.amazonaws.com",
 	Bucket:    "my-app-files",
 	AccessKey: accessKey,
@@ -73,8 +75,46 @@ store, err := storage.NewS3(storage.S3Options{
 
 Endpoints must be `scheme://host[:port]`. HTTPS is required unless
 `AllowInsecure` is set because `UNSIGNED-PAYLOAD` relies on transport
-integrity. `CreateBucket` is intended for development and tests;
-production buckets are provisioned externally.
+integrity. Temporary credentials add `SessionToken` beside `AccessKey`
+and `SecretKey`, which is then sent and signed. `CreateBucket` is
+intended for development and tests; production buckets are provisioned
+externally.
+
+Every operation runs under `OperationTimeout` (default 30s), covering
+the request, releasing the response, and decoding it. `List` applies it
+to each page exchange, and `Put`'s budget encloses the whole upload, so
+callers sending large objects raise it. `Open` is bounded up to the
+response only: the returned reader answers to the caller's context, so
+a download slower than the budget is not cut off. Responses are
+released by reading at most `DrainLimit` bytes (default 64 KiB); an
+endpoint that sends more loses the connection instead of being read
+out. `List` fetches at most `MaxListPages` pages (default 1,000), so a
+listing blocks for at most `MaxListPages` times the budget before it
+gives up on a bucket that never stops paginating. Each page is decoded
+under internal, protocol-derived caps and rejected if it carries more
+than the 1,000 objects a page may hold; a single XML element or text
+run past 64 KiB, deep nesting, or attribute stuffing is rejected the
+same way, so a response shaped unlike a real listing is cut off after
+a bounded read. Uploads whose length is
+not already known spool to disk first, since `PutObject` requires a
+`Content-Length`; `SpoolDir` chooses where (default `os.TempDir()`,
+and a set directory must exist), and `MaxSpoolBytes` caps how much
+one upload writes there (default 1 GiB). A body past the cap fails
+with `ErrTooLarge` before any request is sent, and the spool file is
+removed either way. Readers of known length, such as
+`*strings.Reader`, `*bytes.Reader`, `*bytes.Buffer`, and regular
+files, skip the spool and are not measured against the cap, which
+bounds host disk rather than object size. `OperationTimeout`,
+`DrainLimit`, `MaxListPages`, and `MaxSpoolBytes` reject negative
+values at construction, since none has an unlimited setting.
+
+The supported envelope is deliberate: path-style addressing, SigV4,
+static credentials with an optional session token, one attempt per
+request, and `UNSIGNED-PAYLOAD` bodies. Credential providers and
+refresh, IAM role flows, retries, flexible checksums,
+multipart/streaming uploads, SigV4A, S3 Express, and virtual-host
+addressing are out of scope; deployments needing them wrap the store
+or use a vendor SDK behind the `storage.Storage` interface.
 
 To run the conformance suite against a local MinIO:
 

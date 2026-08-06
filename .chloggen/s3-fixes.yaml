@@ -1,0 +1,4 @@
+change_type: breaking
+component: storage
+note: Move the S3 backend from storage.NewS3 to storage/s3.New, bound its resource use, and use the AWS SDK signer so only applications importing storage/s3 link it.
+issues: [0]
