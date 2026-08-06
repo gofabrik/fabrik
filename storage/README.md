@@ -88,8 +88,13 @@ response only: the returned reader answers to the caller's context, so
 a download slower than the budget is not cut off. Responses are
 released by reading at most `DrainLimit` bytes (default 64 KiB); an
 endpoint that sends more loses the connection instead of being read
-out. Both options reject negative values at construction, since neither
-has an unlimited setting.
+out. `List` fetches at most `MaxListPages` pages (default 1,000), so a
+listing blocks for at most `MaxListPages` times the budget before it
+gives up on a bucket that never stops paginating. Each page is decoded
+under an internal, protocol-derived byte cap and rejected if it carries
+more than the 1,000 objects a page may hold. `OperationTimeout`,
+`DrainLimit`, and `MaxListPages` reject negative values at
+construction, since none has an unlimited setting.
 
 The supported envelope is deliberate: path-style addressing, SigV4,
 static credentials with an optional session token, one attempt per

@@ -562,6 +562,11 @@ func TestNewRejectsNegativeBounds(t *testing.T) {
 	if _, err := New(negativeDrain); err == nil {
 		t.Fatal("negative DrainLimit accepted")
 	}
+	negativePages := base
+	negativePages.MaxListPages = -1
+	if _, err := New(negativePages); err == nil {
+		t.Fatal("negative MaxListPages accepted")
+	}
 }
 
 // TestOpenErrorDrainClassification pins that a drain interrupted mid error
@@ -605,12 +610,14 @@ func TestOpenErrorDrainClassification(t *testing.T) {
 // omitted drain fails the floor, a larger one the ceiling), and the 409 paths
 // read exactly twice the cap: a capped decode, then the capped release. Each
 // case also asserts the operation outcome, so a drain skipped by an early
-// return cannot pass. List's oversized 200 page is exercised with the decode
-// cap in the list-bounds increment; its error path is pinned here.
+// return cannot pass. A successful list page reads exactly its decoded bytes
+// plus one capped release: the decoder consumes only its own document and the
+// drain frees at most the cap of the trailing bytes.
 func TestDrainReadsExactlyTheCap(t *testing.T) {
 	const limit = 128
 	ownedXML := "<Error><Code>BucketAlreadyOwnedByYou</Code></Error>"
 	garbage := strings.Repeat("x", 1<<20)
+	listXML := listPageXML([]string{"a", "b"}, false, "")
 	cases := []struct {
 		name     string
 		status   int
@@ -633,6 +640,17 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 			}
 			return nil
 		}},
+		// Served from memory so the decoder's one buffer fill is a full
+		// listPageBufSize deterministically (TCP may deliver short reads); the
+		// release then reads exactly DrainLimit more from the body.
+		{"list trailing success", http.StatusOK, listXML + garbage, listPageBufSize + limit, false, func(ctx context.Context, s *Store) error {
+			for _, err := range s.List(ctx, "") {
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}},
 		{"create bucket trailing success", http.StatusOK, garbage, limit, false, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
 		{"create bucket conflict", http.StatusConflict, garbage, 2 * limit, true, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
 		{"create bucket owned success", http.StatusConflict, ownedXML + garbage, 2 * limit, false, func(ctx context.Context, s *Store) error { return s.CreateBucket(ctx) }},
@@ -647,7 +665,11 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			client := srv.Client()
-			client.Transport = countingTransport{base: client.Transport, read: &read}
+			if strings.HasPrefix(tc.name, "list trailing") {
+				client.Transport = cannedTransport{status: tc.status, body: tc.body, read: &read}
+			} else {
+				client.Transport = countingTransport{base: client.Transport, read: &read}
+			}
 			s, err := New(Options{
 				Endpoint: srv.URL, Bucket: "bkt", AccessKey: "a", SecretKey: "s",
 				AllowInsecure: true, Client: client, DrainLimit: limit,
@@ -663,6 +685,240 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 				t.Fatalf("client read %d body bytes, want exactly %d", got, tc.wantRead)
 			}
 		})
+	}
+}
+
+// listPageXML builds a ListObjectsV2 page. NextContinuationToken is emitted
+// before Contents so the tests also exercise element order the loop must not
+// depend on.
+func listPageXML(entries []string, truncated bool, next string) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` +
+		`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
+	fmt.Fprintf(&b, "<IsTruncated>%t</IsTruncated>", truncated)
+	if next != "" {
+		fmt.Fprintf(&b, "<NextContinuationToken>%s</NextContinuationToken>", next)
+	}
+	for _, k := range entries {
+		fmt.Fprintf(&b, "<Contents><Key>%s</Key><Size>1</Size></Contents>", k)
+	}
+	b.WriteString(`</ListBucketResult>`)
+	return b.String()
+}
+
+// listServer answers each list request with page(token), where token is the
+// incoming continuation token ("" on the first request).
+func listServer(t *testing.T, opts Options, page func(token string) string) *Store {
+	t.Helper()
+	return testS3Opts(t, opts, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, page(r.URL.Query().Get("continuation-token"))); err != nil {
+			t.Errorf("write list page: %v", err)
+		}
+	})
+}
+
+// collectList drains a listing into its keys and the first error it yields.
+func collectList(s *Store, prefix string) (keys []string, err error) {
+	for info, e := range s.List(context.Background(), prefix) {
+		if e != nil {
+			err = e
+			break
+		}
+		keys = append(keys, info.Key)
+	}
+	return keys, err
+}
+
+func TestListRejectsOverfullPage(t *testing.T) {
+	// A page must not exceed the protocol maximum; the surplus entry is rejected
+	// before it is retained, and the entries already yielded stay yielded.
+	entries := make([]string, maxListEntries+1)
+	for i := range entries {
+		entries[i] = fmt.Sprintf("k%d", i)
+	}
+	s := listServer(t, Options{}, func(string) string {
+		return listPageXML(entries, false, "")
+	})
+	keys, err := collectList(s, "")
+	if err == nil {
+		t.Fatal("overfull page must error")
+	}
+	if len(keys) != maxListEntries {
+		t.Fatalf("yielded %d entries, want exactly %d before rejection", len(keys), maxListEntries)
+	}
+	if want := fmt.Sprintf("more than %d entries", maxListEntries); !strings.Contains(err.Error(), want) {
+		t.Fatalf("error %q does not name the %q condition", err, want)
+	}
+}
+
+func TestListDecodesMaximumPage(t *testing.T) {
+	// A full legitimate page of the protocol maximum decodes and yields all of it.
+	entries := make([]string, maxListEntries)
+	for i := range entries {
+		entries[i] = fmt.Sprintf("k%05d", i)
+	}
+	s := listServer(t, Options{}, func(string) string {
+		return listPageXML(entries, false, "")
+	})
+	keys, err := collectList(s, "")
+	if err != nil {
+		t.Fatalf("maximum page must decode: %v", err)
+	}
+	if len(keys) != maxListEntries {
+		t.Fatalf("yielded %d entries, want %d", len(keys), maxListEntries)
+	}
+}
+
+func TestListPageByteBoundary(t *testing.T) {
+	// The page cap bounds decode memory independently of the entry count: a page
+	// whose XML fits under the cap decodes, one crossing it errors cleanly. A
+	// single long-keyed entry crosses the byte cap while staying under the entry
+	// cap, so the two limits are exercised in isolation.
+	t.Run("under the cap", func(t *testing.T) {
+		key := strings.Repeat("a", maxListPageBytes-4096)
+		s := listServer(t, Options{}, func(string) string {
+			return listPageXML([]string{key}, false, "")
+		})
+		keys, err := collectList(s, "")
+		if err != nil {
+			t.Fatalf("page under the cap must decode: %v", err)
+		}
+		if len(keys) != 1 || keys[0] != key {
+			t.Fatalf("decoded %d entries, want the single long key", len(keys))
+		}
+	})
+	t.Run("over the cap", func(t *testing.T) {
+		key := strings.Repeat("a", maxListPageBytes+4096)
+		s := listServer(t, Options{}, func(string) string {
+			return listPageXML([]string{key}, false, "")
+		})
+		if _, err := collectList(s, ""); err == nil {
+			t.Fatal("page over the cap must error")
+		}
+	})
+}
+
+func TestListRejectsMalformedAndDeepXML(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"malformed", `<ListBucketResult><Contents><Key>a</Key></Cont`},
+		{"deep", `<ListBucketResult>` + strings.Repeat("<a>", 200000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := listServer(t, Options{}, func(string) string { return tc.body })
+			if _, err := collectList(s, ""); err == nil {
+				t.Fatalf("%s XML must error", tc.name)
+			}
+		})
+	}
+}
+
+func TestListTokenProgress(t *testing.T) {
+	t.Run("empty token when truncated", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return listPageXML([]string{"a"}, true, "")
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "continuation token") {
+			t.Fatalf("truncated page with no token must error, got %v", err)
+		}
+	})
+	t.Run("unchanged token", func(t *testing.T) {
+		s := listServer(t, Options{}, func(string) string {
+			return listPageXML([]string{"a"}, true, "T")
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "repeated") {
+			t.Fatalf("unchanged token must error as repeated, got %v", err)
+		}
+	})
+	t.Run("cyclic tokens", func(t *testing.T) {
+		next := map[string]string{"": "A", "A": "B", "B": "A"}
+		s := listServer(t, Options{}, func(token string) string {
+			return listPageXML([]string{"a"}, true, next[token])
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "repeated") {
+			t.Fatalf("token cycle must error as repeated, got %v", err)
+		}
+	})
+	t.Run("always distinct stops at MaxListPages", func(t *testing.T) {
+		var pages atomic.Int64
+		s := listServer(t, Options{MaxListPages: 3}, func(string) string {
+			n := pages.Add(1)
+			return listPageXML([]string{"a"}, true, fmt.Sprintf("t%d", n))
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "exceeded 3 pages") {
+			t.Fatalf("distinct tokens must stop at MaxListPages, got %v", err)
+		}
+		if got := pages.Load(); got != 3 {
+			t.Fatalf("fetched %d pages, want exactly 3", got)
+		}
+	})
+	t.Run("always distinct stops at the default page budget", func(t *testing.T) {
+		var pages atomic.Int64
+		s := listServer(t, Options{}, func(string) string {
+			n := pages.Add(1)
+			return listPageXML([]string{"a"}, true, fmt.Sprintf("t%d", n))
+		})
+		_, err := collectList(s, "")
+		if err == nil || !strings.Contains(err.Error(), "exceeded 1000 pages") {
+			t.Fatalf("the zero value must enforce 1000 pages, got %v", err)
+		}
+		if got := pages.Load(); got != 1000 {
+			t.Fatalf("fetched %d pages, want exactly 1000", got)
+		}
+	})
+	t.Run("legitimate multi-page listing", func(t *testing.T) {
+		next := map[string]string{"": "A", "A": "B"}
+		s := listServer(t, Options{}, func(token string) string {
+			switch token {
+			case "", "A":
+				return listPageXML([]string{token + "k"}, true, next[token])
+			default:
+				return listPageXML([]string{token + "k"}, false, "")
+			}
+		})
+		keys, err := collectList(s, "")
+		if err != nil {
+			t.Fatalf("legitimate paginated listing must succeed: %v", err)
+		}
+		if want := []string{"k", "Ak", "Bk"}; strings.Join(keys, ",") != strings.Join(want, ",") {
+			t.Fatalf("keys = %v, want %v", keys, want)
+		}
+	})
+}
+
+func TestListBuffersPageBeforeYielding(t *testing.T) {
+	// A consumer slower than the page budget still receives the whole page: the
+	// page is decoded and released before any entry is yielded, so caller
+	// processing time never races the budget that bounds the exchange. The page
+	// is larger than the transport's read buffer, so a decode that read across
+	// yields would have to touch the connection after the budget fired.
+	entries := make([]string, 500)
+	for i := range entries {
+		entries[i] = fmt.Sprintf("prefix/%03d/%s", i, strings.Repeat("k", 100))
+	}
+	s := listServer(t, Options{OperationTimeout: testBudget}, func(string) string {
+		return listPageXML(entries, false, "")
+	})
+	var got []string
+	paused := false
+	for info, err := range s.List(context.Background(), "") {
+		if err != nil {
+			t.Fatalf("slow consumer must not race the page budget: %v", err)
+		}
+		got = append(got, info.Key)
+		if !paused {
+			time.Sleep(2 * testBudget)
+			paused = true
+		}
+	}
+	if len(got) != len(entries) {
+		t.Fatalf("received %d entries, want %d", len(got), len(entries))
 	}
 }
 
@@ -688,4 +944,41 @@ func (b countingBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	b.read.Add(int64(n))
 	return n, err
+}
+
+// TestListRejectsNonListBodies pins that a 200 whose body is not a
+// ListBucketResult document errors instead of reading as an empty listing.
+func TestListRejectsNonListBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"empty body", "", "empty list response"},
+		{"whitespace body", "   \n\t  ", "empty list response"},
+		{"wrong root", "<Error><Code>AccessDenied</Code></Error>", "unexpected root element"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := listServer(t, Options{}, func(string) string { return tc.body })
+			_, err := collectList(s, "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("body %q must error with %q, got %v", tc.body, tc.want, err)
+			}
+		})
+	}
+}
+
+// cannedTransport serves the response from memory, so body reads fill their
+// buffers deterministically instead of depending on TCP segment sizes.
+type cannedTransport struct {
+	status int
+	body   string
+	read   *atomic.Int64
+}
+
+func (t cannedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: t.status,
+		Header:     http.Header{},
+		Body:       countingBody{ReadCloser: io.NopCloser(strings.NewReader(t.body)), read: t.read},
+		Request:    r,
+	}, nil
 }
