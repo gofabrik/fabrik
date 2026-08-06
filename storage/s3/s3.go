@@ -22,11 +22,13 @@ import (
 
 // Store stores blobs in an S3-compatible bucket using path-style SigV4 requests.
 type Store struct {
-	endpoint string
-	bucket   string
-	creds    credentials
-	client   *http.Client
-	now      func() time.Time
+	endpoint   string
+	bucket     string
+	creds      credentials
+	client     *http.Client
+	now        func() time.Time
+	opTimeout  time.Duration
+	drainLimit int64
 }
 
 // Options configures New.
@@ -45,6 +47,15 @@ type Options struct {
 	// AllowInsecure permits HTTP endpoints, which provide no transport integrity
 	// for UNSIGNED-PAYLOAD bodies.
 	AllowInsecure bool
+	// OperationTimeout bounds one operation end to end: the request, releasing
+	// the response, and decoding it. Zero means 30s, negative is a construction
+	// error, and there is no unlimited value. List applies it to each page
+	// exchange. Put's budget encloses the whole upload, so callers sending
+	// large objects raise it.
+	OperationTimeout time.Duration
+	// DrainLimit caps the bytes read while releasing a response body. Zero
+	// means 64 KiB, negative is a construction error.
+	DrainLimit int64
 }
 
 // New returns an S3 store for an existing bucket.
@@ -76,6 +87,20 @@ func New(opts Options) (*Store, error) {
 	if opts.AccessKey == "" || opts.SecretKey == "" {
 		return nil, fmt.Errorf("storage: New needs AccessKey and SecretKey")
 	}
+	if opts.OperationTimeout < 0 {
+		return nil, fmt.Errorf("storage: New: OperationTimeout %v must be zero or positive", opts.OperationTimeout)
+	}
+	if opts.DrainLimit < 0 {
+		return nil, fmt.Errorf("storage: New: DrainLimit %d must be zero or positive", opts.DrainLimit)
+	}
+	opTimeout := opts.OperationTimeout
+	if opTimeout == 0 {
+		opTimeout = defaultOperationTimeout
+	}
+	drainLimit := opts.DrainLimit
+	if drainLimit == 0 {
+		drainLimit = defaultDrainLimit
+	}
 	region := opts.Region
 	if region == "" {
 		region = "us-east-1"
@@ -101,12 +126,29 @@ func New(opts Options) (*Store, error) {
 			sessionToken: opts.SessionToken,
 			region:       region,
 		},
-		client: client,
-		now:    time.Now,
+		client:     client,
+		now:        time.Now,
+		opTimeout:  opTimeout,
+		drainLimit: drainLimit,
 	}, nil
 }
 
+const (
+	defaultOperationTimeout = 30 * time.Second
+	defaultDrainLimit       = 64 << 10
+)
+
 var errNoRedirects = fmt.Errorf("storage: s3 endpoint redirected; configure the correct endpoint")
+
+// errBudgetExceeded reports the operation budget rather than the caller's
+// context, and wraps context.DeadlineExceeded so callers classify it as one.
+var errBudgetExceeded = fmt.Errorf("operation budget exceeded: %w", context.DeadlineExceeded)
+
+// budget derives the deadline every operation runs under, covering the
+// request, the drain, and the decode.
+func (s *Store) budget(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, s.opTimeout)
+}
 
 // uriEscape applies S3's RFC 3986 escaping to a single path segment or query
 // component.
@@ -148,6 +190,8 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) (retErr error)
 	if err := opCheck(ctx, "put", key); err != nil {
 		return err
 	}
+	ctx, cancel := s.budget(ctx)
+	defer cancel()
 	// S3 PutObject requires Content-Length, so unknown-length readers spool to disk.
 	body, length, cleanup, err := knownLength(ctx, r)
 	if err != nil {
@@ -177,39 +221,71 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader) (retErr error)
 	if resp.StatusCode != http.StatusOK {
 		return errors.Join(
 			fmt.Errorf("storage: put %q: s3 status %d", key, resp.StatusCode),
-			drainFor("put", key, resp),
+			s.drainFor("put", key, resp),
 		)
 	}
-	return drainFor("put", key, resp)
+	return s.drainFor("put", key, resp)
 }
 
 func (s *Store) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := opCheck(ctx, "open", key); err != nil {
 		return nil, err
 	}
-	resp, err := s.do(ctx, "GET", s.objectURL(key), nil, emptyPayloadSHA)
+	// The budget covers the handshake and the error paths; the returned body
+	// then answers to the caller's context and to its own Close, so a download
+	// slower than the budget is not cut off.
+	opCtx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(s.opTimeout, func() { cancel(errBudgetExceeded) })
+	resp, err := s.do(opCtx, "GET", s.objectURL(key), nil, emptyPayloadSHA)
 	if err != nil {
+		timer.Stop()
+		// The transport reports both budget expiry and caller cancellation as
+		// a canceled context, so the cause tells them apart.
+		if cause := context.Cause(opCtx); errors.Is(cause, errBudgetExceeded) {
+			err = cause
+		}
+		cancel(nil)
 		return nil, fmt.Errorf("storage: open %q: %w", key, err)
 	}
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, errors.Join(
-			fmt.Errorf("storage: open %q: %w", key, storage.ErrNotExist),
-			drainFor("open", key, resp),
-		)
-	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, errors.Join(
-			fmt.Errorf("storage: open %q: s3 status %d", key, resp.StatusCode),
-			drainFor("open", key, resp),
-		)
+		// The error paths stay inside the budget, so their drain cannot stall.
+		status := fmt.Errorf("storage: open %q: s3 status %d", key, resp.StatusCode)
+		if resp.StatusCode == http.StatusNotFound {
+			status = fmt.Errorf("storage: open %q: %w", key, storage.ErrNotExist)
+		}
+		drainErr := s.drainFor("open", key, resp)
+		timer.Stop()
+		cancel(nil)
+		return nil, errors.Join(status, drainErr)
 	}
-	return resp.Body, nil
+	// A timer that cannot be stopped has already fired, so the response raced
+	// the budget and lost.
+	if !timer.Stop() {
+		drainErr := s.drainFor("open", key, resp)
+		cancel(nil)
+		return nil, errors.Join(fmt.Errorf("storage: open %q: %w", key, errBudgetExceeded), drainErr)
+	}
+	return detachedBody{ReadCloser: resp.Body, cancel: cancel}, nil
+}
+
+// detachedBody releases the operation context when the caller is done reading.
+type detachedBody struct {
+	io.ReadCloser
+	cancel context.CancelCauseFunc
+}
+
+func (b detachedBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel(nil)
+	return err
 }
 
 func (s *Store) Stat(ctx context.Context, key string) (storage.Info, error) {
 	if err := opCheck(ctx, "stat", key); err != nil {
 		return storage.Info{}, err
 	}
+	ctx, cancel := s.budget(ctx)
+	defer cancel()
 	resp, err := s.do(ctx, "HEAD", s.objectURL(key), nil, emptyPayloadSHA)
 	if err != nil {
 		return storage.Info{}, fmt.Errorf("storage: stat %q: %w", key, err)
@@ -217,18 +293,18 @@ func (s *Store) Stat(ctx context.Context, key string) (storage.Info, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return storage.Info{}, errors.Join(
 			fmt.Errorf("storage: stat %q: %w", key, storage.ErrNotExist),
-			drainFor("stat", key, resp),
+			s.drainFor("stat", key, resp),
 		)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return storage.Info{}, errors.Join(
 			fmt.Errorf("storage: stat %q: s3 status %d", key, resp.StatusCode),
-			drainFor("stat", key, resp),
+			s.drainFor("stat", key, resp),
 		)
 	}
 	mod, _ := http.ParseTime(resp.Header.Get("Last-Modified"))
 	info := storage.Info{Key: key, Size: resp.ContentLength, ModTime: mod}
-	if err := drainFor("stat", key, resp); err != nil {
+	if err := s.drainFor("stat", key, resp); err != nil {
 		return storage.Info{}, err
 	}
 	return info, nil
@@ -238,6 +314,8 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	if err := opCheck(ctx, "delete", key); err != nil {
 		return err
 	}
+	ctx, cancel := s.budget(ctx)
+	defer cancel()
 	resp, err := s.do(ctx, "DELETE", s.objectURL(key), nil, emptyPayloadSHA)
 	if err != nil {
 		return fmt.Errorf("storage: delete %q: %w", key, err)
@@ -245,10 +323,10 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		return errors.Join(
 			fmt.Errorf("storage: delete %q: s3 status %d", key, resp.StatusCode),
-			drainFor("delete", key, resp),
+			s.drainFor("delete", key, resp),
 		)
 	}
-	return drainFor("delete", key, resp)
+	return s.drainFor("delete", key, resp)
 }
 
 type listResult struct {
@@ -281,22 +359,27 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[storage.Info,
 			if prefix != "" {
 				q += "&prefix=" + uriEscape(prefix)
 			}
-			resp, err := s.do(ctx, "GET", s.endpoint+"/"+s.bucket+"?"+q, nil, emptyPayloadSHA)
+			// The budget bounds one page exchange, not the whole listing.
+			pageCtx, cancel := s.budget(ctx)
+			resp, err := s.do(pageCtx, "GET", s.endpoint+"/"+s.bucket+"?"+q, nil, emptyPayloadSHA)
 			if err != nil {
+				cancel()
 				yield(storage.Info{}, fmt.Errorf("storage: list %q: %w", prefix, err))
 				return
 			}
 			if resp.StatusCode != http.StatusOK {
 				err := errors.Join(
 					fmt.Errorf("storage: list %q: s3 status %d", prefix, resp.StatusCode),
-					drainFor("list", prefix, resp),
+					s.drainFor("list", prefix, resp),
 				)
+				cancel()
 				yield(storage.Info{}, err)
 				return
 			}
 			var lr listResult
 			err = xml.NewDecoder(resp.Body).Decode(&lr)
-			err = errors.Join(err, drainFor("list", prefix, resp))
+			err = errors.Join(err, s.drainFor("list", prefix, resp))
+			cancel()
 			if err != nil {
 				yield(storage.Info{}, fmt.Errorf("storage: list %q: %w", prefix, err))
 				return
@@ -318,8 +401,11 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[storage.Info,
 	}
 }
 
-func drainFor(op, key string, resp *http.Response) error {
-	_, copyErr := io.Copy(io.Discard, resp.Body)
+// drainFor releases a response body, reading no more than DrainLimit. What is
+// left unread costs the connection, which net/http then tears down instead of
+// reusing.
+func (s *Store) drainFor(op, key string, resp *http.Response) error {
+	_, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, s.drainLimit))
 	closeErr := resp.Body.Close()
 	if err := errors.Join(copyErr, closeErr); err != nil {
 		return fmt.Errorf("storage: %s %q: release response: %w", op, key, err)
@@ -330,6 +416,8 @@ func drainFor(op, key string, resp *http.Response) error {
 // CreateBucket provisions the bucket, treating BucketAlreadyOwnedByYou as
 // success and sending LocationConstraint outside us-east-1.
 func (s *Store) CreateBucket(ctx context.Context) error {
+	ctx, cancel := s.budget(ctx)
+	defer cancel()
 	var body io.Reader
 	payloadSHA := emptyPayloadSHA
 	if s.creds.region != "us-east-1" {
@@ -343,12 +431,12 @@ func (s *Store) CreateBucket(ctx context.Context) error {
 		return fmt.Errorf("storage: create bucket: %w", err)
 	}
 	if resp.StatusCode == http.StatusOK {
-		return drainFor("create bucket", s.bucket, resp)
+		return s.drainFor("create bucket", s.bucket, resp)
 	}
 	if resp.StatusCode == http.StatusConflict {
 		var e struct{ Code string }
-		decodeErr := xml.NewDecoder(resp.Body).Decode(&e)
-		drainErr := drainFor("create bucket", s.bucket, resp)
+		decodeErr := xml.NewDecoder(io.LimitReader(resp.Body, s.drainLimit)).Decode(&e)
+		drainErr := s.drainFor("create bucket", s.bucket, resp)
 		if decodeErr == nil && e.Code == "BucketAlreadyOwnedByYou" {
 			return drainErr
 		}
@@ -356,7 +444,7 @@ func (s *Store) CreateBucket(ctx context.Context) error {
 	}
 	return errors.Join(
 		fmt.Errorf("storage: create bucket: s3 status %d", resp.StatusCode),
-		drainFor("create bucket", s.bucket, resp),
+		s.drainFor("create bucket", s.bucket, resp),
 	)
 }
 

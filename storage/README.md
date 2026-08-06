@@ -80,6 +80,17 @@ and `SecretKey`, which is then sent and signed. `CreateBucket` is
 intended for development and tests; production buckets are provisioned
 externally.
 
+Every operation runs under `OperationTimeout` (default 30s), covering
+the request, releasing the response, and decoding it. `List` applies it
+to each page exchange, and `Put`'s budget encloses the whole upload, so
+callers sending large objects raise it. `Open` is bounded up to the
+response only: the returned reader answers to the caller's context, so
+a download slower than the budget is not cut off. Responses are
+released by reading at most `DrainLimit` bytes (default 64 KiB); an
+endpoint that sends more loses the connection instead of being read
+out. Both options reject negative values at construction, since neither
+has an unlimited setting.
+
 The supported envelope is deliberate: path-style addressing, SigV4,
 static credentials with an optional session token, one attempt per
 request, and `UNSIGNED-PAYLOAD` bodies. Credential providers and
