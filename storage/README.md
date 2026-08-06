@@ -1,7 +1,8 @@
 # storage
 
-Package `storage` provides standard-library blob storage with memory,
-local, and S3-compatible backends.
+Package `storage` provides blob storage with memory, local, and
+S3-compatible backends. Everything outside `storage/s3` is standard
+library only.
 
 ```go
 func save(ctx context.Context, dir string, avatar io.Reader) error {
@@ -58,11 +59,12 @@ allows range serving with `http.ServeContent`.
 collation, and a key cannot coexist with another key for which it is a
 path prefix.
 
-`S3` implements path-style S3-compatible storage with SigV4 and
-ListObjectsV2 using only the standard library:
+`storage/s3` implements path-style S3-compatible storage with SigV4
+and ListObjectsV2. It is a separate package so that only applications
+using it link its signing dependency:
 
 ```go
-store, err := storage.NewS3(storage.S3Options{
+store, err := s3.New(s3.Options{
 	Endpoint:  "https://s3.eu-central-1.amazonaws.com",
 	Bucket:    "my-app-files",
 	AccessKey: accessKey,
@@ -73,8 +75,18 @@ store, err := storage.NewS3(storage.S3Options{
 
 Endpoints must be `scheme://host[:port]`. HTTPS is required unless
 `AllowInsecure` is set because `UNSIGNED-PAYLOAD` relies on transport
-integrity. `CreateBucket` is intended for development and tests;
-production buckets are provisioned externally.
+integrity. Temporary credentials add `SessionToken` beside `AccessKey`
+and `SecretKey`, which is then sent and signed. `CreateBucket` is
+intended for development and tests; production buckets are provisioned
+externally.
+
+The supported envelope is deliberate: path-style addressing, SigV4,
+static credentials with an optional session token, one attempt per
+request, and `UNSIGNED-PAYLOAD` bodies. Credential providers and
+refresh, IAM role flows, retries, flexible checksums,
+multipart/streaming uploads, SigV4A, S3 Express, and virtual-host
+addressing are out of scope; deployments needing them wrap the store
+or use a vendor SDK behind the `storage.Storage` interface.
 
 To run the conformance suite against a local MinIO:
 

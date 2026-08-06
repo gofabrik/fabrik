@@ -1,4 +1,4 @@
-package storage
+package s3
 
 import (
 	"context"
@@ -11,12 +11,12 @@ import (
 	"testing"
 )
 
-func testS3(t *testing.T, region string, handler http.HandlerFunc) *S3 {
+func testS3(t *testing.T, region string, handler http.HandlerFunc) *Store {
 	t.Helper()
 	srv := httptest.NewTestServer(t, handler)
 	// Client() initializes the server; URL is empty until it runs.
 	client := srv.Client()
-	s, err := NewS3(S3Options{
+	s, err := New(Options{
 		Endpoint: srv.URL, Bucket: "bkt", AccessKey: "a", SecretKey: "s",
 		Region: region, AllowInsecure: true, Client: client,
 	})
@@ -192,8 +192,8 @@ func TestPutDoesNotCloseCallerFile(t *testing.T) {
 	}
 }
 
-func TestNewS3RejectsBadEndpointsAndBuckets(t *testing.T) {
-	base := S3Options{Bucket: "bkt", AccessKey: "a", SecretKey: "s", AllowInsecure: true}
+func TestNewRejectsBadEndpointsAndBuckets(t *testing.T) {
+	base := Options{Bucket: "bkt", AccessKey: "a", SecretKey: "s", AllowInsecure: true}
 	for _, ep := range []string{
 		"http://user:pw@host:9000",
 		"http://host:9000/base/path",
@@ -208,7 +208,7 @@ func TestNewS3RejectsBadEndpointsAndBuckets(t *testing.T) {
 	} {
 		o := base
 		o.Endpoint = ep
-		if _, err := NewS3(o); err == nil {
+		if _, err := New(o); err == nil {
 			t.Fatalf("endpoint %q accepted", ep)
 		}
 	}
@@ -216,7 +216,7 @@ func TestNewS3RejectsBadEndpointsAndBuckets(t *testing.T) {
 		o := base
 		o.Endpoint = "http://host:9000"
 		o.Bucket = b
-		if _, err := NewS3(o); err == nil {
+		if _, err := New(o); err == nil {
 			t.Fatalf("bucket %q accepted", b)
 		}
 	}
@@ -224,7 +224,7 @@ func TestNewS3RejectsBadEndpointsAndBuckets(t *testing.T) {
 		o := base
 		o.Endpoint = "http://host:9000"
 		o.Bucket = b
-		if _, err := NewS3(o); err != nil {
+		if _, err := New(o); err != nil {
 			t.Fatalf("valid bucket %q rejected: %v", b, err)
 		}
 	}
