@@ -373,6 +373,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	// shared.Mailer, selected by mailer.kind
 	var mailTransport shared.Mailer
 	switch sharedMailerConfig.Kind {
+	case "dev":
+		mailTransport = shared.NewDevMailer()
 	case "log":
 		mailTransport = shared.NewLogMailer()
 	case "smtp":
