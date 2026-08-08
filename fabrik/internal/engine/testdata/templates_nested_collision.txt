@@ -1,0 +1,49 @@
+A nested section path provided by two trees is a generation-time error.
+-- go.mod --
+module app
+
+go 1.27
+
+require github.com/gofabrik/fabrik/web v0.0.0
+
+replace github.com/gofabrik/fabrik/web => WEBDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- authpassword/templates.go --
+package authpassword
+
+import "embed"
+
+//fabrik:web:templates
+//go:embed all:templates
+var Templates embed.FS
+-- authpassword/templates/auth/password/login.html --
+{{ define "content" }}<p>login</p>{{ end }}
+-- authother/templates.go --
+package authother
+
+import "embed"
+
+//fabrik:web:templates
+//go:embed all:templates
+var Templates embed.FS
+-- authother/templates/auth/password/_chrome.html --
+{{ define "chrome" }}<b>c</b>{{ end }}
+-- web/web.go --
+package web
+
+import (
+	fabrikweb "github.com/gofabrik/fabrik/web"
+)
+
+//fabrik:web GET /login
+func Login(req *fabrikweb.Request) (fabrikweb.Response, error) {
+	return fabrikweb.Template("auth/password/login", nil), nil
+}
+-- want/diags --
+error: authpassword/templates.go:5:1: template section "auth/password" is already provided by the tree at $WORK/authother/templates.go:5:1
+  help: each section directory belongs to exactly one tree
