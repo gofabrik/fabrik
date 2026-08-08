@@ -1,5 +1,5 @@
-An app helper reusing a contributed function name wins (it lands after
-the contributed map in the generated Load call) and draws a warning.
+An app FuncMap provider reusing a contributed function name wins: it
+lands after the contributed map in the generated Load call.
 -- go.mod --
 module app
 
@@ -33,8 +33,12 @@ body {}
 -- web/helpers.go --
 package web
 
-//fabrik:web:templates:func name=asset
-func CustomAsset(path string) string { return "/custom/" + path }
+import "github.com/gofabrik/fabrik/web"
+
+//fabrik:provider
+func NewTemplateFuncs() web.FuncMap {
+	return web.FuncMap{"asset": func(path string) string { return "/custom/" + path }}
+}
 -- web/templates.go --
 package web
 
@@ -91,9 +95,8 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), web2.FuncMap{
-			"asset": web.CustomAsset,
-		})
+		webWebFuncMap := web.NewTemplateFuncs()
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), webWebFuncMap)
 		if err != nil {
 			return err
 		}
@@ -111,6 +114,3 @@ func run() int {
 	}
 	return 0
 }
--- want/diags --
-warning: web/helpers.go:3:1: template function "asset" overrides a function contributed by another directive
-  help: the app helper wins; rename it to keep the contributed behavior

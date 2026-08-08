@@ -323,13 +323,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 	sharedErrorPages := &shared.ErrorPages{}
+	sharedWebFuncMap := shared.NewTemplateFuncs()
 	appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, web2.FuncMap(assetServer.FuncMap()), web2.FuncMap{
-		"humanizeAge": shared.HumanizeAge,
-		"shout":       shared.Shout,
-	})
+	}, web2.FuncMap(assetServer.FuncMap()), sharedWebFuncMap)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -356,11 +354,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
 	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -403,14 +401,14 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	webStatus := &web.Status{
 		Templates: appTemplates,
 	}
-	webAPI := &web.API{
-		Greeter: webGreeter,
-	}
 
 	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
 
 	r := router.New()
 
+	webAPI := &web.API{
+		Greeter: webGreeter,
+	}
 	webGreetings := &web.Greetings{
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,

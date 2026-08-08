@@ -169,14 +169,18 @@ package web
 import (
 	"embed"
 	"strings"
+
+	fabrikweb "github.com/gofabrik/fabrik/web"
 )
 
 //fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 
-//fabrik:web:templates:func
-func Shout(s string) string { return strings.ToUpper(s) }
+//fabrik:provider
+func NewTemplateFuncs() fabrikweb.FuncMap {
+	return fabrikweb.FuncMap{"shout": strings.ToUpper}
+}
 -- web/templates/_default/_layout.html --
 <html><head><link rel="stylesheet" href="{{ asset "style.css" }}"></head>{{ block "content" . }}{{ end }}</html>
 -- web/templates/_default/home.html --
@@ -339,9 +343,8 @@ func run() int {
 					default:
 						return fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
 					}
-					webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), web2.FuncMap{
-						"shout": web.Shout,
-					})
+					webWebFuncMap := web.NewTemplateFuncs()
+					webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), webWebFuncMap)
 					if err != nil {
 						return err
 					}
@@ -426,3 +429,6 @@ func initLogger(ctx context.Context, configOpts []config.Option) error {
 
 	return nil
 }
+-- want/diags --
+warning: web/templates.go:10:1: template functions not registered at generation time: shout
+  help: assumed to come from a web.FuncMap or web.RequestFuncs provider; startup template load fails if one is missing

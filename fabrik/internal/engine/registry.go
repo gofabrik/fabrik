@@ -51,7 +51,6 @@ func New() []gen.Directive {
 		webDirective.NewNotFound(),
 		webDirective.NewMethodNotAllowed(),
 		tpl,
-		webdir.NewFuncs(tpl),
 		assetsdir.NewAssets(host, tpl, assetsConfig),
 		migdir.NewMigrations(),
 		jobsJob,

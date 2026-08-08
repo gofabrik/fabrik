@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
 	"github.com/gofabrik/fabrik/storage"
+	"github.com/gofabrik/fabrik/web"
 	_ "modernc.org/sqlite"
 )
 
@@ -190,4 +193,26 @@ func NewStorage(cfg *StorageConfig) (storage.Storage, func() error, error) {
 		return nil, nil, err
 	}
 	return local, local.Close, nil
+}
+
+// NewTemplateFuncs supplies the app's static template helpers.
+//
+//fabrik:provider
+func NewTemplateFuncs() web.FuncMap {
+	return web.FuncMap{
+		"shout":       strings.ToUpper,
+		"humanizeAge": humanizeAge,
+	}
+}
+
+func humanizeAge(t time.Time) string {
+	d := time.Since(t).Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
 }

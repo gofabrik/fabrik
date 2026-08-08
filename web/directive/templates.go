@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -19,8 +20,6 @@ import (
 type Templates struct {
 	decls       []*tplNode
 	registered  bool
-	helpers     []*helperNode
-	byName      map[string]*helperNode
 	contributed []contribution
 	treeFS      func(dir string) fs.FS
 }
@@ -32,10 +31,7 @@ type contribution struct {
 }
 
 func NewTemplates() *Templates {
-	return &Templates{
-		byName: map[string]*helperNode{},
-		treeFS: os.DirFS,
-	}
+	return &Templates{treeFS: os.DirFS}
 }
 
 // SetTreeFS lets validation read non-Go files through the engine overlay.
@@ -178,8 +174,14 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 				args = append(args, webPkg+".FuncMap("+expr+")")
 			}
 		}
-		if fm := t.funcMapExpr(g, webPkg); fm != "" {
-			args = append(args, fm)
+		if fmType, found := g.LookupType(webPath, "FuncMap"); found && g.HasBinding(fmType, "") {
+			// An app provider returning web.FuncMap supplies the static
+			// helpers; appended last so they override contributed maps.
+			expr, ids, ok := g.Instance(fmType, "")
+			ds = append(ds, ids...)
+			if ok && len(ids) == 0 {
+				args = append(args, expr)
+			}
 		}
 
 		v := g.Var(first.pkg.Name() + first.varName)
@@ -198,6 +200,18 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
+// unknownFuncName extracts the name from a parse error reporting an
+// undefined template function.
+func unknownFuncName(err error) (string, bool) {
+	m := unknownFuncRE.FindStringSubmatch(err.Error())
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+var unknownFuncRE = regexp.MustCompile(`function "([^"]+)" not defined`)
+
 func (t *Templates) sortedDecls() []*tplNode {
 	decls := append([]*tplNode(nil), t.decls...)
 	sort.Slice(decls, func(i, j int) bool {
@@ -210,29 +224,10 @@ func (t *Templates) sortedDecls() []*tplNode {
 	return decls
 }
 
-func (t *Templates) funcMapExpr(g *gen.Gen, webPkg string) string {
-	if len(t.helpers) == 0 {
-		return ""
-	}
-	sorted := append([]*helperNode(nil), t.helpers...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
-	var b strings.Builder
-	b.WriteString(webPkg + ".FuncMap{\n")
-	for _, h := range sorted {
-		fmt.Fprintf(&b, "%q: %s.%s,\n", h.name, g.ImportPkg(h.pkg), h.fn)
-	}
-	b.WriteString("}")
-	return b.String()
-}
-
 // Validate loads templates during wiring, before generated startup code runs.
 func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	if len(t.decls) == 0 {
-		for _, h := range t.helpers {
-			ds.Error(h.pos, "//fabrik:web:templates:func without any //fabrik:web:templates declaration",
-				"declare a template set the helper can be parsed into")
-		}
 		return ds
 	}
 	decls := t.sortedDecls()
@@ -256,15 +251,6 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 		}
 	}
 
-	for _, c := range t.contributed {
-		for _, name := range c.names {
-			if h, ok := t.byName[name]; ok {
-				ds.Warn(h.pos, fmt.Sprintf("template function %q overrides a function contributed by another directive", name),
-					"the app helper wins; rename it to keep the contributed behavior")
-			}
-		}
-	}
-
 	if !collided {
 		stubs := web.FuncMap{}
 		for _, c := range t.contributed {
@@ -272,16 +258,33 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 				stubs[name] = func(...any) any { return nil }
 			}
 		}
-		for _, h := range t.helpers {
-			stubs[h.name] = func(...any) any { return nil }
-		}
 		sources := make([]web.TemplateSource, len(decls))
 		for i, d := range decls {
 			sources[i] = web.TemplateSource{FS: t.treeFS(d.srcDir), Dir: d.dir}
 		}
-		if _, err := web.LoadTemplateSources(sources, stubs); err != nil {
-			ds.Error(decls[0].pos, err.Error(),
-				"the templates are loaded and parsed at generation time; fix the tree and rerun")
+		// Provider-supplied funcs are opaque here, so names the parse does
+		// not know are stubbed one by one and reported; startup template
+		// load performs the hard existence check.
+		var assumed []string
+		for {
+			_, err := web.LoadTemplateSources(sources, stubs)
+			if err == nil {
+				break
+			}
+			name, ok := unknownFuncName(err)
+			if !ok || stubs[name] != nil {
+				ds.Error(decls[0].pos, err.Error(),
+					"the templates are loaded and parsed at generation time; fix the tree and rerun")
+				break
+			}
+			stubs[name] = func(...any) any { return nil }
+			assumed = append(assumed, name)
+		}
+		if len(assumed) > 0 {
+			sort.Strings(assumed)
+			ds.Warn(decls[0].pos,
+				fmt.Sprintf("template functions not registered at generation time: %s", strings.Join(assumed, ", ")),
+				"assumed to come from a web.FuncMap or web.RequestFuncs provider; startup template load fails if one is missing")
 		}
 	}
 
@@ -300,125 +303,4 @@ func (t *Templates) MissingHint(ty types.Type) (string, bool) {
 		return "", false
 	}
 	return "template sets are injected as pointers; take *web.Templates", true
-}
-
-// Funcs implements //fabrik:web:templates:func.
-type Funcs struct {
-	templates *Templates
-}
-
-func NewFuncs(t *Templates) *Funcs { return &Funcs{templates: t} }
-
-func (*Funcs) Name() string { return "web:templates:func" }
-
-func (*Funcs) Meta() gen.Meta {
-	return gen.Meta{
-		Synopsis: "Template function: [name=NAME]",
-		Doc: "**`//fabrik:web:templates:func [name=NAME]`**\n\n" +
-			"Adds a package-level function to the template set's FuncMap, " +
-			"visible to both HTML and text templates. " +
-			"The template-visible name defaults to the function name with a " +
-			"lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` " +
-			"overrides. The signature must be legal for the template " +
-			"engines: one result, or two with the second an `error`.\n\n" +
-			"```go\n//fabrik:web:templates:func\nfunc HumanizeAge(t time.Time) string { ... }\n```",
-		Example: "//fabrik:web:templates:func",
-		Attrs: []gen.AttrSpec{
-			{Key: "name", Kind: gen.KindFreeform},
-		},
-	}
-}
-
-type helperNode struct {
-	pos  token.Position
-	name string
-
-	fn  string
-	pkg *types.Package
-}
-
-func (f *Funcs) Parse(a gen.Annotation) (any, diag.Diagnostics) {
-	args, ds := gen.ParseArgs(a, f.Meta())
-	nd := &helperNode{pos: a.Pos}
-	if nm, ok := args.Attr["name"]; ok {
-		nd.name = nm.Text
-		if !isFuncName(nd.name) {
-			ds.Error(a.ArgPos(nm.Col), fmt.Sprintf("invalid template function name %q", nd.name),
-				"use a short identifier: name=humanize")
-		}
-	}
-	if ds.HasFatal() {
-		return nil, ds
-	}
-	return nd, ds
-}
-
-func (f *Funcs) Check(n any, ty gen.Typed) diag.Diagnostics {
-	nd := n.(*helperNode)
-	var ds diag.Diagnostics
-
-	fn, ok := ty.Target.(*types.Func)
-	if !ok {
-		ds.Error(nd.pos, "//fabrik:web:templates:func must be on a function", "")
-		return ds
-	}
-	sig := fn.Signature()
-	if sig.Recv() != nil {
-		ds.Error(nd.pos, fmt.Sprintf("//fabrik:web:templates:func must be on a package-level function (func %s is a method)", fn.Name()),
-			"move the helper out of the method set")
-		return ds
-	}
-	if !fn.Exported() {
-		ds.Error(nd.pos, fmt.Sprintf("template function %s is unexported", fn.Name()),
-			"generated code lives in package main; export the function")
-		return ds
-	}
-	if sig.TypeParams().Len() > 0 {
-		ds.Error(nd.pos, fmt.Sprintf("template function %s cannot be generic (generated code cannot infer type arguments)", fn.Name()),
-			"declare a concrete function")
-		return ds
-	}
-	if !legalFuncSignature(sig) {
-		ds.Error(nd.pos, fmt.Sprintf("template function %s has an illegal signature", fn.Name()),
-			"html/template functions return one value, or two with the second an error")
-		return ds
-	}
-	if nd.name == "" {
-		nd.name = gen.LowerFirst(fn.Name())
-	}
-	if first, dup := f.templates.byName[nd.name]; dup {
-		ds.Error(nd.pos, fmt.Sprintf("duplicate template function name %q", nd.name),
-			fmt.Sprintf("first declared at %s", first.pos))
-		return ds
-	}
-
-	nd.fn = fn.Name()
-	nd.pkg = fn.Pkg()
-	f.templates.byName[nd.name] = nd
-	f.templates.helpers = append(f.templates.helpers, nd)
-	return ds
-}
-
-func (*Funcs) Emit(any, *gen.Gen) diag.Diagnostics { return nil }
-
-func legalFuncSignature(sig *types.Signature) bool {
-	res := sig.Results()
-	switch res.Len() {
-	case 1:
-		return true
-	case 2:
-		return types.TypeString(types.Unalias(res.At(1).Type()), nil) == "error"
-	}
-	return false
-}
-
-func isFuncName(s string) bool {
-	for i := 0; i < len(s); i++ {
-		b := s[i]
-		if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b == '_' || (i > 0 && b >= '0' && b <= '9') {
-			continue
-		}
-		return false
-	}
-	return s != ""
 }
