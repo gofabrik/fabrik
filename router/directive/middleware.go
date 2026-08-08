@@ -13,8 +13,9 @@ import (
 
 // Middleware registers global and named HTTP middleware.
 type Middleware struct {
-	byName map[string]*mwNode
-	host   *Host
+	byName  map[string]*mwNode
+	host    *Host
+	globals []*mwNode
 }
 
 // NewMiddleware returns a Middleware directive for one run.
@@ -30,20 +31,26 @@ func (*Middleware) Meta() gen.Meta {
 			"Constructor form: binding-resolved parameters returning " +
 			"`func(http.Handler) http.Handler` or `router.Middleware`, optionally with " +
 			"a trailing error; it is built once before route registration. Bare " +
-			"middleware is global, including 404/405. With `name=`, routes and groups " +
-			"opt in through their `middleware=` chain.\n\n" +
+			"middleware is global, including 404/405; every global runs before any " +
+			"named route middleware. `insert=first` registers a global before the " +
+			"unmarked ones, `insert=last` after them (first-registered is outermost). " +
+			"Within one insert group the relative order is unspecified; middleware " +
+			"that must order within a group are composed into one declaration. With " +
+			"`name=`, routes and groups opt in through their `middleware=` chain.\n\n" +
 			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n\n//fabrik:http:middleware\nfunc SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {\n\treturn m.Middleware\n}\n```",
 		Example: "//fabrik:http:middleware",
 		Tier:    gen.TierBind,
 		Attrs: []gen.AttrSpec{
 			{Key: "name", Kind: gen.KindFreeform},
+			{Key: "insert", Kind: gen.KindEnum, Values: []string{"first", "last"}},
 		},
 	}
 }
 
 type mwNode struct {
-	pos  token.Position
-	name string // "" is global
+	pos    token.Position
+	name   string // "" is global
+	insert string // global group: "", "first", or "last"
 
 	fn   string
 	obj  types.Object
@@ -71,6 +78,17 @@ func (m *Middleware) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 		if !isIdentifier(nd.name) {
 			ds.Error(a.ArgPos(nm.Col), fmt.Sprintf("invalid middleware name %q", nd.name),
 				"use a short identifier: name=auth")
+		}
+	}
+	if ins, ok := args.Attr["insert"]; ok {
+		nd.insert = ins.Text
+		if nd.insert != "first" && nd.insert != "last" {
+			ds.Error(a.ArgPos(ins.Col), fmt.Sprintf("invalid insert value %q", nd.insert),
+				"insert=first or insert=last")
+		}
+		if _, named := args.Attr["name"]; named {
+			ds.Error(a.Pos, "insert orders global middleware; named middleware are ordered by their middleware= list",
+				"drop insert= or drop name=")
 		}
 	}
 	if ds.HasFatal() {
@@ -139,14 +157,28 @@ func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		// Named constructors build on first reference.
 		return nil
 	}
+	// Group globals while preserving loader order within each insertion group.
+	m.globals = append(m.globals, nd)
+	if len(m.globals) > 1 {
+		return nil
+	}
 	m.host.record(func(g *gen.Gen) diag.Diagnostics {
+		var ds diag.Diagnostics
 		r := routerSingleton(g)
-		expr, ds := m.expr(g, nd)
-		g.Node(&gen.Call{
-			Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: nd.pos}},
-			Fn:   r + ".Use",
-			Args: []string{expr},
-		})
+		for _, group := range []string{"first", "", "last"} {
+			for _, gn := range m.globals {
+				if gn.insert != group {
+					continue
+				}
+				expr, eds := m.expr(g, gn)
+				ds = append(ds, eds...)
+				g.Node(&gen.Call{
+					Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: gn.pos}},
+					Fn:   r + ".Use",
+					Args: []string{expr},
+				})
+			}
+		}
 		return ds
 	})
 	return nil

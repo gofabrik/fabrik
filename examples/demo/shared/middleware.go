@@ -8,11 +8,12 @@ import (
 	"github.com/gofabrik/fabrik/session"
 )
 
-//fabrik:http:middleware
-func Logged(next http.Handler) http.Handler { return middleware.Logger(next) }
-
-//fabrik:http:middleware
-func Recovered(next http.Handler) http.Handler { return middleware.Recover(next) }
+// Foundation logs requests outside panic recovery and runs before unmarked middleware.
+//
+//fabrik:http:middleware insert=first
+func Foundation(next http.Handler) http.Handler {
+	return middleware.Logger(middleware.Recover(next))
+}
 
 //fabrik:http:middleware
 func SecureHeadersMiddleware(assets assetmapper.Server) func(http.Handler) http.Handler {

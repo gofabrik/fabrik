@@ -447,8 +447,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Middleware
-	r.Use(shared.Logged)
-	r.Use(shared.Recovered)
+	r.Use(shared.Foundation)
 	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
 	r.Use(secureHeadersMiddlewareMW)
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
