@@ -216,3 +216,31 @@ func humanizeAge(t time.Time) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 }
+
+// NewTemplateRequestFuncs declares the request-scoped values templates may
+// read: the typed session and the pending flash messages.
+//
+//fabrik:provider
+func NewTemplateRequestFuncs(sessions *session.Manager[Session], fl *flash.Flash) web.RequestFuncs {
+	return web.RequestFuncs{
+		"session": func(r *http.Request) any {
+			return func() (Session, error) { return sessions.Get(r.Context()) }
+		},
+		"flashes": func(r *http.Request) any {
+			ctx := r.Context()
+			var taken []flash.Message
+			var consumed bool
+			return func() ([]flash.Message, error) {
+				// Cache the result so repeated calls consume flashes only once.
+				if !consumed {
+					msgs, err := fl.Take(ctx)
+					if err != nil {
+						return nil, err
+					}
+					taken, consumed = msgs, true
+				}
+				return taken, nil
+			}
+		},
+	}
+}

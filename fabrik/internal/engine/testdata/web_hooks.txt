@@ -78,11 +78,12 @@ func run() int {
 		// Providers
 		r := router.New()
 		webErrorPages := &web.ErrorPages{}
-		webTemplates, err := web2.LoadTemplates(web.Templates, "templates")
+		requestFuncs := web2.DefaultRequestFuncs()
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}
-		adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
+		adapter := web2.NewAdapter(web2.WithRenderer(webTemplates), web2.WithRequestFuncs(requestFuncs))
 
 		// Register
 		r.NotFound(adapter.Wrap(webErrorPages.NotFound))

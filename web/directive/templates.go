@@ -139,6 +139,45 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 		return nil
 	}
 	t.registered = true
+	g.BindLazyPathAt(requestFuncsPath, nd.pos, func() (string, diag.Diagnostics) {
+		webPkg := g.Import(webPath)
+		expr := webPkg + ".DefaultRequestFuncs()"
+		var ds diag.Diagnostics
+		if rfType, found := g.LookupType(webPath, "RequestFuncs"); found && g.HasBinding(rfType, "") {
+			app, ids, ok := g.Instance(rfType, "")
+			ds = append(ds, ids...)
+			if ok && len(ids) == 0 {
+				expr = webPkg + ".MergeRequestFuncs(" + webPkg + ".DefaultRequestFuncs(), " + app + ")"
+			}
+		}
+		v := g.Var("requestFuncs")
+		g.Node(&gen.Assign{
+			Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
+			Var:  v,
+			Expr: expr,
+		})
+		return v, ds
+	})
+	if rrType, found := g.LookupType(webPath, "RequestRenderer"); found {
+		g.BindLazyAt(rrType, "", nd.pos, func() (string, diag.Diagnostics) {
+			var ds diag.Diagnostics
+			tplExpr, tds, tok := g.InstancePath(templatesPath)
+			ds = append(ds, tds...)
+			rfExpr, rds, rok := g.InstancePath(requestFuncsPath)
+			ds = append(ds, rds...)
+			if !tok || !rok || len(ds) > 0 {
+				return "", ds
+			}
+			webPkg := g.Import(webPath)
+			v := g.Var("requestRenderer")
+			g.Node(&gen.Assign{
+				Base: gen.Base{Phase: gen.PhaseWire, Origin: gen.Origin{Pos: nd.pos}},
+				Var:  v,
+				Expr: webPkg + ".RequestRenderer{Templates: " + tplExpr + ", Funcs: " + rfExpr + "}",
+			})
+			return v, ds
+		})
+	}
 	g.BindLazyPathAt(templatesPath, nd.pos, func() (string, diag.Diagnostics) {
 		decls := t.sortedDecls()
 		for _, d := range decls {
@@ -164,8 +203,6 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			args = []string{b.String()}
 		}
 		// Later FuncMaps win; app helpers override contributed ones.
-		// Contributed maps are stdlib html/template FuncMaps; web.FuncMap is
-		// a defined type, so the call site converts.
 		var ds diag.Diagnostics
 		for _, c := range t.contributed {
 			expr, cds := c.build(g)
@@ -175,13 +212,17 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			}
 		}
 		if fmType, found := g.LookupType(webPath, "FuncMap"); found && g.HasBinding(fmType, "") {
-			// An app provider returning web.FuncMap supplies the static
-			// helpers; appended last so they override contributed maps.
 			expr, ids, ok := g.Instance(fmType, "")
 			ds = append(ds, ids...)
 			if ok && len(ids) == 0 {
 				args = append(args, expr)
 			}
+		}
+		// Register request-func stubs for parsing; the adapter overlays them per request.
+		rfExpr, rfDS, rfOK := g.InstancePath(requestFuncsPath)
+		ds = append(ds, rfDS...)
+		if rfOK && len(rfDS) == 0 {
+			args = append(args, rfExpr+".Stubs()")
 		}
 
 		v := g.Var(first.pkg.Name() + first.varName)
@@ -200,8 +241,6 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	return nil
 }
 
-// unknownFuncName extracts the name from a parse error reporting an
-// undefined template function.
 func unknownFuncName(err error) (string, bool) {
 	m := unknownFuncRE.FindStringSubmatch(err.Error())
 	if m == nil {
@@ -211,6 +250,15 @@ func unknownFuncName(err error) (string, bool) {
 }
 
 var unknownFuncRE = regexp.MustCompile(`function "([^"]+)" not defined`)
+
+func (t *Templates) hasFuncProvider(g *gen.Gen) bool {
+	for _, name := range []string{"FuncMap", "RequestFuncs"} {
+		if ty, ok := g.LookupType(webPath, name); ok && g.HasBinding(ty, "") {
+			return true
+		}
+	}
+	return false
+}
 
 func (t *Templates) sortedDecls() []*tplNode {
 	decls := append([]*tplNode(nil), t.decls...)
@@ -225,7 +273,7 @@ func (t *Templates) sortedDecls() []*tplNode {
 }
 
 // Validate loads templates during wiring, before generated startup code runs.
-func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
+func (t *Templates) Validate(g *gen.Gen) diag.Diagnostics {
 	var ds diag.Diagnostics
 	if len(t.decls) == 0 {
 		return ds
@@ -252,7 +300,7 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 	}
 
 	if !collided {
-		stubs := web.FuncMap{}
+		stubs := web.DefaultRequestFuncs().Stubs()
 		for _, c := range t.contributed {
 			for _, name := range c.names {
 				stubs[name] = func(...any) any { return nil }
@@ -262,9 +310,9 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 		for i, d := range decls {
 			sources[i] = web.TemplateSource{FS: t.treeFS(d.srcDir), Dir: d.dir}
 		}
-		// Provider-supplied funcs are opaque here, so names the parse does
-		// not know are stubbed one by one and reported; startup template
-		// load performs the hard existence check.
+		// Unknown funcs remain warnings when validation cannot inspect an app
+		// provider; startup loading verifies them.
+		lenient := g == nil || t.hasFuncProvider(g)
 		var assumed []string
 		for {
 			_, err := web.LoadTemplateSources(sources, stubs)
@@ -272,7 +320,7 @@ func (t *Templates) Validate(*gen.Gen) diag.Diagnostics {
 				break
 			}
 			name, ok := unknownFuncName(err)
-			if !ok || stubs[name] != nil {
+			if !ok || !lenient || stubs[name] != nil {
 				ds.Error(decls[0].pos, err.Error(),
 					"the templates are loaded and parsed at generation time; fix the tree and rerun")
 				break

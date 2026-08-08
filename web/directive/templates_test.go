@@ -131,3 +131,16 @@ func TestValidateStillFailsOnBrokenTemplates(t *testing.T) {
 		t.Fatalf("Validate = %v, want one parse error", ds)
 	}
 }
+
+func TestValidateKnowsDefaultRequestFuncs(t *testing.T) {
+	tpl := NewTemplates()
+	tpl.decls = []*tplNode{
+		writeTree(t, map[string]string{
+			"templates/_default/_layout.html": `{{ block "content" . }}{{ end }}`,
+			"templates/_default/home.html":    `{{ define "content" }}{{ request.Path }} {{ pathValue "id" }} {{ query "q" }}{{ end }}`,
+		}),
+	}
+	if ds := tpl.Validate(nil); len(ds) != 0 {
+		t.Fatalf("Validate = %v, want no diagnostics for the built-in request funcs", ds)
+	}
+}

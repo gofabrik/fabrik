@@ -96,7 +96,8 @@ func run() int {
 			return err
 		}
 		webWebFuncMap := web.NewTemplateFuncs()
-		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), webWebFuncMap)
+		requestFuncs := web2.DefaultRequestFuncs()
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), webWebFuncMap, requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}

@@ -82,7 +82,8 @@ func run() int {
 		// Providers
 		r := router.New()
 		sharedWebFuncMap := shared.NewTemplateFuncs()
-		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", sharedWebFuncMap)
+		requestFuncs := web2.DefaultRequestFuncs()
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", sharedWebFuncMap, requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}

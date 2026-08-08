@@ -344,7 +344,8 @@ func run() int {
 						return fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
 					}
 					webWebFuncMap := web.NewTemplateFuncs()
-					webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), webWebFuncMap)
+					requestFuncs := web2.DefaultRequestFuncs()
+					webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), webWebFuncMap, requestFuncs.Stubs())
 					if err != nil {
 						return err
 					}
@@ -356,7 +357,7 @@ func run() int {
 					r.Method("GET", "/api/items/{id}", webAPI.Item, shared.RequireAuth)
 					r.Method("POST", "/api/items", webAPI.Create, shared.RequireAuth)
 					r.Handle("/metrics", web.Metrics())
-					adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
+					adapter := web2.NewAdapter(web2.WithRenderer(webTemplates), web2.WithRequestFuncs(requestFuncs))
 					r.Method("GET", "/api/api/items.json", adapter.Wrap(webAPI.ItemsJSON), shared.RequireAuth)
 					r.NotFound(web.Missing)
 					return store.Serve(ctx, httpserver.New(r, sharedHttpServer))

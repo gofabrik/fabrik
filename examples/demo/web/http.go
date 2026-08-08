@@ -34,7 +34,6 @@ type HomePage struct {
 	Started  time.Time
 	Visits   int64
 	Recent   []Greeting
-	Flashes  []flash.Message
 }
 
 // Greeting is a recorded greeting.
@@ -56,11 +55,6 @@ type Handlers struct {
 //fabrik:web GET /{$} middleware=nocache
 func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	ctx := req.Context()
-
-	flashes, err := h.Flash.Take(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	s, err := h.Session.Get(ctx)
 	if err != nil {
@@ -92,7 +86,7 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	return web.Template("web/home", HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits, Recent: recent, Flashes: flashes}), nil
+	return web.Template("web/home", HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits, Recent: recent}), nil
 }
 
 // AboutPage is the about page's view model; it carries no template name.
@@ -113,13 +107,13 @@ type UptimePage struct {
 
 // Status renders through the template set directly, without the web adapter.
 type Status struct {
-	Templates *web.Templates
+	Renderer web.RequestRenderer
 }
 
 //fabrik:http GET /uptime
 func (s *Status) Uptime(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.Templates.Render(w, "web/uptime", "", UptimePage{Started: started}); err != nil {
+	if err := s.Renderer.Render(w, r, "web/uptime", "", UptimePage{Started: started}); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }
