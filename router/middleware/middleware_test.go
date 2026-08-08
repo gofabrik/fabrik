@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -52,4 +55,29 @@ func TestRecoverAbortPassesThrough(t *testing.T) {
 		}
 	}()
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+}
+
+// Logger must observe the 500 produced when Recover handles a panic.
+func TestLoggerLogsRecoveredPanic(t *testing.T) {
+	prev := slog.Default()
+	defer slog.SetDefault(prev)
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	h := Logger(Recover(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	})))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "msg=panic") {
+		t.Errorf("panic not logged:\n%s", logged)
+	}
+	if !strings.Contains(logged, "msg=request") || !strings.Contains(logged, "status=500") {
+		t.Errorf("request line missing or without the recovered status:\n%s", logged)
+	}
 }

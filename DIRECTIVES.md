@@ -294,7 +294,7 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }
 
 **`//fabrik:http:middleware [name=NAME]`**
 
-Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. Bare middleware is global, including 404/405. With `name=`, routes and groups opt in through their `middleware=` chain.
+Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. Bare middleware is global, including 404/405; every global runs before any named route middleware. `insert=first` registers a global before the unmarked ones, `insert=last` after them (first-registered is outermost). Within one insert group the relative order is unspecified; middleware that must order within a group are composed into one declaration. With `name=`, routes and groups opt in through their `middleware=` chain.
 
 ```go
 //fabrik:http:middleware name=auth
@@ -309,6 +309,7 @@ func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Hand
 Options:
 
 - `name=`
+- `insert=` - one of first, last
 
 ## fabrik:http:notfound
 
