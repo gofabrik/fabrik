@@ -4,7 +4,9 @@ package nightlyreport
 
 import (
 	"bytes"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"regexp"
@@ -42,7 +44,7 @@ func ClassifyLint(data []byte) Status {
 			FromLinter string `json:"FromLinter"`
 		} `json:"Issues"`
 	}
-	if err := json.Unmarshal(data, &out); err != nil || out.Issues == nil {
+	if err := json.Unmarshal(data, &out, jsonv1.DefaultOptionsV1()); err != nil || out.Issues == nil {
 		return StatusError
 	}
 	for _, is := range *out.Issues {
@@ -62,7 +64,7 @@ func ClassifyVuln(data []byte, goRunExit int) Status {
 	if goRunExit != 0 {
 		return StatusError
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := jsontext.NewDecoder(bytes.NewReader(data))
 	symbol, validConfig := false, false
 	anyFinding, reachable := false, false
 	for {
@@ -76,7 +78,7 @@ func ClassifyVuln(data []byte, goRunExit int) Status {
 				} `json:"trace"`
 			} `json:"finding"`
 		}
-		if err := dec.Decode(&msg); err != nil {
+		if err := json.UnmarshalDecode(dec, &msg, jsonv1.DefaultOptionsV1()); err != nil {
 			if err == io.EOF {
 				break
 			}
@@ -107,14 +109,14 @@ func ClassifyVuln(data []byte, goRunExit int) Status {
 
 // ClassifyTest treats test failures as findings and build, setup, or runner failures as errors.
 func ClassifyTest(data []byte, testExit int) Status {
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := jsontext.NewDecoder(bytes.NewReader(data))
 	failed := false
 	for {
 		var ev struct {
 			Action      string `json:"Action"`
 			FailedBuild string `json:"FailedBuild"`
 		}
-		if err := dec.Decode(&ev); err != nil {
+		if err := json.UnmarshalDecode(dec, &ev, jsonv1.DefaultOptionsV1()); err != nil {
 			if err == io.EOF {
 				break
 			}
@@ -167,7 +169,7 @@ func ClassifyTidy(diff, stderr []byte, tidyExit int) Status {
 // more intra-repo v0.1.0 resolution errors and nothing else.
 func tidyErrorsAllIntraRepo(stderr []byte) bool {
 	found := false
-	for _, raw := range bytes.Split(stderr, []byte("\n")) {
+	for raw := range bytes.SplitSeq(stderr, []byte("\n")) {
 		line := strings.TrimSpace(string(raw))
 		if line == "" ||
 			strings.HasPrefix(line, "go: downloading ") ||
@@ -194,14 +196,14 @@ func ClassifyFreshness(data []byte, listExit int) Status {
 	if listExit != 0 {
 		return StatusError
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := jsontext.NewDecoder(bytes.NewReader(data))
 	total, updates := 0, 0
 	for {
 		var m struct {
 			Path   string
 			Update *struct{ Version string }
 		}
-		if err := dec.Decode(&m); err != nil {
+		if err := json.UnmarshalDecode(dec, &m, jsonv1.DefaultOptionsV1()); err != nil {
 			if err == io.EOF {
 				break
 			}
@@ -227,7 +229,7 @@ func ClassifyFreshness(data []byte, listExit int) Status {
 
 // Freshness returns unique modules with updates from `go list -m -u -json all` output.
 func Freshness(data []byte) ([]Update, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := jsontext.NewDecoder(bytes.NewReader(data))
 	var updates []Update
 	seen := map[string]bool{}
 	for {
@@ -236,7 +238,7 @@ func Freshness(data []byte) ([]Update, error) {
 			Version string
 			Update  *struct{ Version string }
 		}
-		if err := dec.Decode(&m); err != nil {
+		if err := json.UnmarshalDecode(dec, &m, jsonv1.DefaultOptionsV1()); err != nil {
 			if err == io.EOF {
 				break
 			}
@@ -252,7 +254,7 @@ func Freshness(data []byte) ([]Update, error) {
 
 // VulnSummary formats reachable vulnerabilities as one line per OSV and called symbol.
 func VulnSummary(data []byte) string {
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := jsontext.NewDecoder(bytes.NewReader(data))
 	var lines []string
 	seen := map[string]bool{}
 	for {
@@ -266,7 +268,7 @@ func VulnSummary(data []byte) string {
 				} `json:"trace"`
 			} `json:"finding"`
 		}
-		if err := dec.Decode(&msg); err != nil {
+		if err := json.UnmarshalDecode(dec, &msg, jsonv1.DefaultOptionsV1()); err != nil {
 			break
 		}
 		f := msg.Finding
@@ -287,13 +289,13 @@ func VulnSummary(data []byte) string {
 
 // TestOutput joins Output fields from a `go test -json` event stream.
 func TestOutput(data []byte) string {
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := jsontext.NewDecoder(bytes.NewReader(data))
 	var b strings.Builder
 	for {
 		var ev struct {
 			Output string `json:"Output"`
 		}
-		if err := dec.Decode(&ev); err != nil {
+		if err := json.UnmarshalDecode(dec, &ev, jsonv1.DefaultOptionsV1()); err != nil {
 			break
 		}
 		b.WriteString(ev.Output)
@@ -355,10 +357,7 @@ func Render(results []ModuleResult, freshness Status, updates []Update, meta Met
 	b.WriteString("\n## Details\n")
 
 	if b.Len()+len(truncNote) > budget {
-		keep := budget - len(truncNote)
-		if keep < 0 {
-			keep = 0
-		}
+		keep := max(budget-len(truncNote), 0)
 		return clamp(b.String()[:keep]+truncNote, budget)
 	}
 
@@ -422,10 +421,7 @@ func detailBlock(module, check string, status Status, body string, remaining int
 	if len(body)+overhead <= remaining {
 		return head + body + tail, true
 	}
-	cut := remaining - overhead - len("\n(truncated)")
-	if cut < 0 {
-		cut = 0
-	}
+	cut := max(remaining-overhead-len("\n(truncated)"), 0)
 	return head + body[:cut] + "\n(truncated)" + tail, false
 }
 

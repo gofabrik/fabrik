@@ -2,7 +2,8 @@ package session
 
 import (
 	"context"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"reflect"
 )
@@ -129,7 +130,7 @@ func (h *Handle[T]) ClearSID(ctx context.Context, sid string) error {
 }
 
 func (h *Handle[T]) encode(v T) (cellRaw, error) {
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(v, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return nil, fmt.Errorf("session: cell %q: encode: %w", h.key, err)
 	}
@@ -138,7 +139,7 @@ func (h *Handle[T]) encode(v T) (cellRaw, error) {
 
 func (h *Handle[T]) decode(raw cellRaw) (T, error) {
 	var v T
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := json.Unmarshal(raw, &v, jsonv1.DefaultOptionsV1()); err != nil {
 		var zero T
 		return zero, fmt.Errorf("session: cell %q: decode: %w", h.key, err)
 	}

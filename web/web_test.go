@@ -16,11 +16,9 @@ import (
 
 type loginPage struct{ Error string }
 
-func (loginPage) Template() string { return "auth/login" }
-
 func login(req *web.Request) (web.Response, error) {
 	if req.FormValue("email") == "" {
-		return web.View(loginPage{Error: "missing email"}), nil
+		return web.Template("auth/login", loginPage{Error: "missing email"}), nil
 	}
 	req.SetCookie("session", "tok", web.CookieSecure(), web.CookieHTTPOnly())
 	return web.Redirect("/account"), nil
@@ -120,18 +118,18 @@ func TestResponseHeaderWinsOverRecorded(t *testing.T) {
 
 type fakeRenderer struct{ name string }
 
-func (f *fakeRenderer) Render(w io.Writer, name string, data any) error {
+func (f *fakeRenderer) Render(w io.Writer, name, block string, data any) error {
 	f.name = name
 	_, err := w.Write([]byte("rendered"))
 	return err
 }
 
-func TestViewRendersThroughRenderer(t *testing.T) {
+func TestTemplateRendersThroughRenderer(t *testing.T) {
 	r := &fakeRenderer{}
 	a := web.NewAdapter(web.WithRenderer(r))
 	rec := httptest.NewRecorder()
 	a.Wrap(func(*web.Request) (web.Response, error) {
-		return web.View(loginPage{}), nil
+		return web.Template("auth/login", loginPage{}), nil
 	})(rec, httptest.NewRequest("GET", "/", nil))
 	if r.name != "auth/login" || rec.Body.String() != "rendered" {
 		t.Fatalf("render = %q body %q", r.name, rec.Body.String())
@@ -141,17 +139,24 @@ func TestViewRendersThroughRenderer(t *testing.T) {
 	}
 }
 
+var errRenderExploded = errors.New("render exploded")
+
 type failingRenderer struct{}
 
-func (failingRenderer) Render(io.Writer, string, any) error {
-	return errors.New("render exploded")
+func (failingRenderer) Render(io.Writer, string, string, any) error {
+	return errRenderExploded
 }
 
-func TestViewRenderFailureRestoresHeadersAndErrors(t *testing.T) {
-	a := web.NewAdapter(web.WithRenderer(failingRenderer{}))
+func TestTemplateRenderFailureRestoresHeadersAndErrors(t *testing.T) {
+	var handled error
+	a := web.NewAdapter(web.WithRenderer(failingRenderer{}),
+		web.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+			handled = err
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
 	rec := httptest.NewRecorder()
 	a.Wrap(func(*web.Request) (web.Response, error) {
-		return web.View(loginPage{}), nil
+		return web.Template("auth/login", loginPage{}), nil
 	})(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 through the error handler", rec.Code)
@@ -159,15 +164,21 @@ func TestViewRenderFailureRestoresHeadersAndErrors(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/html") {
 		t.Fatalf("Content-Type = %q, want the pre-render header restored", ct)
 	}
+	if want := "web: render auth/login: render exploded"; handled == nil || handled.Error() != want {
+		t.Fatalf("handled error = %v, want %q", handled, want)
+	}
+	if !errors.Is(handled, errRenderExploded) {
+		t.Fatalf("Template render error not wrapped with %%w: %v", handled)
+	}
 }
 
-func TestViewWithoutRendererFailsThroughErrorPath(t *testing.T) {
+func TestTemplateWithoutRendererFailsThroughErrorPath(t *testing.T) {
 	var handled error
 	a := web.NewAdapter(web.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
 		handled = err
 	}))
 	a.Wrap(func(*web.Request) (web.Response, error) {
-		return web.View(loginPage{}), nil
+		return web.Template("auth/login", loginPage{}), nil
 	})(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 	if handled == nil || !strings.Contains(handled.Error(), "without a renderer") {
 		t.Fatalf("got %v", handled)
@@ -181,7 +192,7 @@ func TestJSONBufferedEncodeErrorReachesErrorHandler(t *testing.T) {
 	}))
 	rec := httptest.NewRecorder()
 	a.Wrap(func(*web.Request) (web.Response, error) {
-		return web.JSON{Value: make(chan int)}, nil // unencodable
+		return web.JSON(make(chan int)), nil // unencodable
 	})(rec, httptest.NewRequest("GET", "/", nil))
 	if handled == nil {
 		t.Fatal("encode error not routed")
@@ -194,7 +205,7 @@ func TestJSONBufferedEncodeErrorReachesErrorHandler(t *testing.T) {
 func TestJSONResponds(t *testing.T) {
 	rec := httptest.NewRecorder()
 	web.NewAdapter().Wrap(func(*web.Request) (web.Response, error) {
-		return web.JSON{Value: map[string]int{"n": 1}}, nil
+		return web.JSON(map[string]int{"n": 1}), nil
 	})(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != 200 || rec.Body.String() != `{"n":1}` {
 		t.Fatalf("json = %d %q", rec.Code, rec.Body.String())
@@ -263,10 +274,10 @@ func (failAfterCommit) Respond(w http.ResponseWriter, r *http.Request) error {
 	return errors.New("stream broke")
 }
 
-// View responses carry no adapter state.
-var sharedHome = web.View(loginPage{Error: "none"})
+// Template responses carry no adapter state.
+var sharedHome = web.Template("auth/login", loginPage{Error: "none"})
 
-func TestViewValuesAreShareable(t *testing.T) {
+func TestTemplateValuesAreShareable(t *testing.T) {
 	r1 := &fakeRenderer{}
 	a1 := web.NewAdapter(web.WithRenderer(r1))
 	rec := httptest.NewRecorder()
@@ -283,7 +294,7 @@ func TestViewValuesAreShareable(t *testing.T) {
 	a2.Wrap(func(*web.Request) (web.Response, error) { return sharedHome, nil })(
 		httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 	if handled == nil || !strings.Contains(handled.Error(), "without a renderer") {
-		t.Fatalf("second adapter = %v, want renderer error - shared view leaked state", handled)
+		t.Fatalf("second adapter = %v, want renderer error - shared template response leaked state", handled)
 	}
 }
 
@@ -375,7 +386,7 @@ func TestRespondFailureCarriesNoRecordedState(t *testing.T) {
 	a.Wrap(func(req *web.Request) (web.Response, error) {
 		req.SetHeader("X-Trace", "recorded")
 		req.SetCookie("session", "must-not-leak")
-		return web.View(loginPage{}), nil // fails: no renderer configured
+		return web.Template("auth/login", loginPage{}), nil // fails: no renderer configured
 	})(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("code = %d", rec.Code)
@@ -393,7 +404,7 @@ func TestStripRestoresMiddlewareOwnedState(t *testing.T) {
 	inner := a.Wrap(func(req *web.Request) (web.Response, error) {
 		req.SetHeader("X-Kind", "handler")
 		req.SetCookie("session", "must-not-leak")
-		return web.View(loginPage{}), nil // fails pre-commit: no renderer
+		return web.Template("auth/login", loginPage{}), nil // fails pre-commit: no renderer
 	})
 	// Middleware outside Wrap owns response state of its own.
 	outer := func(w http.ResponseWriter, r *http.Request) {
@@ -422,8 +433,8 @@ func TestSetHeaderCanonicalizes(t *testing.T) {
 	rec := httptest.NewRecorder()
 	a.Wrap(func(req *web.Request) (web.Response, error) {
 		req.SetHeader("x-trace", "lower")
-		req.SetHeader("X-Trace", "canonical") // same header, later wins
-		return web.View(loginPage{}), nil     // fails pre-commit
+		req.SetHeader("X-Trace", "canonical")               // same header, later wins
+		return web.Template("auth/login", loginPage{}), nil // fails pre-commit
 	})(rec, httptest.NewRequest("GET", "/", nil))
 	for key := range rec.Header() {
 		if strings.EqualFold(key, "X-Trace") {
@@ -445,7 +456,7 @@ func TestSetHeaderCanonicalizes(t *testing.T) {
 func TestJSONStatusOverride(t *testing.T) {
 	rec := httptest.NewRecorder()
 	web.NewAdapter().Wrap(func(*web.Request) (web.Response, error) {
-		return web.JSON{Status: http.StatusCreated, Value: map[string]int{"id": 7}}, nil
+		return web.JSON(map[string]int{"id": 7}).Status(http.StatusCreated), nil
 	})(rec, httptest.NewRequest("POST", "/", nil))
 	if rec.Code != http.StatusCreated || rec.Body.String() != `{"id":7}` {
 		t.Fatalf("json = %d %q", rec.Code, rec.Body.String())
@@ -601,5 +612,199 @@ func TestCustomErrorHandlerCanReuseErrorStatus(t *testing.T) {
 	h(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != 429 {
 		t.Fatalf("custom handler code = %d, want 429", rec.Code)
+	}
+}
+
+// Both renderer-misconfiguration messages name the surviving option and
+// carry sentinel identities.
+func TestTemplateRendererErrorsArePinned(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	const bareMsg = "web: Template responses render through an adapter (configure WithRenderer)"
+	if err := web.Template("x", nil).Respond(httptest.NewRecorder(), r); !errors.Is(err, web.ErrTemplateWithoutAdapter) || err.Error() != bareMsg {
+		t.Fatalf("bare response error = %v, want %q", err, bareMsg)
+	}
+	var handled error
+	a := web.NewAdapter(web.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+		handled = err
+	}))
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.Template("x", nil), nil
+	})(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+	const adapterMsg = "web: Template response without a renderer (configure WithRenderer)"
+	if !errors.Is(handled, web.ErrNoTemplateRenderer) || handled.Error() != adapterMsg {
+		t.Fatalf("adapter error = %v, want %q", handled, adapterMsg)
+	}
+}
+
+// recordingRenderer keeps both names and writes something identifiable.
+type recordingRenderer struct {
+	name  string
+	block string
+}
+
+func (r *recordingRenderer) Render(w io.Writer, name, block string, data any) error {
+	r.name, r.block = name, block
+	_, err := fmt.Fprintf(w, "rendered %s/%s", name, block)
+	return err
+}
+
+func TestTemplateStatus(t *testing.T) {
+	a := web.NewAdapter(web.WithRenderer(&recordingRenderer{}))
+
+	rec := httptest.NewRecorder()
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.Template("article/form", nil).Status(http.StatusUnprocessableEntity), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("code = %d, want 422", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("a status should not cost the body")
+	}
+
+	// Unset means 200.
+	rec = httptest.NewRecorder()
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.Template("article/form", nil), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+}
+
+func TestTemplateBlock(t *testing.T) {
+	t.Run("adapter default", func(t *testing.T) {
+		r := &recordingRenderer{}
+		a := web.NewAdapter(web.WithRenderer(r), web.WithBlock("layout"))
+		rec := httptest.NewRecorder()
+		a.Wrap(func(*web.Request) (web.Response, error) {
+			return web.Template("todo/list", nil), nil
+		})(rec, httptest.NewRequest("GET", "/", nil))
+		if r.block != "layout" {
+			t.Fatalf("block = %q, want the adapter default", r.block)
+		}
+	})
+
+	t.Run("response overrides it", func(t *testing.T) {
+		r := &recordingRenderer{}
+		a := web.NewAdapter(web.WithRenderer(r), web.WithBlock("layout"))
+		rec := httptest.NewRecorder()
+		a.Wrap(func(*web.Request) (web.Response, error) {
+			return web.Template("todo/list", nil).Block("row"), nil
+		})(rec, httptest.NewRequest("GET", "/", nil))
+		if r.name != "todo/list" || r.block != "row" {
+			t.Fatalf("render = %q/%q, want todo/list/row", r.name, r.block)
+		}
+	})
+
+	t.Run("no default is an empty block", func(t *testing.T) {
+		r := &recordingRenderer{}
+		a := web.NewAdapter(web.WithRenderer(r))
+		rec := httptest.NewRecorder()
+		a.Wrap(func(*web.Request) (web.Response, error) {
+			return web.Template("mail/welcome", nil), nil
+		})(rec, httptest.NewRequest("GET", "/", nil))
+		if r.block != "" {
+			t.Fatalf("block = %q, want empty for a renderer with nothing to choose", r.block)
+		}
+	})
+}
+
+// Chaining returns copies, so a response shared between handlers cannot be
+// altered by one of them adding a status, a block or a header to it.
+func TestTemplateChainingDoesNotMutate(t *testing.T) {
+	base := web.Template("article/form", nil)
+	derived := base.Status(http.StatusUnprocessableEntity).Block("row").Header("X-Kind", "fragment")
+
+	render := func(resp web.Response) (*httptest.ResponseRecorder, *recordingRenderer) {
+		r := &recordingRenderer{}
+		rec := httptest.NewRecorder()
+		web.NewAdapter(web.WithRenderer(r), web.WithBlock("layout")).
+			Wrap(func(*web.Request) (web.Response, error) { return resp, nil })(
+			rec, httptest.NewRequest("GET", "/", nil))
+		return rec, r
+	}
+
+	rec, r := render(base)
+	if rec.Code != http.StatusOK || r.block != "layout" || rec.Header().Get("X-Kind") != "" {
+		t.Fatalf("the original changed: %d %q %q", rec.Code, r.block, rec.Header().Get("X-Kind"))
+	}
+
+	rec, r = render(derived)
+	if rec.Code != http.StatusUnprocessableEntity || r.block != "row" || rec.Header().Get("X-Kind") != "fragment" {
+		t.Fatalf("the copy did not carry its own: %d %q %q", rec.Code, r.block, rec.Header().Get("X-Kind"))
+	}
+
+	// Two chains from the same base must not see each other's headers.
+	one := base.Header("X-One", "1")
+	two := base.Header("X-Two", "2")
+	rec, _ = render(one)
+	if rec.Header().Get("X-Two") != "" {
+		t.Fatal("one chain leaked a header into another")
+	}
+	rec, _ = render(two)
+	if rec.Header().Get("X-One") != "" {
+		t.Fatal("one chain leaked a header into another")
+	}
+}
+
+func TestJSONHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	web.NewAdapter().Wrap(func(*web.Request) (web.Response, error) {
+		return web.JSON(map[string]int{"n": 1}).
+			Header("Cache-Control", "no-store").
+			Status(http.StatusAccepted), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want the response's own", got)
+	}
+}
+
+// A header on the response wins over one recorded on the request.
+func TestResponseHeaderBeatsRecorded(t *testing.T) {
+	rec := httptest.NewRecorder()
+	web.NewAdapter().Wrap(func(req *web.Request) (web.Response, error) {
+		req.SetHeader("X-Source", "request")
+		return web.HTML(http.StatusOK, "hi").Header("X-Source", "response"), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+
+	if got := rec.Header().Get("X-Source"); got != "response" {
+		t.Fatalf("X-Source = %q, want the response's", got)
+	}
+}
+
+// A failed render must not leave a status behind: the error handler needs to
+// choose one itself.
+func TestTemplateStatusNotCommittedWhenRenderFails(t *testing.T) {
+	var handled error
+	a := web.NewAdapter(
+		web.WithRenderer(failingRenderer{}),
+		web.WithErrorHandler(func(w http.ResponseWriter, r *http.Request, err error) {
+			handled = err
+			w.WriteHeader(http.StatusInternalServerError)
+		}),
+	)
+
+	rec := httptest.NewRecorder()
+	a.Wrap(func(*web.Request) (web.Response, error) {
+		return web.Template("article/form", nil).Status(http.StatusUnprocessableEntity), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+
+	if !errors.Is(handled, errRenderExploded) {
+		t.Fatalf("error handler saw %v", handled)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want the error handler's 500 rather than the response's 422", rec.Code)
+	}
+	if rec.Body.String() != "" {
+		t.Fatalf("body = %q, want nothing written", rec.Body.String())
 	}
 }

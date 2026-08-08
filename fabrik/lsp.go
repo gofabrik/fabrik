@@ -2,7 +2,8 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"flag"
 	"fmt"
 	"io"
@@ -26,12 +27,12 @@ func lspCmd(args []string) error {
 }
 
 type rpcMessage struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	JSONRPC string            `json:"jsonrpc"`
+	ID      jsonv1.RawMessage `json:"id,omitempty"`
+	Method  string            `json:"method,omitempty"`
+	Params  jsonv1.RawMessage `json:"params,omitempty"`
+	Result  jsonv1.RawMessage `json:"result,omitempty"`
+	Error   *rpcError         `json:"error,omitempty"`
 }
 
 type rpcError struct {
@@ -68,14 +69,14 @@ func readMessage(r *bufio.Reader) (*rpcMessage, error) {
 		return nil, err
 	}
 	var msg rpcMessage
-	if err := json.Unmarshal(body, &msg); err != nil {
+	if err := json.Unmarshal(body, &msg, jsonv1.DefaultOptionsV1()); err != nil {
 		return nil, err
 	}
 	return &msg, nil
 }
 
 func writeMessage(w io.Writer, msg any) error {
-	body, err := json.Marshal(msg)
+	body, err := json.Marshal(msg, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return err
 	}
@@ -232,21 +233,21 @@ func (s *lspServer) send(msg any) {
 	}
 }
 
-func (s *lspServer) reply(id json.RawMessage, result any) {
-	body, _ := json.Marshal(result)
+func (s *lspServer) reply(id jsonv1.RawMessage, result any) {
+	body, _ := json.Marshal(result, jsonv1.DefaultOptionsV1())
 	s.send(struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Result  json.RawMessage `json:"result"`
+		JSONRPC string            `json:"jsonrpc"`
+		ID      jsonv1.RawMessage `json:"id"`
+		Result  jsonv1.RawMessage `json:"result"`
 	}{"2.0", id, body})
 }
 
 func (s *lspServer) notify(method string, params any) {
-	body, _ := json.Marshal(params)
+	body, _ := json.Marshal(params, jsonv1.DefaultOptionsV1())
 	s.send(struct {
-		JSONRPC string          `json:"jsonrpc"`
-		Method  string          `json:"method"`
-		Params  json.RawMessage `json:"params"`
+		JSONRPC string            `json:"jsonrpc"`
+		Method  string            `json:"method"`
+		Params  jsonv1.RawMessage `json:"params"`
 	}{"2.0", method, body})
 }
 
@@ -287,36 +288,36 @@ func (s *lspServer) handle(msg *rpcMessage) (exit bool) {
 		return true
 	case "textDocument/didOpen":
 		var p didOpenParams
-		_ = json.Unmarshal(msg.Params, &p)
+		_ = json.Unmarshal(msg.Params, &p, jsonv1.DefaultOptionsV1())
 		s.setDoc(p.TextDocument.URI, p.TextDocument.Text)
 		s.onChange(p.TextDocument.URI)
 	case "textDocument/didChange":
 		var p didChangeParams
-		_ = json.Unmarshal(msg.Params, &p)
+		_ = json.Unmarshal(msg.Params, &p, jsonv1.DefaultOptionsV1())
 		if len(p.ContentChanges) > 0 {
 			s.setDoc(p.TextDocument.URI, p.ContentChanges[len(p.ContentChanges)-1].Text)
 		}
 		s.onChange(p.TextDocument.URI)
 	case "textDocument/didSave":
 		var p didSaveParams
-		_ = json.Unmarshal(msg.Params, &p)
+		_ = json.Unmarshal(msg.Params, &p, jsonv1.DefaultOptionsV1())
 		if p.Text != nil {
 			s.setDoc(p.TextDocument.URI, *p.Text)
 		}
 		s.onChange(p.TextDocument.URI)
 	case "textDocument/didClose":
 		var p didCloseParams
-		_ = json.Unmarshal(msg.Params, &p)
+		_ = json.Unmarshal(msg.Params, &p, jsonv1.DefaultOptionsV1())
 		s.mu.Lock()
 		delete(s.docs, p.TextDocument.URI)
 		s.mu.Unlock()
 	case "textDocument/completion":
 		var p completionParams
-		_ = json.Unmarshal(msg.Params, &p)
+		_ = json.Unmarshal(msg.Params, &p, jsonv1.DefaultOptionsV1())
 		s.reply(msg.ID, s.completion(p.TextDocument.URI, p.Position))
 	case "textDocument/hover":
 		var p hoverParams
-		_ = json.Unmarshal(msg.Params, &p)
+		_ = json.Unmarshal(msg.Params, &p, jsonv1.DefaultOptionsV1())
 		s.reply(msg.ID, s.hover(p.TextDocument.URI, p.Position))
 	default:
 		if len(msg.ID) > 0 && string(msg.ID) != "null" {

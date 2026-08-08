@@ -27,7 +27,7 @@ func TestWireMigrationOverlay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/migrations v0.0.0\n\nreplace github.com/gofabrik/fabrik/migrations => "+migrationsDir+"\n")
+	write("go.mod", "module app\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/migrations v0.0.0\n\nreplace github.com/gofabrik/fabrik/migrations => "+migrationsDir+"\n")
 	write("main.go", "package main\n\nfunc main() { _ = run }\n")
 	write("shared/migrations.go", "package shared\n\nimport \"embed\"\n\n//fabrik:migrations\n//go:embed all:migrations\nvar Migrations embed.FS\n")
 	write("shared/migrations/0001_users.sql", "CREATE TABLE users (id INTEGER PRIMARY KEY);\n")

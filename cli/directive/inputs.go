@@ -311,7 +311,7 @@ func (i *Input) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 				"supported for scalar string, int, int64, float64")
 			return nil, ds
 		}
-		for _, el := range strings.Split(v.Text, ",") {
+		for el := range strings.SplitSeq(v.Text, ",") {
 			lit, err := spec.canon(el)
 			if err != nil {
 				ds.Error(a.ArgPos(v.Col), fmt.Sprintf("values= element %q does not parse as %s: %v", el, nd.typ, err), "")
@@ -412,7 +412,7 @@ func typeNames(k inputKind) []string {
 
 func camelToken(tok string) string {
 	var b strings.Builder
-	for _, part := range strings.Split(tok, "-") {
+	for part := range strings.SplitSeq(tok, "-") {
 		r := []rune(part)
 		b.WriteRune(unicode.ToUpper(r[0]))
 		b.WriteString(string(r[1:]))

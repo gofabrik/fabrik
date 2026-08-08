@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -438,9 +439,7 @@ func (v *Vendor) directRequirements() (map[string]string, error) {
 		if err := lock.Verify(v.VendorDir); err != nil {
 			return nil, err
 		}
-		for specifier, version := range lock.DirectRequirements {
-			direct[specifier] = version
-		}
+		maps.Copy(direct, lock.DirectRequirements)
 	}
 	if len(direct) == 0 {
 		// Conservative migration: preserve every legacy vendored entry as a

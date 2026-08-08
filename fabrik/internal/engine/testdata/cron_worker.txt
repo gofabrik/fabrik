@@ -2,7 +2,7 @@ A //fabrik:cron handler binds an injectable *jobs.Runner with scheduling enabled
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require (
 	github.com/gofabrik/fabrik/cli v0.0.0

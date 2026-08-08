@@ -948,11 +948,10 @@ func TestVendor_RemoveMissingEntryIsError(t *testing.T) {
 // Conflicting scoped JSPM resolutions are rejected before flattening.
 func TestJSPMResolver_RejectsConflictingScopes(t *testing.T) {
 	response := `{"map": {"imports": {}, "scopes": {}}}`
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(response))
 	}))
-	defer srv.Close()
 	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
 
@@ -980,7 +979,7 @@ func TestJSPMResolver_RejectsConflictingScopes(t *testing.T) {
 
 func TestJSPMResolver_ResolvesViaGenerateEndpoint(t *testing.T) {
 	var gotPath, gotMethod, gotBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotMethod = r.Method
 		buf := make([]byte, r.ContentLength)
@@ -1000,7 +999,6 @@ func TestJSPMResolver_ResolvesViaGenerateEndpoint(t *testing.T) {
 			}
 		}`))
 	}))
-	defer srv.Close()
 
 	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
@@ -1040,7 +1038,7 @@ func TestJSPMResolver_ResolvesViaGenerateEndpoint(t *testing.T) {
 func TestJSPMResolver_ResolvesScopedPackageVersion(t *testing.T) {
 	// "@radix-ui/themes" has an "@" in its name; the version parser
 	// must use the LAST "@" before the path component, not the first.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"map": {
@@ -1050,7 +1048,6 @@ func TestJSPMResolver_ResolvesScopedPackageVersion(t *testing.T) {
 			}
 		}`))
 	}))
-	defer srv.Close()
 
 	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
@@ -1069,14 +1066,13 @@ func TestJSPMResolver_ResolvesScopedPackageVersion(t *testing.T) {
 }
 
 func TestJSPMResolver_FetchDownloadsURL(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/npm:react@18.2.0/index.js" {
 			_, _ = w.Write([]byte(`export default {}`))
 			return
 		}
 		http.NotFound(w, r)
 	}))
-	defer srv.Close()
 
 	res := localJSPMResolver(srv)
 	data, err := res.Fetch(context.Background(), srv.URL+"/npm:react@18.2.0/index.js")
@@ -1089,10 +1085,9 @@ func TestJSPMResolver_FetchDownloadsURL(t *testing.T) {
 }
 
 func TestJSPMResolver_FetchSurfacesNon2xx(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
-	defer srv.Close()
 
 	res := localJSPMResolver(srv)
 	_, err := res.Fetch(context.Background(), srv.URL+"/x")
@@ -1111,7 +1106,7 @@ func TestVendor_EndToEnd_WithJSPMResolver(t *testing.T) {
 	reactSrc := `import sched from "https://ga.jspm.io/npm:scheduler@0.23.0/index.js"; export default sched;`
 	schedSrc := `export default function(){};`
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/generate":
 			w.Header().Set("Content-Type", "application/json")
@@ -1135,7 +1130,6 @@ func TestVendor_EndToEnd_WithJSPMResolver(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer srv.Close()
 
 	res := localJSPMResolver(srv)
 	res.BaseURL = srv.URL
@@ -1180,8 +1174,8 @@ func (f *fetchRedirectResolver) Resolve(ctx context.Context, reqs []assetmapper.
 }
 
 func (f *fetchRedirectResolver) Fetch(ctx context.Context, url string) ([]byte, error) {
-	if strings.HasPrefix(url, f.Prefix) {
-		url = f.Replace + strings.TrimPrefix(url, f.Prefix)
+	if after, ok := strings.CutPrefix(url, f.Prefix); ok {
+		url = f.Replace + after
 	}
 	return f.Inner.Fetch(ctx, url)
 }

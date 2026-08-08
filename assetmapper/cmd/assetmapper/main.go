@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -126,8 +127,8 @@ func run(args []string, out io.Writer) error {
 
 // splitPackageVersion keeps scoped-package prefixes intact.
 func splitPackageVersion(s string) (pkg, version string) {
-	if at := strings.LastIndex(s, "@"); at > 0 {
-		return s[:at], s[at+1:]
+	if before, after, found := strings.CutLast(s, "@"); found && before != "" {
+		return before, after
 	}
 	return s, ""
 }
@@ -145,9 +146,7 @@ func loadOrEmptyImportmap(path string) (*assetmapper.Importmap, error) {
 
 func entriesCopy(im *assetmapper.Importmap) map[string]assetmapper.ImportmapEntry {
 	out := make(map[string]assetmapper.ImportmapEntry, len(im.Entries))
-	for k, e := range im.Entries {
-		out[k] = e
-	}
+	maps.Copy(out, im.Entries)
 	return out
 }
 

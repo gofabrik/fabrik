@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -164,8 +165,8 @@ func assetTreeDir() (string, error) {
 
 // splitPackageVersion keeps scoped-package prefixes intact.
 func splitPackageVersion(s string) (pkg, version string) {
-	if at := strings.LastIndex(s, "@"); at > 0 {
-		return s[:at], s[at+1:]
+	if before, after, found := strings.CutLast(s, "@"); found && before != "" {
+		return before, after
 	}
 	return s, ""
 }
@@ -183,8 +184,6 @@ func loadOrEmptyImportmap(path string) (*assetmapper.Importmap, error) {
 
 func copyAssetEntries(im *assetmapper.Importmap) map[string]assetmapper.ImportmapEntry {
 	entries := make(map[string]assetmapper.ImportmapEntry, len(im.Entries))
-	for specifier, entry := range im.Entries {
-		entries[specifier] = entry
-	}
+	maps.Copy(entries, im.Entries)
 	return entries
 }

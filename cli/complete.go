@@ -190,8 +190,8 @@ func runComplete(ctx Context, root *Command, partial []string) error {
 			return writeErr
 		}
 
-		if strings.HasPrefix(cur, "--") {
-			prefix := strings.TrimPrefix(cur, "--")
+		if after, ok := strings.CutPrefix(cur, "--"); ok {
+			prefix := after
 			for _, f := range w.known {
 				if f.flagHidden() {
 					continue

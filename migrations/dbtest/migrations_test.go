@@ -456,7 +456,7 @@ func TestMigrate_ConcurrentSQLite(t *testing.T) {
 
 	const N = 4
 	results := make(chan error, N)
-	for i := 0; i < N; i++ {
+	for range N {
 		go func() {
 			results <- migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src)
 		}()
@@ -464,7 +464,7 @@ func TestMigrate_ConcurrentSQLite(t *testing.T) {
 
 	var errs []error
 	succeeded := 0
-	for i := 0; i < N; i++ {
+	for range N {
 		err := <-results
 		if err == nil {
 			succeeded++

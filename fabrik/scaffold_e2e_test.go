@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestScaffoldPinsSurviveRealFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	libs := map[string]string{}
-	for _, m := range []string{"router", "web", "templates", "config", "assetmapper", "cli", "httpserver"} {
+	for _, m := range []string{"router", "web", "config", "assetmapper", "cli", "httpserver"} {
 		libs["github.com/gofabrik/fabrik/"+m] = filepath.Join(repoRoot, m)
 	}
 	proxy := buildScaffoldProxy(t, libs, []string{"v0.1.0", "v0.1.1"})
@@ -37,6 +38,8 @@ func TestScaffoldPinsSurviveRealFlow(t *testing.T) {
 	t.Setenv("GOPROXY", "file://"+filepath.ToSlash(proxy)+",https://proxy.golang.org")
 	t.Setenv("GONOSUMDB", "github.com/gofabrik/fabrik/*")
 	t.Setenv("GOMODCACHE", modcache)
+	// Resolve the scaffolded module with the running test toolchain.
+	t.Setenv("GOTOOLCHAIN", runtime.Version())
 
 	tmp := t.TempDir()
 	if r, err := filepath.EvalSymlinks(tmp); err == nil {

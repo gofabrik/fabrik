@@ -3,7 +3,9 @@ package assetmapper
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"io/fs"
@@ -57,12 +59,11 @@ func LoadVendorLock(path string) (*VendorLock, error) {
 	defer file.Close() //nolint:errcheck // read-only lockfile close is cleanup only
 
 	var lock VendorLock
-	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&lock); err != nil {
+	dec := jsontext.NewDecoder(file)
+	if err := json.UnmarshalDecode(dec, &lock, jsonv1.DefaultOptionsV1(), json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("assetmapper.LoadVendorLock: decode %s: %w", path, err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	if err := json.UnmarshalDecode(dec, &struct{}{}, jsonv1.DefaultOptionsV1()); err != io.EOF {
 		if err == nil {
 			return nil, fmt.Errorf("assetmapper.LoadVendorLock: decode %s: multiple JSON values", path)
 		}
@@ -110,7 +111,7 @@ func (l *VendorLock) Save(path string) error {
 	if err := validateVendorGraph(l); err != nil {
 		return fmt.Errorf("assetmapper.VendorLock.Save: %w", err)
 	}
-	data, err := json.MarshalIndent(l, "", "  ")
+	data, err := json.Marshal(l, jsonv1.DefaultOptionsV1(), json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return fmt.Errorf("assetmapper.VendorLock.Save: %w", err)
 	}

@@ -1,11 +1,15 @@
 module github.com/gofabrik/fabrik/web/directive
 
-go 1.26
+go 1.27
+
+toolchain go1.27rc2
 
 require (
 	github.com/gofabrik/fabrik/diag v0.1.0
 	github.com/gofabrik/fabrik/gen v0.1.0
+	github.com/gofabrik/fabrik/router v0.1.0
 	github.com/gofabrik/fabrik/router/directive v0.1.0
+	github.com/gofabrik/fabrik/web v0.1.0
 )
 
 require golang.org/x/tools v0.47.0 // indirect

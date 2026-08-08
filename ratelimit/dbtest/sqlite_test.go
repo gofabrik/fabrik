@@ -97,7 +97,7 @@ func TestSQLiteStore_WorksWithLimiter(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if res, err := lim.Allow(ctx, "k"); err != nil || !res.Allowed {
 			t.Fatalf("call %d: %+v err=%v", i+1, res, err)
 		}

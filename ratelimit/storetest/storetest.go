@@ -77,7 +77,7 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wins := 0
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -104,7 +104,7 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wins := 0
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
@@ -158,7 +158,7 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wins := 0
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()

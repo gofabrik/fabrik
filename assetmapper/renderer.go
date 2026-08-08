@@ -1,5 +1,7 @@
 package assetmapper
 
+import "maps"
+
 // ImportmapRenderer binds a Mapper to an immutable Importmap snapshot.
 //
 // A renderer and its template helpers are safe for concurrent use. Mutating
@@ -27,9 +29,7 @@ func snapshotImportmap(src *Importmap) *Importmap {
 	if src == nil {
 		return dst
 	}
-	for key, entry := range src.Entries {
-		dst.Entries[key] = entry
-	}
+	maps.Copy(dst.Entries, src.Entries)
 	return dst
 }
 

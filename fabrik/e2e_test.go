@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -29,10 +30,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	configDir, err := filepath.Abs("../config")
-	if err != nil {
-		t.Fatal(err)
-	}
-	templateDir, err := filepath.Abs("../templates")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +57,8 @@ func TestEndToEnd(t *testing.T) {
 	t.Chdir(tmp)
 	// Keep dependency resolution local.
 	t.Setenv("GOPROXY", "off")
+	// Resolve the scratch module with the running test toolchain.
+	t.Setenv("GOTOOLCHAIN", runtime.Version())
 	err = newCmd([]string{"hello"})
 	if err == nil || !strings.Contains(err.Error(), "dependencies could not be resolved") {
 		t.Fatalf("fabrik new offline: err = %v, want unresolved-dependencies failure", err)
@@ -73,8 +72,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod = append(mod, []byte(fmt.Sprintf(
-		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assetmapper v0.0.0\n\tgithub.com/gofabrik/fabrik/cli v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/httpserver v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/templates v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assetmapper => %s\n\tgithub.com/gofabrik/fabrik/cli => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/httpserver => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/templates => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
-		assetsDir, cliDir, configDir, httpserverDir, routerDir, templateDir, webDir))...)
+		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assetmapper v0.0.0\n\tgithub.com/gofabrik/fabrik/cli v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/httpserver v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assetmapper => %s\n\tgithub.com/gofabrik/fabrik/cli => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/httpserver => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
+		assetsDir, cliDir, configDir, httpserverDir, routerDir, webDir))...)
 	if err := os.WriteFile(gomod, mod, 0o600); err != nil { // #nosec G703 -- trusted test workspace path
 		t.Fatal(err)
 	}

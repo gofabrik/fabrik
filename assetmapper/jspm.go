@@ -3,7 +3,8 @@ package assetmapper
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -126,7 +127,7 @@ func (j *JSPMResolver) Resolve(ctx context.Context, reqs []PackageRequest) (*Res
 		"install":  install,
 		"env":      []string{"browser", "production"},
 		"provider": "jspm.io",
-	})
+	}, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +167,7 @@ func (j *JSPMResolver) Resolve(ctx context.Context, reqs []PackageRequest) (*Res
 		return nil, fmt.Errorf("jspm.io: POST /generate: %w", err)
 	}
 	var gen jspmGenerateResponse
-	if err := json.Unmarshal(body, &gen); err != nil {
+	if err := json.Unmarshal(body, &gen, jsonv1.DefaultOptionsV1()); err != nil {
 		return nil, fmt.Errorf("jspm.io: decode response: %w", err)
 	}
 	resolution, err := jspmFlatten(&gen, reqs)
@@ -500,11 +501,11 @@ func versionFromJSPMURL(raw string) string {
 		p = p[i+1:]
 	}
 	// Scoped packages can contain slashes, so the last "@" marks the version.
-	at := strings.LastIndex(p, "@")
-	if at <= 0 {
+	before, after, found := strings.CutLast(p, "@")
+	if !found || before == "" {
 		return ""
 	}
-	rest := p[at+1:]
+	rest := after
 	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
 		rest = rest[:slash]
 	}

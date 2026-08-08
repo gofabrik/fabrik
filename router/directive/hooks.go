@@ -14,7 +14,6 @@ type Hook struct {
 	host   *Host
 	name   string // directive name
 	method string // router method to emit
-	first  *token.Position
 }
 
 // NewNotFound returns the //fabrik:http:notfound directive for one run.
@@ -32,13 +31,15 @@ func (h *Hook) Name() string { return h.name }
 func (h *Hook) Meta() gen.Meta {
 	doc := map[string]string{
 		"http:notfound": "**`//fabrik:http:notfound`**\n\n" +
-			"Sets the handler for requests that match no route. One per app. " +
-			"Standard handler signature; the response defaults to 404.\n\n" +
+			"Sets the handler for requests that match no route. One per app, " +
+			"exclusive with `//fabrik:web:notfound`. Standard handler " +
+			"signature; the response defaults to 404.\n\n" +
 			"```go\n//fabrik:http:notfound\nfunc NotFound(w http.ResponseWriter, r *http.Request) { ... }\n```",
 		"http:methodnotallowed": "**`//fabrik:http:methodnotallowed`**\n\n" +
 			"Sets the handler for requests whose path matches a route under a " +
-			"different method. One per app. The Allow header is set before it " +
-			"runs and the response defaults to 405.\n\n" +
+			"different method. One per app, exclusive with " +
+			"`//fabrik:web:methodnotallowed`. The Allow header is set before " +
+			"it runs and the response defaults to 405.\n\n" +
 			"```go\n//fabrik:http:methodnotallowed\nfunc MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }\n```",
 	}
 	synopsis := map[string]string{
@@ -98,12 +99,16 @@ func (h *Hook) Check(n any, t gen.Typed) diag.Diagnostics {
 		}
 		nd.recv = recv.Type()
 	}
-	if h.first != nil {
-		ds.Error(nd.pos, fmt.Sprintf("duplicate //fabrik:%s", h.name),
-			fmt.Sprintf("first declared at %s", *h.first))
+	if first, ok := h.host.ClaimHook(h.method, h.name, nd.pos); !ok {
+		if first.Directive == h.name {
+			ds.Error(nd.pos, fmt.Sprintf("duplicate //fabrik:%s", h.name),
+				fmt.Sprintf("first declared at %s", first.Pos))
+		} else {
+			ds.Error(nd.pos, fmt.Sprintf("//fabrik:%s conflicts with //fabrik:%s at %s", h.name, first.Directive, first.Pos),
+				"the router holds one handler per hook; declare one of the two")
+		}
 		return ds
 	}
-	h.first = &nd.pos
 
 	nd.fn = fn.Name()
 	nd.pkg = fn.Pkg()
@@ -113,15 +118,8 @@ func (h *Hook) Check(n any, t gen.Typed) diag.Diagnostics {
 
 func (h *Hook) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*hookNode)
-	h.host.record(func(g *gen.Gen) diag.Diagnostics {
-		r := routerSingleton(g)
-		handler, ds := handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
-		g.Node(&gen.Call{
-			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: nd.pos}},
-			Fn:   r + "." + h.method,
-			Args: []string{handler},
-		})
-		return ds
+	h.host.EmitHook(g, h.method, nd.pos, func(g *gen.Gen) (string, diag.Diagnostics) {
+		return handlerExpr(g, nd.recv, nd.pkg, nd.fn, nd.fset)
 	})
 	return nil
 }

@@ -3,6 +3,7 @@ package gen
 import (
 	"go/token"
 	"go/types"
+	"slices"
 	"sort"
 
 	"github.com/gofabrik/fabrik/diag"
@@ -201,10 +202,10 @@ func nodesHaveCheck(nodes []Node) bool {
 
 func unwindLines(accumulated []string, errsPkg string) []string {
 	var lines []string
-	for i := len(accumulated) - 1; i >= 0; i-- {
+	for _, a := range slices.Backward(accumulated) {
 		lines = append(lines,
-			"if "+accumulated[i]+" != nil {",
-			"err = "+errsPkg+".Join(err, "+accumulated[i]+"())",
+			"if "+a+" != nil {",
+			"err = "+errsPkg+".Join(err, "+a+"())",
 			"}")
 	}
 	return lines

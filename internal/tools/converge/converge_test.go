@@ -19,16 +19,16 @@ func fixture(t *testing.T) *modset.Config {
 			"      - github.com/gofabrik/fabrik/a\n"+
 			"      - github.com/gofabrik/fabrik/b\n"+
 			"      - github.com/gofabrik/fabrik/c\n")
-	write(t, root, "go.work", "go 1.26\n\nuse (\n\t./a\n\t./b\n\t./c\n)\n")
+	write(t, root, "go.work", "go 1.27\n\nuse (\n\t./a\n\t./b\n\t./c\n)\n")
 
-	write(t, root, "c/go.mod", "module github.com/gofabrik/fabrik/c\n\ngo 1.26\n")
+	write(t, root, "c/go.mod", "module github.com/gofabrik/fabrik/c\n\ngo 1.27\n")
 	write(t, root, "c/c.go", "package c\n\nfunc N() string { return \"c\" }\n")
 	write(t, root, "b/go.mod",
-		"module github.com/gofabrik/fabrik/b\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/c v0.1.0\n")
+		"module github.com/gofabrik/fabrik/b\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/c v0.1.0\n")
 	write(t, root, "b/b.go",
 		"package b\n\nimport \"github.com/gofabrik/fabrik/c\"\n\nfunc N() string { return c.N() }\n")
 	write(t, root, "a/go.mod",
-		"module github.com/gofabrik/fabrik/a\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/b v0.1.0\n")
+		"module github.com/gofabrik/fabrik/a\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/b v0.1.0\n")
 	write(t, root, "a/a.go",
 		"package a\n\nimport \"github.com/gofabrik/fabrik/b\"\n\nfunc N() string { return b.N() }\n")
 

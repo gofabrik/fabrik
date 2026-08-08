@@ -105,8 +105,7 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 		nd.ctor = true
 		nd.errResult = sig.Results().Len() == 2
 		nd.result = sig.Results().At(0).Type()
-		for j := 0; j < sig.Params().Len(); j++ {
-			v := sig.Params().At(j)
+		for v := range sig.Params().Variables() {
 			if types.TypeString(types.Unalias(v.Type()), nil) == "net/http.Handler" {
 				ds.Error(nd.pos, fmt.Sprintf("middleware %s is neither form: not a direct middleware (it does not return http.Handler itself), not a constructor (its http.Handler parameter cannot resolve from the binding surface)", fn.Name()),
 					"direct: func(next http.Handler) http.Handler; constructor: binding-resolved parameters returning the middleware")

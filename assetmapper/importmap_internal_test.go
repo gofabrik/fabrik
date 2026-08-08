@@ -1,6 +1,8 @@
 package assetmapper
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -187,5 +189,47 @@ func TestImportmap_PartialManifestFallsBackToSourceGraph(t *testing.T) {
 	}
 	if len(graph.JSURLs) != 2 {
 		t.Fatalf("partial manifest preload URLs = %v, want app and dep", graph.JSURLs)
+	}
+}
+
+// The rendered body and CSP hash must cover the same escaped bytes.
+func TestRenderEscapesHostileSpecifiersAndKeepsCSPCoupling(t *testing.T) {
+	src := fstest.MapFS{
+		"x.js": {Data: []byte("x")},
+		"y.js": {Data: []byte("y")},
+		"z.js": {Data: []byte("z")},
+	}
+	m, err := New(Config{Roots: []Root{{FS: src}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	im := &Importmap{Entries: map[string]ImportmapEntry{
+		"</script><script>alert(1)</script>": {Path: "x.js"},
+		"line\u2028sep\u2029end":             {Path: "y.js"},
+		"bad\xffutf8":                        {Path: "z.js"},
+	}}
+	page, err := im.Render(m)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	start := strings.Index(page, ">") + 1
+	end := strings.Index(page, "</script>")
+	if start <= 0 || end < start {
+		t.Fatalf("no inline script body in:\n%s", page)
+	}
+	body := page[start:end]
+	for _, raw := range []string{"</script>", "\u2028", "\u2029"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("rendered body contains raw %q:\n%s", raw, body)
+		}
+	}
+	sum := sha256.Sum256([]byte(body))
+	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	got, err := im.importmapBodyHash(m)
+	if err != nil {
+		t.Fatalf("importmapBodyHash: %v", err)
+	}
+	if got != want {
+		t.Fatalf("CSP hash %q does not cover the rendered body bytes (want %q)", got, want)
 	}
 }

@@ -166,7 +166,7 @@ func TestEpilogueDemandOrdinal(t *testing.T) {
 	if ds := g.WalkFlows(); ds.HasFatal() {
 		t.Fatalf("materialize: %v", ds)
 	}
-	for ord := 0; ord < 2; ord++ {
+	for ord := range 2 {
 		k := demandKey{kind: demandCallback, key: "epilogue", ord: ord}
 		if got := g.demandFlows(k); len(got) != 1 || got[0] != "buildOne" {
 			t.Fatalf("epilogue %d usage = %v", ord, got)

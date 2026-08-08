@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/types"
+	"slices"
 	"sort"
 	"strings"
 
@@ -112,11 +113,10 @@ func (g *Gen) typeFromAlias(expr string) types.Type {
 		stars++
 		expr = expr[1:]
 	}
-	dot := strings.LastIndexByte(expr, '.')
-	if dot < 0 || strings.ContainsAny(expr, "[]{} ") {
+	alias, name, found := strings.CutLast(expr, ".")
+	if !found || strings.ContainsAny(expr, "[]{} ") {
 		return nil
 	}
-	alias, name := expr[:dot], expr[dot+1:]
 	for path, a := range g.imports {
 		if a == alias {
 			if t, ok := g.LookupType(path, name); ok {
@@ -138,11 +138,11 @@ func (g *Gen) typeFromPath(path string) types.Type {
 		stars++
 		path = path[1:]
 	}
-	dot := strings.LastIndexByte(path, '.')
-	if dot < 0 {
+	pkgPath, name, found := strings.CutLast(path, ".")
+	if !found {
 		return nil
 	}
-	t, ok := g.LookupType(path[:dot], path[dot+1:])
+	t, ok := g.LookupType(pkgPath, name)
 	if !ok {
 		return nil
 	}
@@ -180,11 +180,8 @@ func (g *Gen) SingletonAttribution(key string) func() {
 func (g *Gen) flowNodes(flow string) []Node {
 	var out []Node
 	for _, sn := range g.frag.nodes {
-		for _, u := range g.nodeUsage(sn) {
-			if u == flow {
-				out = append(out, sn.n)
-				break
-			}
+		if slices.Contains(g.nodeUsage(sn), flow) {
+			out = append(out, sn.n)
 		}
 	}
 	return out
@@ -405,8 +402,8 @@ func (g *Gen) nameRegions(st *fragmentStore, regions []*region) {
 		case reg.anchorHook != "":
 			fn := reg.anchorHook
 			pkg := ""
-			if i := strings.LastIndexByte(fn, '.'); i >= 0 {
-				pkg, fn = fn[:i], fn[i+1:]
+			if before, after, found := strings.CutLast(fn, "."); found {
+				pkg, fn = before, after
 			}
 			base = lowerFirst(fn)
 			if pkg != "" {
@@ -449,8 +446,8 @@ func (g *Gen) nameRegions(st *fragmentStore, regions []*region) {
 // typePkgName returns the UpperCamel package qualifier of a rendered type.
 func typePkgName(t string) string {
 	t = strings.TrimLeft(t, "*")
-	if i := strings.LastIndexByte(t, '.'); i >= 0 {
-		return upperFirst(t[:i])
+	if before, _, found := strings.CutLast(t, "."); found {
+		return upperFirst(before)
 	}
 	return ""
 }
@@ -546,13 +543,7 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 	if nodesHaveCheck(memberNodes) {
 		b.WriteString("var err error\n")
 	}
-	hasErrSite := false
-	for _, n := range memberNodes {
-		if nodeHasErrTail(n) {
-			hasErrSite = true
-			break
-		}
-	}
+	hasErrSite := slices.ContainsFunc(memberNodes, nodeHasErrTail)
 	ec := &errCtx{zeros: g.regionZeros(reg), unwind: hasCleanup && hasErrSite}
 
 	type section struct {
@@ -597,9 +588,9 @@ func (g *Gen) writeRegionFunc(b *bytes.Buffer, reg *region) {
 		b.WriteString("var " + strings.Join(cleanups, ", ") + " func() error\n")
 		b.WriteString("cleanup := func() error {\n")
 		b.WriteString("var errs []error\n")
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			b.WriteString("if " + cleanups[i] + " != nil {\n")
-			b.WriteString("errs = append(errs, " + cleanups[i] + "())\n")
+		for _, cleanup := range slices.Backward(cleanups) {
+			b.WriteString("if " + cleanup + " != nil {\n")
+			b.WriteString("errs = append(errs, " + cleanup + "())\n")
 			b.WriteString("}\n")
 		}
 		b.WriteString("return " + errsPkg + ".Join(errs...)\n")

@@ -110,7 +110,7 @@ func hasURLScheme(spec string) bool {
 	if colon <= 0 {
 		return false
 	}
-	for i := 0; i < colon; i++ {
+	for i := range colon {
 		c := spec[i]
 		if i == 0 && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
 			return false

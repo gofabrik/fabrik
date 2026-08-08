@@ -312,7 +312,7 @@ func TestGraphIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		again, err := json.Marshal(graphWorld(t).Graph())
 		if err != nil {
 			t.Fatal(err)
@@ -498,7 +498,7 @@ func TestGraphMultiNameBindingIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		again, err := json.Marshal(build(t).Graph())
 		if err != nil {
 			t.Fatal(err)
@@ -1004,7 +1004,7 @@ func TestGraphFragmentsMatchRenderedFunctions(t *testing.T) {
 		exported[f.Fn] = true
 	}
 	rendered := map[string]bool{}
-	for _, line := range strings.Split(string(src), "\n") {
+	for line := range strings.SplitSeq(string(src), "\n") {
 		if !strings.HasPrefix(line, "func ") {
 			continue
 		}

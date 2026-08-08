@@ -16,9 +16,9 @@
 package jobs
 
 import (
-	crand "crypto/rand"
 	"errors"
 	"fmt"
+	"uuid"
 )
 
 // State is the lifecycle position of a job. The zero value is not a
@@ -181,15 +181,7 @@ func (e *DuplicateError) Is(target error) bool { return target == ErrDuplicate }
 
 // NewID returns a UUIDv4 string for backend implementors.
 func NewID() string {
-	var b [16]byte
-	if _, err := crand.Read(b[:]); err != nil {
-		// Failure indicates an unusable system random source.
-		panic("jobs: crypto/rand.Read failed: " + err.Error())
-	}
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant RFC 4122
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	return uuid.NewV4().String()
 }
 
 // validIdent enforces the identifier format shared by kind, handler-id,

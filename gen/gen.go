@@ -252,8 +252,8 @@ func (g *Gen) SetDirective(name string) { g.current = name }
 // Import records an import and returns its stable alias.
 func (g *Gen) Import(path string) string {
 	base := path
-	if i := strings.LastIndexByte(base, '/'); i >= 0 {
-		base = base[i+1:]
+	if _, after, found := strings.CutLast(base, "/"); found {
+		base = after
 	}
 	return g.importAs(path, base)
 }
@@ -1063,7 +1063,6 @@ func (g *Gen) RenderFiles() (map[string][]byte, error) {
 	}
 	taken := map[string]bool{g.mainFileName(): true}
 	for _, reg := range g.regionEmitOrder() {
-		reg := reg
 		base := "fragments_" + strings.ToLower(reg.fn)
 		name := base + ".gen.go"
 		for n := 2; taken[name]; n++ {
@@ -1349,8 +1348,8 @@ func appName(module string) string {
 	if module == "" {
 		return "app"
 	}
-	if i := strings.LastIndexByte(module, '/'); i >= 0 {
-		return module[i+1:]
+	if _, after, found := strings.CutLast(module, "/"); found {
+		return after
 	}
 	return module
 }
@@ -1459,7 +1458,11 @@ func (g *Gen) writeImports(b *bytes.Buffer, used map[string]bool) {
 
 func (g *Gen) importLine(path string) string {
 	alias := g.imports[path]
-	if i := strings.LastIndexByte(path, '/'); path[i+1:] == alias {
+	base := path
+	if _, after, found := strings.CutLast(path, "/"); found {
+		base = after
+	}
+	if base == alias {
 		return fmt.Sprintf("%q", path)
 	}
 	return fmt.Sprintf("%s %q", alias, path)

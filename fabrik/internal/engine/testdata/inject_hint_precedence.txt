@@ -2,7 +2,7 @@ Named lookup errors list provider names instead of type-specific hints.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/jobs v0.0.0
 

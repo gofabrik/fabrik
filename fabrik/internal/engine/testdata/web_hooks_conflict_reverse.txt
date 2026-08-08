@@ -1,0 +1,47 @@
+Claim order does not privilege a variant: the raw hook declared after the
+typed one is refused, and a duplicate typed hook names its first declaration.
+-- go.mod --
+module app
+
+go 1.27
+
+require github.com/gofabrik/fabrik/web v0.0.0
+
+replace github.com/gofabrik/fabrik/web => WEBDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	fabrikweb "github.com/gofabrik/fabrik/web"
+)
+
+//fabrik:web:notfound
+func TypedNotFound(req *fabrikweb.Request) (fabrikweb.Response, error) {
+	return fabrikweb.Status(http.StatusNotFound), nil
+}
+
+//fabrik:http:notfound
+func NotFound(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:web:methodnotallowed
+func TypedMethodNotAllowed(req *fabrikweb.Request) (fabrikweb.Response, error) {
+	return fabrikweb.Status(http.StatusMethodNotAllowed), nil
+}
+
+//fabrik:web:methodnotallowed
+func TypedMethodNotAllowedAgain(req *fabrikweb.Request) (fabrikweb.Response, error) {
+	return fabrikweb.Status(http.StatusMethodNotAllowed), nil
+}
+-- want/diags --
+error: web/web.go:14:1: //fabrik:http:notfound conflicts with //fabrik:web:notfound at $WORK/web/web.go:9:1
+  help: the router holds one handler per hook; declare one of the two
+error: web/web.go:22:1: duplicate //fabrik:web:methodnotallowed
+  help: first declared at $WORK/web/web.go:17:1

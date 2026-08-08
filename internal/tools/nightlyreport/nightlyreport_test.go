@@ -192,6 +192,35 @@ func TestFreshness(t *testing.T) {
 	}
 }
 
+// Decode the full stream with v1's last-wins semantics for duplicate members.
+func TestFreshnessStreamDecodedToCompletion(t *testing.T) {
+	const data = `{"Path":"a","Version":"v1","Version":"v2","Update":{"Version":"v3"}}
+{"Path":"b","Version":"v1"}
+`
+	got, err := Freshness([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Path != "a" || got[0].From != "v2" || got[0].To != "v3" {
+		t.Fatalf("got %+v, want the duplicate Version resolved last-wins", got)
+	}
+}
+
+func TestFreshnessStreamMalformedTrailingErrors(t *testing.T) {
+	const data = `{"Path":"a","Version":"v1"}
+{"Path":`
+	if _, err := Freshness([]byte(data)); err == nil {
+		t.Fatal("want an error for a malformed trailing value")
+	}
+}
+
+func TestFreshnessStreamEOFAfterWhitespaceIsClean(t *testing.T) {
+	const data = "{\"Path\":\"a\",\"Version\":\"v1\"}\n\n  \t\n"
+	if _, err := Freshness([]byte(data)); err != nil {
+		t.Fatalf("trailing whitespace should decode cleanly: %v", err)
+	}
+}
+
 func TestVulnSummary(t *testing.T) {
 	got := VulnSummary([]byte(vulnReachable))
 	if !strings.Contains(got, "GO-2026-1") || !strings.Contains(got, "crypto/tls.(*Conn).Read") {
@@ -271,7 +300,7 @@ func TestRenderByteBudget(t *testing.T) {
 
 func TestRenderMandatoryExceedsBudget(t *testing.T) {
 	var results []ModuleResult
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		results = append(results, ModuleResult{Module: "./module-with-a-longish-name", Lint: StatusFindings})
 	}
 	out := Render(results, StatusClean, nil, Meta{}, 500)

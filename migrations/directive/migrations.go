@@ -107,7 +107,7 @@ func validStream(m string) error {
 	if strings.HasPrefix(m, "/") || strings.HasSuffix(m, "/") {
 		return fmt.Errorf("%q has a leading or trailing slash", m)
 	}
-	for _, seg := range strings.Split(m, "/") {
+	for seg := range strings.SplitSeq(m, "/") {
 		switch seg {
 		case "", ".", "..":
 			return fmt.Errorf("%q has a %q segment", m, seg)

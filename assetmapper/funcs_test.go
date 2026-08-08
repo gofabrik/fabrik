@@ -150,18 +150,14 @@ func TestFuncMap_BoundSnapshotIsConcurrentWithBuilderMutation(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make(chan string, 8)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 500 {
 			im.Entries["app"] = assetmapper.ImportmapEntry{Path: "other.js", Entrypoint: true}
 			im.Entries["app"] = assetmapper.ImportmapEntry{Path: "app.js", Entrypoint: true}
 		}
-	}()
+	})
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 100 {
 				out, err := render("app")
 				if err != nil {
@@ -173,7 +169,7 @@ func TestFuncMap_BoundSnapshotIsConcurrentWithBuilderMutation(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

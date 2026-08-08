@@ -3,7 +3,9 @@ package assetmapper
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"fmt"
 	"html"
 	"io"
@@ -88,9 +90,8 @@ func LoadImportmap(path string) (*Importmap, error) {
 // ParseImportmap decodes an importmap and rejects unknown JSON fields.
 func ParseImportmap(r io.Reader) (*Importmap, error) {
 	var entries map[string]ImportmapEntry
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&entries); err != nil {
+	// Decode one value and ignore trailing input to preserve the v1 contract.
+	if err := json.UnmarshalDecode(jsontext.NewDecoder(r), &entries, jsonv1.DefaultOptionsV1(), json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("assetmapper.ParseImportmap: %w", err)
 	}
 	if entries == nil {
@@ -114,7 +115,7 @@ func (im *Importmap) Save(path string) error {
 
 // Write encodes the importmap as deterministic indented JSON.
 func (im *Importmap) Write(w io.Writer) error {
-	data, err := json.MarshalIndent(im.Entries, "", "  ")
+	data, err := json.Marshal(im.Entries, jsonv1.DefaultOptionsV1(), json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}
@@ -258,8 +259,8 @@ func importmapBody(keys []string, resolved map[string]string) string {
 		if i > 0 {
 			body.WriteByte(',')
 		}
-		kb, _ := json.Marshal(k)
-		vb, _ := json.Marshal(resolved[k])
+		kb, _ := json.Marshal(k, jsonv1.DefaultOptionsV1())
+		vb, _ := json.Marshal(resolved[k], jsonv1.DefaultOptionsV1())
 		body.Write(kb)
 		body.WriteByte(':')
 		body.Write(vb)

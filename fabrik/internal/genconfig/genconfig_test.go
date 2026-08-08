@@ -13,7 +13,7 @@ import (
 func writeModule(t *testing.T, fabrikYAML string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.27\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if fabrikYAML != "" {

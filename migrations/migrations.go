@@ -362,7 +362,7 @@ func validateCleanRel(p string) error {
 	if strings.HasSuffix(p, "/") {
 		return fmt.Errorf("%q has a trailing slash", p)
 	}
-	for _, seg := range strings.Split(p, "/") {
+	for seg := range strings.SplitSeq(p, "/") {
 		switch seg {
 		case "":
 			return fmt.Errorf("%q has an empty segment", p)

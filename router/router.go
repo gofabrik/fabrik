@@ -429,8 +429,8 @@ func joinPattern(base, pattern string) string {
 
 // chain wraps h in mw, outermost first.
 func chain(mw []Middleware, h http.Handler) http.Handler {
-	for i := len(mw) - 1; i >= 0; i-- {
-		h = mw[i](h)
+	for _, m := range slices.Backward(mw) {
+		h = m(h)
 		if isNilHandler(h) {
 			panic("router: middleware returned a nil handler")
 		}

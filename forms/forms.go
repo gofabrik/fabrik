@@ -13,7 +13,8 @@
 package forms
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -52,11 +53,37 @@ const (
 	defaultMaxMemory = 10 << 20 // 10 MiB multipart in-memory threshold
 )
 
-// Form is the result of [Bind].
+// Form is a form in one of the three states it can be rendered in: blank from
+// [Empty], filled from a stored record by [From], or submitted through [Bind].
+// All three are the same type, so one template renders any of them.
 type Form[T any] struct {
 	Data   T
 	Errors validation.Errors
 	raw    url.Values
+}
+
+// Empty returns a form nothing has been entered into: no values, no errors.
+//
+// It is not [From] of a zero T. A zero T has values - an int field is 0 - and
+// a blank form has none, which is the difference between offering a new
+// record and editing one that happens to be zero.
+func Empty[T any]() *Form[T] {
+	return &Form[T]{}
+}
+
+// From returns a form carrying the values data would have submitted, for
+// redisplaying a stored record in the form that edits it.
+//
+// Fields are named exactly as [Bind] names them, through the same `form` tags
+// and the same fallback. Validation is not run: a stored record is not a
+// submission to reject.
+//
+// This is not an exact inverse of [Bind]. A submitted "1.50" decodes to 1.5
+// and comes back "1.5", so a rejected submission should be redisplayed from
+// the form [Bind] returned, which keeps what was actually typed, rather than
+// round-tripped through here.
+func From[T any](data T) *Form[T] {
+	return &Form[T]{Data: data, raw: encode(data)}
 }
 
 // Valid reports whether there were no decode or validation errors.
@@ -64,6 +91,9 @@ func (f *Form[T]) Valid() bool { return f.Errors.Empty() }
 
 // Value returns the raw submitted value for repopulating a field.
 func (f *Form[T]) Value(field string) string { return f.raw.Get(field) }
+
+// Values returns every value for a field, for one that holds more than one.
+func (f *Form[T]) Values(field string) []string { return f.raw[field] }
 
 // Error returns the field's error message, or "".
 func (f *Form[T]) Error(field string) string { return f.Errors.Get(field) }
@@ -111,7 +141,7 @@ func Bind[T any](r *http.Request, opts ...Option) (*Form[T], error) {
 				return nil, jsonErr(err)
 			}
 			// Unmarshal decodes the whole body and rejects trailing content.
-			if err := json.Unmarshal(body, &form.Data); err != nil {
+			if err := json.Unmarshal(body, &form.Data, jsonv1.DefaultOptionsV1()); err != nil {
 				return nil, jsonErr(err)
 			}
 			if err := rejectJSONFiles(&form.Data); err != nil {

@@ -1,9 +1,10 @@
-The removed //fabrik:http:server and //fabrik:jobs:worker resolve as unknown
-directives: fabrik is pre-1.0, so removed directives get no migration handling.
+The removed //fabrik:http:server, //fabrik:jobs:worker, and
+//fabrik:web:templates:func resolve as unknown directives: fabrik is
+pre-1.0, so removed directives get no migration handling.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 
@@ -20,8 +21,13 @@ func Serve(h http.Handler) error { return nil }
 
 //fabrik:jobs:worker
 func Worker() error { return nil }
+
+//fabrik:web:templates:func
+func Shout(s string) string { return s }
 -- want/diags --
 error: web/web.go:5:1: unknown directive "fabrik:http:server"
-  help: known: assets, cli:argument, cli:command, cli:example, cli:flag, cli:group, cli:middleware, cli:root, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, inject, job, migrations, provider, provider:select, templates, templates:func, web
+  help: known: assets, cli:argument, cli:command, cli:example, cli:flag, cli:group, cli:middleware, cli:root, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, inject, job, migrations, provider, provider:select, web, web:methodnotallowed, web:notfound, web:templates
 error: web/web.go:8:1: unknown directive "fabrik:jobs:worker"
-  help: known: assets, cli:argument, cli:command, cli:example, cli:flag, cli:group, cli:middleware, cli:root, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, inject, job, migrations, provider, provider:select, templates, templates:func, web
+  help: known: assets, cli:argument, cli:command, cli:example, cli:flag, cli:group, cli:middleware, cli:root, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, inject, job, migrations, provider, provider:select, web, web:methodnotallowed, web:notfound, web:templates
+error: web/web.go:11:1: unknown directive "fabrik:web:templates:func"
+  help: known: assets, cli:argument, cli:command, cli:example, cli:flag, cli:group, cli:middleware, cli:root, config, cron, hook, http, http:group, http:handle, http:methodnotallowed, http:middleware, http:notfound, http:static, inject, job, migrations, provider, provider:select, web, web:methodnotallowed, web:notfound, web:templates

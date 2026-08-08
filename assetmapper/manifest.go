@@ -1,7 +1,9 @@
 package assetmapper
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -112,7 +114,8 @@ func LoadManifest(publicDir string) (*Manifest, error) {
 // ParseManifest decodes a manifest from r.
 func ParseManifest(r io.Reader) (*Manifest, error) {
 	var m Manifest
-	if err := json.NewDecoder(r).Decode(&m); err != nil {
+	// Decode one value and ignore trailing input to preserve the v1 contract.
+	if err := json.UnmarshalDecode(jsontext.NewDecoder(r), &m, jsonv1.DefaultOptionsV1()); err != nil {
 		return nil, fmt.Errorf("assetmapper.ParseManifest: %w", err)
 	}
 	if m.Entries == nil {
@@ -136,7 +139,7 @@ func (m *Manifest) Save(publicDir string) error {
 
 // Write encodes the manifest as deterministic indented JSON.
 func (m *Manifest) Write(w io.Writer) error {
-	data, err := json.MarshalIndent(m, "", "  ")
+	data, err := json.Marshal(m, jsonv1.DefaultOptionsV1(), json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

@@ -71,7 +71,7 @@ func TestRunEnv_DefaultsDevelopmentOnlyWhenUnset(t *testing.T) {
 
 func TestRunCommandRefusesEmbeddedOutput(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.27\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "fabrik.yaml"), []byte("generate:\n  emit: embedded\n  dir: appwire\n"), 0o644); err != nil {

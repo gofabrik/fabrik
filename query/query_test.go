@@ -42,11 +42,11 @@ func TestFieldMap_BuiltOncePerType(t *testing.T) {
 		Email string
 		Name  string `db:"display_name"`
 	}
-	fm1, err := getFieldMap(reflect.TypeOf(User{}))
+	fm1, err := getFieldMap(reflect.TypeFor[User]())
 	if err != nil {
 		t.Fatalf("getFieldMap: unexpected error %v", err)
 	}
-	fm2, _ := getFieldMap(reflect.TypeOf(User{}))
+	fm2, _ := getFieldMap(reflect.TypeFor[User]())
 	if fm1 != fm2 {
 		t.Errorf("fieldMap not cached: got distinct pointers %p vs %p", fm1, fm2)
 	}
@@ -64,7 +64,7 @@ func TestFieldMap_SkipsUnexported(t *testing.T) {
 		Public string
 		hidden string //nolint:unused // intentional unexported field for test
 	}
-	fm, err := getFieldMap(reflect.TypeOf(withPrivate{}))
+	fm, err := getFieldMap(reflect.TypeFor[withPrivate]())
 	if err != nil {
 		t.Fatalf("getFieldMap: unexpected error %v", err)
 	}
@@ -79,7 +79,7 @@ func TestFieldMap_DuplicateColumnError(t *testing.T) {
 		Alpha string `db:"x"`
 		Beta  string `db:"x"`
 	}
-	_, err := getFieldMap(reflect.TypeOf(T{}))
+	_, err := getFieldMap(reflect.TypeFor[T]())
 	if !errors.Is(err, ErrDuplicateColumn) {
 		t.Fatalf("error = %v, want ErrDuplicateColumn", err)
 	}
@@ -100,7 +100,7 @@ func TestFieldMap_TagCollidesWithDerivedName(t *testing.T) {
 		UserID int64  // derives to "user_id"
 		Other  string `db:"user_id"` // explicit override collides
 	}
-	if _, err := getFieldMap(reflect.TypeOf(T{})); !errors.Is(err, ErrDuplicateColumn) {
+	if _, err := getFieldMap(reflect.TypeFor[T]()); !errors.Is(err, ErrDuplicateColumn) {
 		t.Fatalf("error = %v, want ErrDuplicateColumn when db: tag collides with derived name", err)
 	}
 }
@@ -111,7 +111,7 @@ func TestFieldMap_CaseOnlyDuplicateColumnError(t *testing.T) {
 		A string `db:"Name"`
 		B string `db:"name"`
 	}
-	if _, err := getFieldMap(reflect.TypeOf(T{})); !errors.Is(err, ErrDuplicateColumn) {
+	if _, err := getFieldMap(reflect.TypeFor[T]()); !errors.Is(err, ErrDuplicateColumn) {
 		t.Fatalf("error = %v, want ErrDuplicateColumn for a case-only column collision", err)
 	}
 }
@@ -123,7 +123,7 @@ func TestFieldMap_DashTagSkipsField(t *testing.T) {
 		Email    string
 		Internal string `db:"-"`
 	}
-	fm, err := getFieldMap(reflect.TypeOf(T{}))
+	fm, err := getFieldMap(reflect.TypeFor[T]())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Base
 			Email string
 		}
-		if _, err := getFieldMap(reflect.TypeOf(User{})); !errors.Is(err, ErrUnsupportedFieldType) {
+		if _, err := getFieldMap(reflect.TypeFor[User]()); !errors.Is(err, ErrUnsupportedFieldType) {
 			t.Fatalf("err = %v, want ErrUnsupportedFieldType for embedded struct", err)
 		}
 	})
@@ -184,7 +184,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Email string
 			Addr  Address
 		}
-		if _, err := getFieldMap(reflect.TypeOf(User{})); !errors.Is(err, ErrUnsupportedFieldType) {
+		if _, err := getFieldMap(reflect.TypeFor[User]()); !errors.Is(err, ErrUnsupportedFieldType) {
 			t.Fatalf("err = %v, want ErrUnsupportedFieldType for nested struct", err)
 		}
 	})
@@ -193,7 +193,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Email string
 			Addr  *Address
 		}
-		if _, err := getFieldMap(reflect.TypeOf(User{})); !errors.Is(err, ErrUnsupportedFieldType) {
+		if _, err := getFieldMap(reflect.TypeFor[User]()); !errors.Is(err, ErrUnsupportedFieldType) {
 			t.Fatalf("err = %v, want ErrUnsupportedFieldType for *struct", err)
 		}
 	})
@@ -202,7 +202,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Base  `db:"-"`
 			Email string
 		}
-		fm, err := getFieldMap(reflect.TypeOf(User{}))
+		fm, err := getFieldMap(reflect.TypeFor[User]())
 		if err != nil {
 			t.Fatalf(`db:"-" embedded struct should be skipped, got %v`, err)
 		}
@@ -218,7 +218,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			At      time.Time
 			Balance moneyValuerScanner
 		}
-		if _, err := getFieldMap(reflect.TypeOf(Row{})); err != nil {
+		if _, err := getFieldMap(reflect.TypeFor[Row]()); err != nil {
 			t.Fatalf("column-type structs must be accepted, got %v", err)
 		}
 	})
@@ -312,7 +312,7 @@ func TestFieldMap_NonASCIIFieldRejected(t *testing.T) {
 	type T struct {
 		Ł string
 	}
-	if _, err := getFieldMap(reflect.TypeOf(T{})); !errors.Is(err, ErrInvalidIdentifier) {
+	if _, err := getFieldMap(reflect.TypeFor[T]()); !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("error = %v, want ErrInvalidIdentifier for a non-ASCII field name", err)
 	}
 }
@@ -675,7 +675,7 @@ func TestClassifierRegistry_ConcurrentRegisterAndClassify(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			RegisterClassifier(func(error) error { return nil })
 		}
 	}()
@@ -687,7 +687,7 @@ func TestClassifierRegistry_ConcurrentRegisterAndClassify(t *testing.T) {
 			ID int64
 			X  string
 		}
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			_, _ = Insert(context.Background(), exec, DialectSQLite, "t", Row{X: "x"})
 		}
 	}()
@@ -742,14 +742,14 @@ func TestClassifierRegistry_SentinelReturnedUnderConcurrentRegister(t *testing.T
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			RegisterClassifier(func(error) error { return nil })
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			if got := classify(marker); !errors.Is(got, ErrUnique) {
 				t.Errorf("classify returned %v, want it to wrap ErrUnique", got)
 				return

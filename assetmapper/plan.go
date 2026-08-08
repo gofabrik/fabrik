@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -180,9 +182,7 @@ func planBuild(context string, roots []Root, im *Importmap, opts []BuildOption) 
 		}
 	}
 
-	for logical, output := range hashedNames {
-		plan.manifest.Entries[logical] = output
-	}
+	maps.Copy(plan.manifest.Entries, hashedNames)
 	mapper := plan.mapper()
 	plan.cspImportmapHash, err = im.importmapBodyHash(mapper)
 	if err != nil {
@@ -365,10 +365,8 @@ func plannedDependencies(refs []ref, im *Importmap, assets map[string]*collected
 }
 
 func appendUnique(values []string, value string) []string {
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
+	if slices.Contains(values, value) {
+		return values
 	}
 	return append(values, value)
 }

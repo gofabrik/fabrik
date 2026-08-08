@@ -1,6 +1,8 @@
 module github.com/gofabrik/fabrik/query/dbtest
 
-go 1.26
+go 1.27
+
+toolchain go1.27rc2
 
 require (
 	github.com/gofabrik/fabrik/query v0.1.0
@@ -26,3 +28,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/gofabrik/fabrik/query => ..

@@ -22,7 +22,7 @@ func TestLSPMiddlewareCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n")
+	write("go.mod", "module app\n\ngo 1.27\n")
 	write("main.go", "package main\n\nfunc main() { _ = run }\n")
 	write("shared/mw.go", `package shared
 
@@ -112,7 +112,7 @@ func TestLSPCLIMiddlewareCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n")
+	write("go.mod", "module app\n\ngo 1.27\n")
 	write("main.go", "package main\n\nfunc main() { _ = run }\n")
 	write("shared/mw.go", `package shared
 

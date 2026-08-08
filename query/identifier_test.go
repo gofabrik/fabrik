@@ -163,7 +163,7 @@ func TestColumnsRejectSchemaQualification(t *testing.T) {
 	type T struct {
 		Name string `db:"public.name"`
 	}
-	_, err := getFieldMap(reflect.TypeOf(T{}))
+	_, err := getFieldMap(reflect.TypeFor[T]())
 	if !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("dotted column tag: %v, want ErrInvalidIdentifier", err)
 	}
@@ -181,7 +181,7 @@ func TestBuildFieldMap_ErrorsOnInvalidColumn(t *testing.T) {
 		ID   int64
 		Evil string `db:"name = '' OR 1=1; --"`
 	}
-	_, err := buildFieldMap(reflect.TypeOf(Bad{}))
+	_, err := buildFieldMap(reflect.TypeFor[Bad]())
 	if !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("error = %v, want ErrInvalidIdentifier", err)
 	}

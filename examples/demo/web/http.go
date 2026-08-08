@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strconv"
 	"time"
 
 	"demo/shared"
@@ -16,11 +17,11 @@ import (
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/forms"
 	"github.com/gofabrik/fabrik/jobs"
+	"github.com/gofabrik/fabrik/paging"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/session"
 	"github.com/gofabrik/fabrik/storage"
-	"github.com/gofabrik/fabrik/templates"
 	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
 )
@@ -33,7 +34,6 @@ type HomePage struct {
 	Started  time.Time
 	Visits   int64
 	Recent   []Greeting
-	Flashes  []flash.Message
 }
 
 // Greeting is a recorded greeting.
@@ -42,12 +42,6 @@ type Greeting struct {
 	Name    string
 	Created time.Time
 }
-
-type visitCount struct {
-	Count int64
-}
-
-func (HomePage) Template() string { return "web/home" }
 
 type Handlers struct {
 	Greeter Greeter
@@ -61,11 +55,6 @@ type Handlers struct {
 //fabrik:web GET /{$} middleware=nocache
 func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	ctx := req.Context()
-
-	flashes, err := h.Flash.Take(ctx)
-	if err != nil {
-		return nil, err
-	}
 
 	s, err := h.Session.Get(ctx)
 	if err != nil {
@@ -82,8 +71,8 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	if _, err := h.Jobs.Enqueue(ctx, Visit{Path: "/"}); err != nil {
 		return nil, err
 	}
-	visits, err := query.One[visitCount](ctx, h.Queries,
-		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0) AS count`)
+	visits, err := query.Scalar[int64](ctx, h.Queries,
+		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0)`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +86,7 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 
-	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits.Count, Recent: recent, Flashes: flashes}), nil
+	return web.Template("web/home", HomePage{Greeting: h.Greeter.Greet(name), Started: started, Visits: visits, Recent: recent}), nil
 }
 
 // AboutPage is the about page's view model; it carries no template name.
@@ -111,15 +100,20 @@ func (h *Handlers) About(req *web.Request) (web.Response, error) {
 	return web.Template("web/about", AboutPage{Started: started, GoVersion: runtime.Version()}), nil
 }
 
+// UptimePage is the uptime page's view model.
+type UptimePage struct {
+	Started time.Time
+}
+
 // Status renders through the template set directly, without the web adapter.
 type Status struct {
-	Templates *templates.Set
+	Templates *web.Templates
 }
 
 //fabrik:http GET /uptime
 func (s *Status) Uptime(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.Templates.Render(w, "web/uptime", map[string]any{"Started": started}); err != nil {
+	if err := s.Templates.Render(w, "web/uptime", "", UptimePage{Started: started}); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }
@@ -151,8 +145,6 @@ type GreetForm struct {
 	Form *forms.Form[GreetInput]
 }
 
-func (GreetForm) Template() string { return "web/greet" }
-
 type Greetings struct {
 	Session *session.Manager[shared.Session]
 	Flash   *flash.Flash
@@ -163,7 +155,7 @@ type Greetings struct {
 
 //fabrik:web GET /greet
 func (h *Greetings) Show(req *web.Request) (web.Response, error) {
-	return web.View(GreetForm{Form: &forms.Form[GreetInput]{}}), nil
+	return web.Template("web/greet", GreetForm{Form: forms.Empty[GreetInput]()}), nil
 }
 
 //fabrik:web POST /greet middleware=greetlimit
@@ -173,7 +165,7 @@ func (h *Greetings) Update(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 	if !form.Valid() {
-		return web.View(GreetForm{Form: form}), nil
+		return web.Template("web/greet", GreetForm{Form: form}), nil
 	}
 	ctx := req.Context()
 	if err := h.Session.Save(ctx, shared.Session{Name: form.Data.Name}); err != nil {
@@ -232,8 +224,6 @@ type FilesPage struct {
 	Form    *forms.Form[UploadForm]
 }
 
-func (FilesPage) Template() string { return "web/files" }
-
 type Files struct {
 	Store storage.Storage
 }
@@ -251,11 +241,11 @@ func (f *Files) page(req *web.Request, form *forms.Form[UploadForm]) (FilesPage,
 
 //fabrik:web GET /files
 func (f *Files) Show(req *web.Request) (web.Response, error) {
-	page, err := f.page(req, &forms.Form[UploadForm]{})
+	page, err := f.page(req, forms.Empty[UploadForm]())
 	if err != nil {
 		return nil, err
 	}
-	return web.View(page), nil
+	return web.Template("web/files", page), nil
 }
 
 //fabrik:web POST /files
@@ -269,7 +259,7 @@ func (f *Files) Upload(req *web.Request) (web.Response, error) {
 		if err != nil {
 			return nil, err
 		}
-		return web.View(page), nil
+		return web.Template("web/files", page), nil
 	}
 	rc, err := form.Data.File.Open()
 	if err != nil {
@@ -282,6 +272,176 @@ func (f *Files) Upload(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 	return web.Redirect("/files"), nil
+}
+
+// OverviewPage carries every region's data for the overview page.
+type OverviewPage struct {
+	Recent  []Greeting
+	Files   []storage.Info
+	Started time.Time
+}
+
+type Overview struct {
+	Queries *query.DB
+	Store   storage.Storage
+}
+
+//fabrik:web GET /overview
+func (o *Overview) Show(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	recent, err := query.All[Greeting](ctx, o.Queries,
+		"SELECT * FROM greetings ORDER BY id DESC LIMIT 5")
+	if err != nil {
+		return nil, err
+	}
+	var files []storage.Info
+	for info, err := range o.Store.List(ctx, "") {
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, info)
+	}
+	return web.Template("web/overview", OverviewPage{Recent: recent, Files: files, Started: started}).Fragment(), nil
+}
+
+// GreetingsPage is the paged greetings list view model.
+type GreetingsPage struct {
+	Rows []Greeting
+	Page paging.Page
+}
+
+type GreetingsList struct {
+	Queries *query.DB
+}
+
+//fabrik:web GET /greetings
+func (l *GreetingsList) Show(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	page, _ := strconv.Atoi(req.Query("page"))
+	total, err := query.Scalar[int](ctx, l.Queries, "SELECT COUNT(*) FROM greetings")
+	if err != nil {
+		return nil, err
+	}
+	found := paging.Of(page, 5, total)
+	rows, err := query.All[Greeting](ctx, l.Queries,
+		"SELECT * FROM greetings ORDER BY id DESC LIMIT ? OFFSET ?", found.Limit(), found.Offset())
+	if err != nil {
+		return nil, err
+	}
+	return web.Template("web/greetings", GreetingsPage{Rows: rows, Page: found}).Fragment(), nil
+}
+
+// GreetingEditPage is the edit form's view model.
+type GreetingEditPage struct {
+	ID   int64
+	Form *forms.Form[GreetInput]
+}
+
+// greetingName is the writable column set for a greeting update.
+type greetingName struct {
+	Name string
+}
+
+type GreetingEditor struct {
+	Queries *query.DB
+}
+
+//fabrik:web GET /greetings/{id}/edit
+func (e *GreetingEditor) Edit(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
+	if err != nil {
+		return web.Status(http.StatusNotFound), nil
+	}
+	g, err := query.One[Greeting](ctx, e.Queries, "SELECT * FROM greetings WHERE id = ? LIMIT 1", id)
+	if err != nil {
+		if errors.Is(err, query.ErrNotFound) {
+			return web.Status(http.StatusNotFound), nil
+		}
+		return nil, err
+	}
+	return web.Template("web/greeting-edit", GreetingEditPage{ID: g.ID, Form: forms.From(GreetInput{Name: g.Name})}), nil
+}
+
+//fabrik:web POST /greetings/{id}/edit
+func (e *GreetingEditor) Update(req *web.Request) (web.Response, error) {
+	ctx := req.Context()
+	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
+	if err != nil {
+		return web.Status(http.StatusNotFound), nil
+	}
+	form, err := forms.Bind[GreetInput](req.HTTP())
+	if err != nil {
+		return nil, err
+	}
+	if !form.Valid() {
+		return web.Template("web/greeting-edit", GreetingEditPage{ID: id, Form: form}).Status(http.StatusUnprocessableEntity), nil
+	}
+	if err := e.Queries.UpdateOne(ctx, "greetings", "id = ?", greetingName{Name: form.Data.Name}, id); err != nil {
+		if errors.Is(err, query.ErrNotFound) {
+			return web.Status(http.StatusNotFound), nil
+		}
+		return nil, err
+	}
+	return web.Redirect("/greetings"), nil
+}
+
+type Live struct {
+	Queries *query.DB
+}
+
+//fabrik:web GET /live
+func (l *Live) Show(req *web.Request) (web.Response, error) {
+	return web.Template("web/live", nil), nil
+}
+
+func (l *Live) line(ctx context.Context) (string, error) {
+	visits, err := query.Scalar[int64](ctx, l.Queries,
+		`SELECT COALESCE((SELECT count FROM visits WHERE id = 1), 0)`)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Up %s, %d visits", time.Since(started).Round(time.Second), visits), nil
+}
+
+//fabrik:web GET /live/events
+func (l *Live) Events(req *web.Request) (web.Response, error) {
+	initial, err := l.line(req.Context())
+	if err != nil {
+		return nil, err
+	}
+
+	// The stream owns the ticker goroutine. OnClose cancels streamCtx however
+	// the stream ends, so the goroutine always returns; both sends race that
+	// cancellation, so a departed client never blocks it and events is never
+	// closed under a pending send.
+	streamCtx, stop := context.WithCancel(req.Context())
+	events := make(chan string)
+	go func() {
+		// The sole sender, so closing here is safe and ends the stream when
+		// a tick fails rather than leaving the response waiting forever.
+		defer close(events)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-streamCtx.Done():
+				return
+			case <-ticker.C:
+				line, err := l.line(streamCtx)
+				if err != nil {
+					return
+				}
+				select {
+				case events <- line:
+				case <-streamCtx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return web.EventStream(events).Initial(initial).OnClose(stop), nil
 }
 
 //fabrik:http GET /files/{key...}

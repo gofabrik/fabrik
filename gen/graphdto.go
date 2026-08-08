@@ -412,10 +412,8 @@ func flowBindings(g *Gen, flow string, s *Scope, owner map[string]string) ([]Gra
 	if s != nil {
 		// A flow lists bindings satisfied by its nodes or referenced by its roots.
 		relevant := func(expr string) bool {
-			for _, e := range s.rootExprs {
-				if e == expr {
-					return true
-				}
+			if slices.Contains(s.rootExprs, expr) {
+				return true
 			}
 			ok := len(owner) == 0
 			freeIdents(expr, func(name string) {
