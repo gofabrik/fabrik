@@ -1161,8 +1161,8 @@ func formsFlow(t *testing.T, port string) {
 	if body := crossOriginGet(t, client, base+"/", ""); strings.Contains(body, "Greeting name updated.") {
 		t.Fatalf("the first render consumes the flash; the second must not show it:\n%s", body)
 	}
-	if body := crossOriginGet(t, client, base+"/uptime", ""); !strings.Contains(body, "Signed in as alice") {
-		t.Fatalf("the direct-render route should see the same request funcs:\n%s", body)
+	if body := crossOriginGet(t, client, base+"/uptime", ""); !strings.Contains(body, "Up for") {
+		t.Fatalf("/uptime should render through the bare template set:\n%s", body)
 	}
 }
 

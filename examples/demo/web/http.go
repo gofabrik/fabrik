@@ -107,13 +107,13 @@ type UptimePage struct {
 
 // Status renders through the template set directly, without the web adapter.
 type Status struct {
-	Renderer web.RequestRenderer
+	Templates *web.Templates
 }
 
 //fabrik:http GET /uptime
 func (s *Status) Uptime(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.Renderer.Render(w, r, "web/uptime", "", UptimePage{Started: started}); err != nil {
+	if err := s.Templates.Render(w, "web/uptime", "", UptimePage{Started: started}); err != nil {
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
 }

@@ -405,9 +405,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-	requestRenderer := web2.RequestRenderer{Templates: appTemplates, Funcs: requestFuncs}
 	webStatus := &web.Status{
-		Renderer: requestRenderer,
+		Templates: appTemplates,
 	}
 	webAPI := &web.API{
 		Greeter: webGreeter,
@@ -434,10 +433,10 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Queries: sharedQueryDB,
 		Store:   sharedStorage,
 	}
-
 	webGreetingsList := &web.GreetingsList{
 		Queries: sharedQueryDB,
 	}
+
 	webGreetingEditor := &web.GreetingEditor{
 		Queries: sharedQueryDB,
 	}

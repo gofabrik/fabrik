@@ -4,5 +4,4 @@
   {{ template "_nav.html" . }}
   <h1>Uptime</h1>
   <p>Up for {{ humanizeAge .Started }}.</p>
-  {{ if session.Name }}<p>Signed in as {{ session.Name }}.</p>{{ end }}
 {{ end }}
