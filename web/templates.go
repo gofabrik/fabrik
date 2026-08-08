@@ -3,17 +3,17 @@ package web
 import (
 	"bytes"
 	"fmt"
-	htmltpl "html/template"
 	"io"
 	"io/fs"
-	"maps"
 	"path"
 	"sort"
 	"strings"
+
+	htmltpl "github.com/gofabrik/t/html/template"
 )
 
-// FuncMap is an alias for [html/template.FuncMap].
-type FuncMap = htmltpl.FuncMap
+// FuncMap maps template names to functions.
+type FuncMap map[string]any
 
 // defaultSection is the conventional section name whose partials act as the
 // fallback for every other section.
@@ -43,7 +43,7 @@ func parseHTML(name string, funcs FuncMap, files []fileRef) (*htmltpl.Template, 
 	// missingkey=error: a key a map payload does not carry is a mistake in the
 	// page, not an empty string to render. A struct payload reports the same
 	// mistake on its own, so this only matters while a caller still passes maps.
-	t := htmltpl.New(name).Option("missingkey=error").Funcs(funcs)
+	t := htmltpl.New(name).Option("missingkey=error").Funcs(htmltpl.FuncMap(funcs))
 	var err error
 	for _, f := range files {
 		if t, err = t.ParseFS(f.fsys, f.path); err != nil {
@@ -95,7 +95,8 @@ type TemplateSource struct {
 // shadows a default partial with the same filename.
 //
 // funcMaps are merged after the built-in helpers in call order. Later maps
-// override earlier maps, and nil maps are ignored.
+// override earlier maps, and nil maps are ignored. Static helpers and
+// [RequestFuncs] stubs cannot share a name.
 func LoadTemplates(fsys fs.FS, dir string, funcMaps ...FuncMap) (*Templates, error) {
 	return LoadTemplateSources([]TemplateSource{{FS: fsys, Dir: dir}}, funcMaps...)
 }
@@ -103,10 +104,22 @@ func LoadTemplates(fsys fs.FS, dir string, funcMaps ...FuncMap) (*Templates, err
 // LoadTemplateSources builds one [Templates] from several trees. A section
 // may appear in only one source, and "_default" fallback works across
 // sources.
+//
+// Static helpers and [RequestFuncs] stubs cannot share a name.
 func LoadTemplateSources(sources []TemplateSource, funcMaps ...FuncMap) (*Templates, error) {
 	merged := defaultFuncs()
 	for _, fm := range funcMaps {
-		maps.Copy(merged, fm)
+		for name, fn := range fm {
+			if prev, ok := merged[name]; ok {
+				_, prevStub := prev.(requestStub)
+				_, nextStub := fn.(requestStub)
+				// Request-func overlays must not shadow static helpers.
+				if prevStub != nextStub {
+					return nil, fmt.Errorf("web: template func %q is both a static helper and a request func", name)
+				}
+			}
+			merged[name] = fn
+		}
 	}
 	if err := checkFuncs(merged); err != nil {
 		return nil, err
@@ -192,6 +205,12 @@ func LoadTemplateSources(sources []TemplateSource, funcMaps ...FuncMap) (*Templa
 // Lookup and execution errors leave w untouched; writer errors may leave
 // partial output. Render does not set HTTP headers.
 func (s *Templates) Render(w io.Writer, page, define string, data any) error {
+	return s.RenderFuncs(w, page, define, data, nil)
+}
+
+// RenderFuncs renders with funcs overlaid for this execution; every name must
+// be registered during loading, and nil funcs are equivalent to [Templates.Render].
+func (s *Templates) RenderFuncs(w io.Writer, page, define string, data any, funcs FuncMap) error {
 	if define == "" {
 		define = defaultEntry
 	}
@@ -199,7 +218,8 @@ func (s *Templates) Render(w io.Writer, page, define string, data any) error {
 	if !ok {
 		return fmt.Errorf("web: unknown page %q", page)
 	}
-	if t.Lookup(define) == nil {
+	entry := t.Lookup(define)
+	if entry == nil {
 		return fmt.Errorf("web: page %q defines no template %q", page, define)
 	}
 
@@ -211,7 +231,7 @@ func (s *Templates) Render(w io.Writer, page, define string, data any) error {
 		}
 	}()
 
-	if err := t.ExecuteTemplate(buf, define, data); err != nil {
+	if err := entry.ExecuteFuncs(buf, data, htmltpl.FuncMap(funcs)); err != nil {
 		return fmt.Errorf("web: render %q %q: %w", page, define, err)
 	}
 	_, err := buf.WriteTo(w)
@@ -225,7 +245,7 @@ func checkFuncs(m FuncMap) (err error) {
 			err = fmt.Errorf("web: invalid template FuncMap: %v", p)
 		}
 	}()
-	htmltpl.New("check").Funcs(m)
+	htmltpl.New("check").Funcs(htmltpl.FuncMap(m))
 	return nil
 }
 

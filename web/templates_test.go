@@ -597,3 +597,50 @@ func TestRender_EmptyDefineRendersLayout(t *testing.T) {
 		t.Errorf("render = %q, want the layout-wrapped page", got)
 	}
 }
+
+func TestRenderFuncs_OverlaysARegisteredFuncForOneExecution(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/_default/_layout.html": file(baseLayout),
+		"tpl/_default/home.html":    file(`{{ define "content" }}<p>{{ greet }}</p>{{ end }}`),
+	}
+	set, err := web.LoadTemplates(fsys, "tpl", web.FuncMap{
+		"greet": func() string { return "registered" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	overlay := web.FuncMap{"greet": func() string { return "overlaid" }}
+	if err := set.RenderFuncs(&buf, "home", "layout", nil, overlay); err != nil {
+		t.Fatalf("RenderFuncs: %v", err)
+	}
+	if !strings.Contains(buf.String(), "<p>overlaid</p>") {
+		t.Errorf("overlaid render = %q, want the overlay value", buf.String())
+	}
+
+	if got := render(t, set, "home", "layout"); !strings.Contains(got, "<p>registered</p>") {
+		t.Errorf("later Render = %q, want the registered value back", got)
+	}
+}
+
+func TestRenderFuncs_UnregisteredOverlayNameIsAnError(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/_default/_layout.html": file(baseLayout),
+		"tpl/_default/home.html":    file(`{{ define "content" }}<p>home</p>{{ end }}`),
+	}
+	set, err := web.LoadTemplates(fsys, "tpl", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	err = set.RenderFuncs(&buf, "home", "layout", nil, web.FuncMap{
+		"nosuch": func() string { return "" },
+	})
+	if err == nil {
+		t.Fatal("overlaying an unregistered name should fail the render")
+	}
+	if !strings.Contains(err.Error(), "not registered") {
+		t.Errorf("error = %v", err)
+	}
+}

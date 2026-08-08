@@ -79,10 +79,11 @@ func run() int {
 	if err := func() (err error) {
 		// Providers
 		r := router.New()
+		requestFuncs := web2.DefaultRequestFuncs()
 		appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 			{FS: shared.Templates, Dir: "templates"},
 			{FS: web.Templates, Dir: "templates"},
-		})
+		}, requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}

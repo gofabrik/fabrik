@@ -35,9 +35,10 @@ var ErrNoTemplateRenderer = errors.New("web: Template response without a rendere
 
 // Adapter adapts typed handlers to net/http.
 type Adapter struct {
-	renderer Renderer
-	block    string
-	onError  ErrorHandler
+	renderer     Renderer
+	block        string
+	requestFuncs RequestFuncs
+	onError      ErrorHandler
 }
 
 // Option configures an Adapter.
@@ -51,6 +52,11 @@ func WithBlock(name string) Option {
 
 // WithRenderer supplies the adapter's renderer.
 func WithRenderer(r Renderer) Option { return func(a *Adapter) { a.renderer = r } }
+
+// WithRequestFuncs supplies per-request template funcs and requires a [FuncsRenderer] for template responses.
+func WithRequestFuncs(rf RequestFuncs) Option {
+	return func(a *Adapter) { a.requestFuncs = rf }
+}
 
 // WithErrorHandler replaces the default handler, which logs errors and returns [ErrorStatus] or HTTP 500.
 func WithErrorHandler(h ErrorHandler) Option { return func(a *Adapter) { a.onError = h } }
@@ -173,7 +179,7 @@ func (a *Adapter) respond(w http.ResponseWriter, r *http.Request, resp Response)
 		if v.fragment {
 			return a.renderFragment(w, r, v)
 		}
-		return a.render(w, v.name, a.blockFor(v.block), v.status, v.headers, v.data)
+		return a.render(w, r, v.name, a.blockFor(v.block), v.status, v.headers, v.data)
 	}
 	return resp.Respond(w, r)
 }
@@ -191,7 +197,7 @@ func (a *Adapter) blockFor(block string) string {
 // render succeeds is not known until it has run. Rendering into a buffer first
 // is what lets a failure reach the error handler as a clean status rather than
 // arriving under one already sent.
-func (a *Adapter) render(w http.ResponseWriter, name, block string, status int, headers []headerPair, data any) error {
+func (a *Adapter) render(w http.ResponseWriter, r *http.Request, name, block string, status int, headers []headerPair, data any) error {
 	buf := renderBuffers.Get().(*bytes.Buffer)
 	defer func() {
 		if buf.Cap() <= maxPooledBuffer {
@@ -200,7 +206,17 @@ func (a *Adapter) render(w http.ResponseWriter, name, block string, status int, 
 		}
 	}()
 
-	if err := a.renderer.Render(buf, name, block, data); err != nil {
+	var err error
+	if len(a.requestFuncs) > 0 {
+		fr, ok := a.renderer.(FuncsRenderer)
+		if !ok {
+			return fmt.Errorf("web: render %s: %w", name, ErrRendererNoFuncs)
+		}
+		err = fr.RenderFuncs(buf, name, block, data, a.requestFuncs.For(r))
+	} else {
+		err = a.renderer.Render(buf, name, block, data)
+	}
+	if err != nil {
 		return fmt.Errorf("web: render %s: %w", name, err)
 	}
 
@@ -209,7 +225,7 @@ func (a *Adapter) render(w http.ResponseWriter, name, block string, status int, 
 	if status != 0 {
 		w.WriteHeader(status)
 	}
-	_, err := buf.WriteTo(w)
+	_, err = buf.WriteTo(w)
 	return err
 }
 

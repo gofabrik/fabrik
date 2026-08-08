@@ -137,7 +137,8 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", assetServer.FuncMap())
+		requestFuncs := web2.DefaultRequestFuncs()
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetServer.FuncMap()), requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}

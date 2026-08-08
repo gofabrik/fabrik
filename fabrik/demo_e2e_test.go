@@ -1148,8 +1148,21 @@ func formsFlow(t *testing.T, port string) {
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
 		t.Fatalf("valid name should 303 to /, got %d Location=%q", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if body := crossOriginGet(t, client, base+"/", ""); !strings.Contains(body, "Goodbye, alice!") {
+	body := crossOriginGet(t, client, base+"/", "")
+	if !strings.Contains(body, "Goodbye, alice!") {
 		t.Fatalf("after the valid post, / should greet alice:\n%s", body)
+	}
+	if !strings.Contains(body, "Greeting name updated.") {
+		t.Fatalf("the first render after the post should show the flash:\n%s", body)
+	}
+	if !strings.Contains(body, "Signed in as alice") {
+		t.Fatalf("the page should read the session from the template:\n%s", body)
+	}
+	if body := crossOriginGet(t, client, base+"/", ""); strings.Contains(body, "Greeting name updated.") {
+		t.Fatalf("the first render consumes the flash; the second must not show it:\n%s", body)
+	}
+	if body := crossOriginGet(t, client, base+"/uptime", ""); !strings.Contains(body, "Up for") {
+		t.Fatalf("/uptime should render through the bare template set:\n%s", body)
 	}
 }
 

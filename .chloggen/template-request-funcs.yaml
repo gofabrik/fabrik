@@ -1,0 +1,4 @@
+change_type: breaking
+component: web
+note: Let web templates read request-scoped values and replace //fabrik:web:templates:func with web.FuncMap providers.
+issues: [0]

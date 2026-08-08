@@ -270,14 +270,14 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(configOpts,
-		config.Section("crossorigin"),
+	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
+		config.Section("session"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
-		config.Section("session"),
+	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(configOpts,
+		config.Section("crossorigin"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -323,22 +323,27 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 	sharedErrorPages := &shared.ErrorPages{}
+	sharedWebFuncMap := shared.NewTemplateFuncs()
+	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedFlash, err := shared.NewFlash(sharedSessionManager)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedWebRequestFuncs := shared.NewTemplateRequestFuncs(sharedSessionManager, sharedFlash)
+	requestFuncs := web2.MergeRequestFuncs(web2.DefaultRequestFuncs(), sharedWebRequestFuncs)
 	appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), web2.FuncMap{
-		"humanizeAge": shared.HumanizeAge,
-		"shout":       shared.Shout,
-	})
+	}, web2.FuncMap(assetServer.FuncMap()), sharedWebFuncMap, requestFuncs.Stubs())
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
+	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates), web2.WithRequestFuncs(requestFuncs))
+
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -356,11 +361,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedFlash, err := shared.NewFlash(sharedSessionManager)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-
 	sharedJobsStore, err := shared.NewJobStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -392,6 +392,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
+	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
+	r := router.New()
+
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
@@ -406,11 +411,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	webAPI := &web.API{
 		Greeter: webGreeter,
 	}
-
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-
-	r := router.New()
-
 	webGreetings := &web.Greetings{
 		Session: sharedSessionManager,
 		Flash:   sharedFlash,
@@ -436,6 +436,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	webGreetingsList := &web.GreetingsList{
 		Queries: sharedQueryDB,
 	}
+
 	webGreetingEditor := &web.GreetingEditor{
 		Queries: sharedQueryDB,
 	}

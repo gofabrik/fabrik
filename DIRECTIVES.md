@@ -505,18 +505,3 @@ var Templates embed.FS
 Options:
 
 - `dir=`
-
-## fabrik:web:templates:func
-
-**`//fabrik:web:templates:func [name=NAME]`**
-
-Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
-
-```go
-//fabrik:web:templates:func
-func HumanizeAge(t time.Time) string { ... }
-```
-
-Options:
-
-- `name=`

@@ -20,6 +20,8 @@ const (
 	adapterPath  = "*" + webPath + ".Adapter"
 
 	templatesPath = "*" + webPath + ".Templates"
+	// Keep the wired map separate from the RequestFuncs binding owned by the app provider.
+	requestFuncsPath = webPath + ".RequestFuncs:wired"
 )
 
 // Web is the //fabrik:web directive.
@@ -153,6 +155,12 @@ func (w *Web) ensureAdapter(g *gen.Gen, pos token.Position) {
 			ds = append(ds, ids...)
 			if ok && len(ids) == 0 {
 				args = append(args, webPkg+".WithRenderer("+expr+")")
+			}
+			if rfExpr, rds, rok := g.InstancePath(requestFuncsPath); rok {
+				ds = append(ds, rds...)
+				if len(rds) == 0 {
+					args = append(args, webPkg+".WithRequestFuncs("+rfExpr+")")
+				}
 			}
 		}
 		v := g.Var("adapter")

@@ -4,13 +4,21 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/gofabrik/fabrik/web"
 )
 
-//fabrik:web:templates:func
-func Shout(s string) string { return strings.ToUpper(s) }
+// NewTemplateFuncs supplies the app's static template helpers.
+//
+//fabrik:provider
+func NewTemplateFuncs() web.FuncMap {
+	return web.FuncMap{
+		"shout":       strings.ToUpper,
+		"humanizeAge": humanizeAge,
+	}
+}
 
-//fabrik:web:templates:func
-func HumanizeAge(t time.Time) string {
+func humanizeAge(t time.Time) string {
 	d := time.Since(t).Round(time.Second)
 	switch {
 	case d < time.Minute:

@@ -108,7 +108,8 @@ func run() int {
 		if err != nil {
 			return err
 		}
-		sharedTemplates, err := web2.LoadTemplates(shared.Templates, "templates", assetCompiled.FuncMap())
+		requestFuncs := web2.DefaultRequestFuncs()
+		sharedTemplates, err := web2.LoadTemplates(shared.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}

@@ -41,30 +41,6 @@ func TestCheckEmbedPattern(t *testing.T) {
 	}
 }
 
-func TestLowerFirst(t *testing.T) {
-	for in, want := range map[string]string{
-		"HumanizeAge": "humanizeAge",
-		"MD":          "mD",
-		"upper":       "upper",
-		"":            "",
-	} {
-		if got := gen.LowerFirst(in); got != want {
-			t.Errorf("LowerFirst(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestFuncNameValidation(t *testing.T) {
-	for name, ok := range map[string]bool{
-		"upper": true, "humanize_age": true, "md2": true,
-		"bad.name": false, "2start": false, "": false, "a-b": false,
-	} {
-		if got := isFuncName(name); got != ok {
-			t.Errorf("isFuncName(%q) = %v, want %v", name, got, ok)
-		}
-	}
-}
-
 func writeTree(t *testing.T, files map[string]string) *tplNode {
 	t.Helper()
 	dir := t.TempDir()
@@ -116,5 +92,55 @@ func TestValidateCollisionUsesLibraryDiscovery(t *testing.T) {
 	ds := tpl.Validate(nil)
 	if len(ds) != 1 || !strings.Contains(ds[0].Message, `section "web" is already provided`) {
 		t.Fatalf("Validate = %v, want one web-section collision", ds)
+	}
+}
+
+func TestValidateAssumesProviderSuppliedFuncs(t *testing.T) {
+	tpl := NewTemplates()
+	tpl.decls = []*tplNode{
+		writeTree(t, map[string]string{
+			"templates/_default/_layout.html": `{{ block "content" . }}{{ end }}`,
+			"templates/_default/home.html":    `{{ define "content" }}{{ shout "hi" }} {{ humanizeAge now }}{{ end }}`,
+		}),
+	}
+	ds := tpl.Validate(nil)
+	if len(ds) != 1 {
+		t.Fatalf("Validate = %v, want exactly the assumed-funcs notice", ds)
+	}
+	d := ds[0]
+	if d.Severity != diag.SevWarning {
+		t.Fatalf("severity = %v, want a warning", d.Severity)
+	}
+	for _, name := range []string{"humanizeAge", "now", "shout"} {
+		if !strings.Contains(d.Message, name) {
+			t.Errorf("notice %q missing %q", d.Message, name)
+		}
+	}
+}
+
+func TestValidateStillFailsOnBrokenTemplates(t *testing.T) {
+	tpl := NewTemplates()
+	tpl.decls = []*tplNode{
+		writeTree(t, map[string]string{
+			"templates/_default/_layout.html": `{{ block "content" . }}{{ end }}`,
+			"templates/_default/home.html":    `{{ define "content" }}{{ if }}{{ end }}`,
+		}),
+	}
+	ds := tpl.Validate(nil)
+	if len(ds) != 1 || ds[0].Severity != diag.SevError {
+		t.Fatalf("Validate = %v, want one parse error", ds)
+	}
+}
+
+func TestValidateKnowsDefaultRequestFuncs(t *testing.T) {
+	tpl := NewTemplates()
+	tpl.decls = []*tplNode{
+		writeTree(t, map[string]string{
+			"templates/_default/_layout.html": `{{ block "content" . }}{{ end }}`,
+			"templates/_default/home.html":    `{{ define "content" }}{{ request.Path }} {{ pathValue "id" }} {{ query "q" }}{{ end }}`,
+		}),
+	}
+	if ds := tpl.Validate(nil); len(ds) != 0 {
+		t.Fatalf("Validate = %v, want no diagnostics for the built-in request funcs", ds)
 	}
 }

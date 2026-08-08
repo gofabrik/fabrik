@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
 	"github.com/gofabrik/fabrik/storage"
+	"github.com/gofabrik/fabrik/web"
 	_ "modernc.org/sqlite"
 )
 
@@ -190,4 +193,54 @@ func NewStorage(cfg *StorageConfig) (storage.Storage, func() error, error) {
 		return nil, nil, err
 	}
 	return local, local.Close, nil
+}
+
+// NewTemplateFuncs supplies the app's static template helpers.
+//
+//fabrik:provider
+func NewTemplateFuncs() web.FuncMap {
+	return web.FuncMap{
+		"shout":       strings.ToUpper,
+		"humanizeAge": humanizeAge,
+	}
+}
+
+func humanizeAge(t time.Time) string {
+	d := time.Since(t).Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+}
+
+// NewTemplateRequestFuncs declares the request-scoped values templates may
+// read: the typed session and the pending flash messages.
+//
+//fabrik:provider
+func NewTemplateRequestFuncs(sessions *session.Manager[Session], fl *flash.Flash) web.RequestFuncs {
+	return web.RequestFuncs{
+		"session": func(r *http.Request) any {
+			return func() (Session, error) { return sessions.Get(r.Context()) }
+		},
+		"flashes": func(r *http.Request) any {
+			ctx := r.Context()
+			var taken []flash.Message
+			var consumed bool
+			return func() ([]flash.Message, error) {
+				// Cache the result so repeated calls consume flashes only once.
+				if !consumed {
+					msgs, err := fl.Take(ctx)
+					if err != nil {
+						return nil, err
+					}
+					taken, consumed = msgs, true
+				}
+				return taken, nil
+			}
+		},
+	}
 }

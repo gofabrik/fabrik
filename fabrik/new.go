@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"text/template"
+
+	"github.com/gofabrik/t/text/template"
 
 	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 )

@@ -1,5 +1,5 @@
-Wire-time template validation: a template referencing an unknown
-function fails the generation run, not app startup.
+Wire-time template validation: with no template-func provider bound, a
+template referencing an unknown function fails the generation run.
 -- go.mod --
 module app
 
