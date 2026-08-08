@@ -339,7 +339,7 @@ func run() int {
 					default:
 						return fmt.Errorf("no store.Store implementation for %q", storeConfig.Kind)
 					}
-					webTemplates, err := web2.LoadTemplates(web.Templates, "templates", assetCompiled.FuncMap(), web2.FuncMap{
+					webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetCompiled.FuncMap()), web2.FuncMap{
 						"shout": web.Shout,
 					})
 					if err != nil {

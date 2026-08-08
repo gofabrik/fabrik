@@ -326,7 +326,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), web2.FuncMap{
+	}, web2.FuncMap(assetServer.FuncMap()), web2.FuncMap{
 		"humanizeAge": shared.HumanizeAge,
 		"shout":       shared.Shout,
 	})

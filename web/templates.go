@@ -3,17 +3,20 @@ package web
 import (
 	"bytes"
 	"fmt"
-	htmltpl "html/template"
 	"io"
 	"io/fs"
 	"maps"
 	"path"
 	"sort"
 	"strings"
+
+	htmltpl "github.com/gofabrik/t/html/template"
 )
 
-// FuncMap is an alias for [html/template.FuncMap].
-type FuncMap = htmltpl.FuncMap
+// FuncMap maps template function names to functions, as
+// [text/template.FuncMap] does. It is a defined type so a web template
+// FuncMap is distinguishable from any other template FuncMap.
+type FuncMap map[string]any
 
 // defaultSection is the conventional section name whose partials act as the
 // fallback for every other section.
@@ -43,7 +46,7 @@ func parseHTML(name string, funcs FuncMap, files []fileRef) (*htmltpl.Template, 
 	// missingkey=error: a key a map payload does not carry is a mistake in the
 	// page, not an empty string to render. A struct payload reports the same
 	// mistake on its own, so this only matters while a caller still passes maps.
-	t := htmltpl.New(name).Option("missingkey=error").Funcs(funcs)
+	t := htmltpl.New(name).Option("missingkey=error").Funcs(htmltpl.FuncMap(funcs))
 	var err error
 	for _, f := range files {
 		if t, err = t.ParseFS(f.fsys, f.path); err != nil {
@@ -192,6 +195,13 @@ func LoadTemplateSources(sources []TemplateSource, funcMaps ...FuncMap) (*Templa
 // Lookup and execution errors leave w untouched; writer errors may leave
 // partial output. Render does not set HTTP headers.
 func (s *Templates) Render(w io.Writer, page, define string, data any) error {
+	return s.RenderFuncs(w, page, define, data, nil)
+}
+
+// RenderFuncs is Render with funcs overlaid for this execution only. Every
+// name in funcs must already be registered at load; overlaying an
+// unregistered name fails the render. A nil funcs is Render.
+func (s *Templates) RenderFuncs(w io.Writer, page, define string, data any, funcs FuncMap) error {
 	if define == "" {
 		define = defaultEntry
 	}
@@ -199,7 +209,8 @@ func (s *Templates) Render(w io.Writer, page, define string, data any) error {
 	if !ok {
 		return fmt.Errorf("web: unknown page %q", page)
 	}
-	if t.Lookup(define) == nil {
+	entry := t.Lookup(define)
+	if entry == nil {
 		return fmt.Errorf("web: page %q defines no template %q", page, define)
 	}
 
@@ -211,7 +222,7 @@ func (s *Templates) Render(w io.Writer, page, define string, data any) error {
 		}
 	}()
 
-	if err := t.ExecuteTemplate(buf, define, data); err != nil {
+	if err := entry.ExecuteFuncs(buf, data, htmltpl.FuncMap(funcs)); err != nil {
 		return fmt.Errorf("web: render %q %q: %w", page, define, err)
 	}
 	_, err := buf.WriteTo(w)
@@ -225,7 +236,7 @@ func checkFuncs(m FuncMap) (err error) {
 			err = fmt.Errorf("web: invalid template FuncMap: %v", p)
 		}
 	}()
-	htmltpl.New("check").Funcs(m)
+	htmltpl.New("check").Funcs(htmltpl.FuncMap(m))
 	return nil
 }
 

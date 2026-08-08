@@ -168,12 +168,14 @@ func (t *Templates) Emit(n any, g *gen.Gen) diag.Diagnostics {
 			args = []string{b.String()}
 		}
 		// Later FuncMaps win; app helpers override contributed ones.
+		// Contributed maps are stdlib html/template FuncMaps; web.FuncMap is
+		// a defined type, so the call site converts.
 		var ds diag.Diagnostics
 		for _, c := range t.contributed {
 			expr, cds := c.build(g)
 			ds = append(ds, cds...)
 			if expr != "" && !cds.HasFatal() {
-				args = append(args, expr)
+				args = append(args, webPkg+".FuncMap("+expr+")")
 			}
 		}
 		if fm := t.funcMapExpr(g, webPkg); fm != "" {
