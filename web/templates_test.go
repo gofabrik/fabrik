@@ -644,3 +644,148 @@ func TestRenderFuncs_UnregisteredOverlayNameIsAnError(t *testing.T) {
 		t.Errorf("error = %v", err)
 	}
 }
+
+func TestLoad_NestedSections(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/_default/_layout.html":    file(baseLayout),
+		"tpl/auth/password/login.html": file(`{{ define "content" }}<p>login</p>{{ end }}`),
+		"tpl/auth/password/_form.html": file(`{{ define "field" }}<input>{{ end }}`),
+		"tpl/auth/magic/request.html":  file(`{{ define "content" }}<p>magic {{ template "field2" }}</p>{{ end }}{{ define "field2" }}x{{ end }}`),
+	}
+	set, err := web.LoadTemplates(fsys, "tpl", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := render(t, set, "auth/password/login", "layout"); !strings.Contains(got, "<p>login</p>") {
+		t.Errorf("nested render = %q", got)
+	}
+	if got := render(t, set, "auth/magic/request", "layout"); !strings.Contains(got, "magic") {
+		t.Errorf("nested render = %q", got)
+	}
+}
+
+func TestLoad_MechanismsMergeUnderSharedPrefix(t *testing.T) {
+	shared := fstest.MapFS{
+		"tpl/_default/_layout.html": file(baseLayout),
+		"tpl/_default/_nav.html":    file(`{{ define "nav" }}<nav>site</nav>{{ end }}`),
+		"tpl/errors/404.html":       file(`{{ define "content" }}missing{{ end }}`),
+	}
+	password := fstest.MapFS{
+		"tpl/auth/password/_chrome.html": file(`{{ define "chrome" }}<b>pw</b>{{ end }}`),
+		"tpl/auth/password/login.html":   file(`{{ define "content" }}{{ template "nav" }}{{ template "chrome" }}login{{ end }}`),
+	}
+	magic := fstest.MapFS{
+		"tpl/auth/magic/request.html": file(`{{ define "content" }}{{ template "nav" }}magic{{ end }}`),
+	}
+	set, err := web.LoadTemplateSources([]web.TemplateSource{
+		{FS: shared, Dir: "tpl"}, {FS: password, Dir: "tpl"}, {FS: magic, Dir: "tpl"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := render(t, set, "auth/password/login", "layout")
+	for _, want := range []string{"<nav>site</nav>", "<b>pw</b>", "login"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("password render missing %q:\n%s", want, got)
+		}
+	}
+	if got := render(t, set, "auth/magic/request", "layout"); !strings.Contains(got, "<nav>site</nav>") || !strings.Contains(got, "magic") {
+		t.Errorf("magic render = %q", got)
+	}
+}
+
+func TestLoad_SectionPathCollisionAcrossSources(t *testing.T) {
+	a := fstest.MapFS{
+		"tpl/_default/_layout.html":    file(baseLayout),
+		"tpl/auth/password/login.html": file(`{{ define "content" }}a{{ end }}`),
+	}
+	b := fstest.MapFS{
+		"tpl/auth/password/reset.html": file(`{{ define "content" }}b{{ end }}`),
+	}
+	_, err := web.LoadTemplateSources([]web.TemplateSource{{FS: a, Dir: "tpl"}, {FS: b, Dir: "tpl"}})
+	if err == nil || !strings.Contains(err.Error(), `"auth/password"`) {
+		t.Fatalf("same section path from two sources should fail naming it, got %v", err)
+	}
+}
+
+func TestLoad_OrphanedPartialDirectoryRejected(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/_default/_layout.html":    file(baseLayout),
+		"tpl/auth/_mech_nav.html":      file(`{{ define "mech" }}m{{ end }}`),
+		"tpl/auth/password/login.html": file(`{{ define "content" }}x{{ end }}`),
+	}
+	_, err := web.LoadTemplates(fsys, "tpl", nil)
+	if err == nil || !strings.Contains(err.Error(), "_mech_nav.html") {
+		t.Fatalf("partials in a page-less directory should fail naming them, got %v", err)
+	}
+}
+
+func TestLoad_RootPageRejected(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/stray.html":            file(`{{ define "content" }}x{{ end }}`),
+		"tpl/_default/_layout.html": file(baseLayout),
+	}
+	_, err := web.LoadTemplates(fsys, "tpl", nil)
+	if err == nil || !strings.Contains(err.Error(), "stray.html") {
+		t.Fatalf("a page at the templates root should fail naming it, got %v", err)
+	}
+}
+
+func TestLoad_DefaultOwnedByOneSource(t *testing.T) {
+	a := fstest.MapFS{"tpl/_default/_layout.html": file(baseLayout)}
+	b := fstest.MapFS{
+		"tpl/_default/_nav.html": file(`{{ define "nav" }}n{{ end }}`),
+		"tpl/web/home.html":      file(`{{ define "content" }}h{{ end }}`),
+	}
+	_, err := web.LoadTemplateSources([]web.TemplateSource{{FS: a, Dir: "tpl"}, {FS: b, Dir: "tpl"}})
+	if err == nil || !strings.Contains(err.Error(), "_default") {
+		t.Fatalf("_default from two sources should fail, got %v", err)
+	}
+}
+
+func TestPartials_ParseOrderDefinesLastWins(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/_default/_layout.html": file(baseLayout),
+		"tpl/_default/_a.html":      file(`{{ define "shared" }}from-a{{ end }}`),
+		"tpl/_default/_b.html":      file(`{{ define "shared" }}from-b{{ end }}`),
+		"tpl/web/home.html":         file(`{{ define "content" }}{{ template "shared" }}{{ end }}`),
+	}
+	set, err := web.LoadTemplates(fsys, "tpl", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := render(t, set, "web/home", "layout"); !strings.Contains(got, "from-b") {
+		t.Errorf("differently named files defining one template resolve by parse order; got %q", got)
+	}
+}
+
+func TestLoad_PartialsShareSectionOwnership(t *testing.T) {
+	pages := fstest.MapFS{
+		"tpl/_default/_layout.html":    file(baseLayout),
+		"tpl/auth/password/login.html": file(`{{ define "content" }}x{{ end }}`),
+	}
+	partials := fstest.MapFS{
+		"tpl/auth/password/_chrome.html": file(`{{ define "chrome" }}c{{ end }}`),
+	}
+	_, err := web.LoadTemplateSources([]web.TemplateSource{{FS: pages, Dir: "tpl"}, {FS: partials, Dir: "tpl"}})
+	if err == nil || !strings.Contains(err.Error(), `"auth/password"`) || !strings.Contains(err.Error(), "comes from source") {
+		t.Fatalf("a second source contributing partials to an owned section should collide, got %v", err)
+	}
+}
+
+func TestLoad_OrphanDiagnosticIsDeterministic(t *testing.T) {
+	fsys := fstest.MapFS{
+		"tpl/_default/_layout.html": file(baseLayout),
+		"tpl/zeta/_late.html":       file(`{{ define "z" }}z{{ end }}`),
+		"tpl/auth/_a.html":          file(`{{ define "a" }}a{{ end }}`),
+		"tpl/auth/_b.html":          file(`{{ define "b" }}b{{ end }}`),
+		"tpl/web/home.html":         file(`{{ define "content" }}h{{ end }}`),
+	}
+	for range 5 {
+		_, err := web.LoadTemplates(fsys, "tpl", nil)
+		if err == nil || !strings.Contains(err.Error(), `"auth"`) ||
+			!strings.Contains(err.Error(), "_a.html, _b.html") {
+			t.Fatalf("orphan diagnostic should name the first section by name with all its partials, got %v", err)
+		}
+	}
+}
