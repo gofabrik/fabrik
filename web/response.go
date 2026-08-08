@@ -149,14 +149,16 @@ func applyHeaders(w http.ResponseWriter, headers []headerPair) {
 
 // Redirect responds with 303 See Other and a Location header.
 //
-// The URL is sent verbatim; use absolute paths.
+// The URL is sent verbatim, so use absolute paths; the adapter applies headers and
+// cookies recorded with [Request.SetHeader] and [Request.SetCookie].
 type Redirect string
 
 func (d Redirect) Respond(w http.ResponseWriter, r *http.Request) error {
 	return redirect(w, string(d), http.StatusSeeOther)
 }
 
-// RedirectPermanent responds with 308 Permanent Redirect and a Location header.
+// RedirectPermanent responds with 308 Permanent Redirect and a Location header;
+// headers and cookies recorded on the request are applied as for [Redirect].
 type RedirectPermanent string
 
 func (d RedirectPermanent) Respond(w http.ResponseWriter, r *http.Request) error {
@@ -169,12 +171,21 @@ func redirect(w http.ResponseWriter, url string, code int) error {
 	return nil
 }
 
-// Status responds with the code and no body. Comparable.
+// Status responds with the code and no body. Comparable. Headers and
+// cookies recorded with [Request.SetHeader] and [Request.SetCookie] apply
+// to it like any response; [Status.Header] carries headers on the
+// response value itself.
 type Status int
 
 func (s Status) Respond(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(int(s))
 	return nil
+}
+
+// Header returns a bodyless response with s's status and the given
+// header, for responses whose headers are the payload.
+func (s Status) Header(key, value string) DirectResponse {
+	return DirectResponse{code: int(s)}.Header(key, value)
 }
 
 // Text responds with a plain-text body.
@@ -187,7 +198,7 @@ func HTML(code int, body string) DirectResponse {
 	return DirectResponse{code: code, contentType: "text/html; charset=utf-8", body: body}
 }
 
-// DirectResponse is a small body written as given, from [Text] or [HTML].
+// DirectResponse writes the response produced by [Text], [HTML], or [Status.Header].
 type DirectResponse struct {
 	code        int
 	contentType string
@@ -202,9 +213,15 @@ func (v DirectResponse) Header(key, value string) DirectResponse {
 }
 
 func (v DirectResponse) Respond(w http.ResponseWriter, r *http.Request) error {
-	w.Header().Set("Content-Type", v.contentType)
+	// Status.Header responses must not call Write or set Content-Type.
+	if v.contentType != "" {
+		w.Header().Set("Content-Type", v.contentType)
+	}
 	applyHeaders(w, v.headers)
 	w.WriteHeader(v.code)
+	if v.body == "" {
+		return nil
+	}
 	_, err := w.Write([]byte(v.body))
 	return err
 }

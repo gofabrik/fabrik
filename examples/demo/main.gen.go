@@ -373,6 +373,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	// shared.Mailer, selected by mailer.kind
 	var mailTransport shared.Mailer
 	switch sharedMailerConfig.Kind {
+	case "dev":
+		mailTransport = shared.NewDevMailer()
 	case "log":
 		mailTransport = shared.NewLogMailer()
 	case "smtp":
@@ -445,8 +447,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Middleware
-	r.Use(shared.Logged)
-	r.Use(shared.Recovered)
+	r.Use(shared.LogAndRecover)
 	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
 	r.Use(secureHeadersMiddlewareMW)
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)

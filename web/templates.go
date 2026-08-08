@@ -57,13 +57,11 @@ func parseHTML(name string, funcs FuncMap, files []fileRef) (*htmltpl.Template, 
 // renderer [NewAdapter] is usually configured with. It is safe for concurrent
 // use.
 //
-// Templates live in section directories. Files whose names begin with an
-// underscore are partials, shared into every page of their section; the
-// "_default" section supplies partials to every other section. Non-HTML
-// files are ignored.
+// Templates live in section directories nested to any depth. Underscore-prefixed
+// files are partials shared only with pages in the same directory; "_default"
+// partials are shared with every section. Non-HTML files are ignored.
 //
-// Page names are bare basenames in "_default" and section-qualified
-// elsewhere, without the extension.
+// Page names are extensionless section paths; "_default" pages use bare names.
 //
 // There is no layout rule. A page and its partials are parsed into one
 // group, and [Templates.Render] executes whichever template in that group is
@@ -143,6 +141,23 @@ func LoadTemplateSources(sources []TemplateSource, funcMaps ...FuncMap) (*Templa
 			origin[name] = i
 			sections[name] = sec
 		}
+	}
+
+	orphans := make([]string, 0)
+	for name, sec := range sections {
+		if name != defaultSection && len(sec.pages) == 0 {
+			orphans = append(orphans, name)
+		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		sec := sections[orphans[0]]
+		bases := make([]string, 0, len(sec.partials))
+		for _, p := range sec.partials {
+			bases = append(bases, path.Base(p.path))
+		}
+		return nil, fmt.Errorf("web: section %q holds only partials (%s); without pages nothing can render them",
+			orphans[0], strings.Join(bases, ", "))
 	}
 
 	defSection, hasDefault := sections[defaultSection]
@@ -333,48 +348,41 @@ type section struct {
 	pages    []fileRef
 }
 
-// readSections treats direct child directories containing HTML templates as sections.
+// readSections groups HTML files by root-relative directory, deferring page-less
+// section validation until sources are merged.
 func readSections(fsys fs.FS, dir string) (map[string]*section, error) {
-	entries, err := fs.ReadDir(fsys, dir)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", dir, err)
-	}
 	out := map[string]*section{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		secName := e.Name()
-		sub := path.Join(dir, secName)
-		files, err := fs.ReadDir(fsys, sub)
+	err := fs.WalkDir(fsys, dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", sub, err)
+			return fmt.Errorf("read %s: %w", p, err)
 		}
-		sec := &section{}
-		empty := true
-		for _, f := range files {
-			if f.IsDir() {
-				continue
-			}
-			name := f.Name()
-			if path.Ext(name) != ".html" {
-				continue
-			}
-			ref := fileRef{fsys: fsys, path: path.Join(sub, name)}
-			if strings.HasPrefix(name, "_") {
-				sec.partials = append(sec.partials, ref)
-			} else {
-				sec.pages = append(sec.pages, ref)
-			}
-			empty = false
+		if d.IsDir() || path.Ext(d.Name()) != ".html" {
+			return nil
 		}
-		if empty {
-			// Directories without HTML templates are not sections.
-			continue
+		rel := strings.TrimPrefix(p, dir+"/")
+		secName := path.Dir(rel)
+		if secName == "." {
+			return fmt.Errorf("%s sits at the templates root; templates live in section directories", d.Name())
 		}
+		sec := out[secName]
+		if sec == nil {
+			sec = &section{}
+			out[secName] = sec
+		}
+		ref := fileRef{fsys: fsys, path: p}
+		if strings.HasPrefix(d.Name(), "_") {
+			sec.partials = append(sec.partials, ref)
+		} else {
+			sec.pages = append(sec.pages, ref)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, sec := range out {
 		sort.Slice(sec.partials, func(i, j int) bool { return sec.partials[i].path < sec.partials[j].path })
 		sort.Slice(sec.pages, func(i, j int) bool { return sec.pages[i].path < sec.pages[j].path })
-		out[secName] = sec
 	}
 	return out, nil
 }

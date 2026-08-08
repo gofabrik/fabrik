@@ -139,6 +139,9 @@ func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
 //fabrik:provider:select mailer.kind
 type Mailer = mail.Transport
 
+//fabrik:provider case=dev
+func NewDevMailer() *mail.Dev { return &mail.Dev{} }
+
 //fabrik:provider case=log
 func NewLogMailer() *mail.Log { return &mail.Log{} }
 

@@ -1,6 +1,7 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -771,5 +772,77 @@ func (e *erroringExecutor) QueryContext(_ context.Context, _ string, _ ...any) (
 }
 
 func (e *erroringExecutor) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row {
+	return nil
+}
+
+// Named arguments preserve their names while their values are normalized.
+func TestArgOf_NamedArg(t *testing.T) {
+	stamp := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	got := argOf(sql.Named("at", stamp))
+	named, ok := got.(sql.NamedArg)
+	if !ok {
+		t.Fatalf("argOf(sql.Named) = %T, want sql.NamedArg", got)
+	}
+	if named.Name != "at" {
+		t.Errorf("name = %q, want %q", named.Name, "at")
+	}
+	if named.Value != stamp.Format(time.RFC3339Nano) {
+		t.Errorf("value = %v, want the normalized stamp", named.Value)
+	}
+}
+
+// Argument normalization is idempotent because *DB-backed helpers may apply it twice.
+func TestArgOf_Idempotent(t *testing.T) {
+	stamp := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	once := argOf(stamp)
+	if twice := argOf(once); twice != once {
+		t.Errorf("argOf(argOf(t)) = %v, want %v", twice, once)
+	}
+}
+
+func TestRawPaths_NormalizeArgs(t *testing.T) {
+	stamp := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	exec := &captureExec{}
+	db, err := New(exec, DialectSQLite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(context.Background(), "insert", stamp, "s", 7, []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = db.QueryContext(context.Background(), "select", sql.Named("at", stamp))
+
+	want := stamp.Format(time.RFC3339Nano)
+	if exec.args[0][0] != want {
+		t.Errorf("ExecContext time arg = %v (%T), want %q", exec.args[0][0], exec.args[0][0], want)
+	}
+	if exec.args[0][1] != "s" || exec.args[0][2] != 7 {
+		t.Errorf("string/int args changed: %v", exec.args[0][1:3])
+	}
+	if b, ok := exec.args[0][3].([]byte); !ok || !bytes.Equal(b, []byte{1}) {
+		t.Errorf("[]byte arg changed: %v (%T)", exec.args[0][3], exec.args[0][3])
+	}
+	named, ok := exec.args[1][0].(sql.NamedArg)
+	if !ok || named.Name != "at" || named.Value != want {
+		t.Errorf("QueryContext named arg = %#v, want name at, normalized value", exec.args[1][0])
+	}
+}
+
+type captureExec struct {
+	args [][]any
+}
+
+func (e *captureExec) ExecContext(_ context.Context, _ string, args ...any) (sql.Result, error) {
+	e.args = append(e.args, args)
+	return fakeResult{}, nil
+}
+
+func (e *captureExec) QueryContext(_ context.Context, _ string, args ...any) (*sql.Rows, error) {
+	e.args = append(e.args, args)
+	return nil, errors.New("captureExec: no rows")
+}
+
+func (e *captureExec) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row {
 	return nil
 }

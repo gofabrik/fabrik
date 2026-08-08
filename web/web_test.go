@@ -808,3 +808,67 @@ func TestTemplateStatusNotCommittedWhenRenderFails(t *testing.T) {
 		t.Fatalf("body = %q, want nothing written", rec.Body.String())
 	}
 }
+
+func TestStatusHeaderCarriesHeadersWithoutBody(t *testing.T) {
+	h := web.NewAdapter().Wrap(func(req *web.Request) (web.Response, error) {
+		return web.Status(http.StatusUnauthorized).Header("X-Auth-User", "u1").Header("X-Auth-Email", "u1@example.test"), nil
+	})
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest("GET", "/", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if got := rec.Header().Get("X-Auth-User"); got != "u1" {
+		t.Errorf("X-Auth-User = %q", got)
+	}
+	if got := rec.Header().Get("X-Auth-Email"); got != "u1@example.test" {
+		t.Errorf("X-Auth-Email = %q", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "" {
+		t.Errorf("Content-Type = %q, want none on a bodyless response", ct)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("body = %q, want empty", rec.Body.String())
+	}
+}
+
+func TestHTMLKeepsItsContentType(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if err := web.HTML(http.StatusOK, "<p>ok</p>").Respond(rec, httptest.NewRequest("GET", "/", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+}
+
+func TestStatusStaysComparable(t *testing.T) {
+	if web.Status(404) != web.Status(404) || web.Status(404) == web.Status(200) {
+		t.Fatal("Status must compare by value")
+	}
+}
+
+type writeCountingRecorder struct {
+	*httptest.ResponseRecorder
+	writes int
+}
+
+func (w *writeCountingRecorder) Write(b []byte) (int, error) {
+	w.writes++
+	return w.ResponseRecorder.Write(b)
+}
+
+func TestStatusHeaderNeverWritesABody(t *testing.T) {
+	rec := &writeCountingRecorder{ResponseRecorder: httptest.NewRecorder()}
+	resp := web.Status(http.StatusUnauthorized).Header("X-Auth-Login", "/login")
+	if err := resp.Respond(rec, httptest.NewRequest("GET", "/", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if rec.writes != 0 {
+		t.Fatalf("Write called %d times on a bodyless response, want 0", rec.writes)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}

@@ -294,7 +294,7 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }
 
 **`//fabrik:http:middleware [name=NAME]`**
 
-Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. Bare middleware is global, including 404/405. With `name=`, routes and groups opt in through their `middleware=` chain.
+Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. Bare middleware is global, including 404/405; every global runs before any named route middleware. `insert=first` registers a global before the unmarked ones, `insert=last` after them (first-registered is outermost). Within one insert group the relative order is unspecified; middleware that must order within a group are composed into one declaration. With `name=`, routes and groups opt in through their `middleware=` chain.
 
 ```go
 //fabrik:http:middleware name=auth
@@ -309,6 +309,7 @@ func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Hand
 Options:
 
 - `name=`
+- `insert=` - one of first, last
 
 ## fabrik:http:notfound
 
@@ -494,7 +495,7 @@ func (e *ErrorPages) NotFound(req *web.Request) (web.Response, error) { ... }
 
 **`//fabrik:web:templates [dir=templates]`**
 
-Declared on an exported `embed.FS` variable: the tree loads at startup into a `*web.Templates`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
+Declared on an exported `embed.FS` variable: the tree loads at startup into a `*web.Templates`, injectable into handler structs and providers. Templates live in sections, nested to any depth (`auth/password/login.html` renders as page `auth/password/login`); `_default` provides fallback layouts and partials, and a section's own `_`-files apply only to its own pages. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own subtree under a shared prefix. A section path provided twice is an error, and every tree is validated at generation time by loading it.
 
 ```go
 //fabrik:web:templates
