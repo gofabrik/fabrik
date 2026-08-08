@@ -246,3 +246,44 @@ func TestTx_DeferredConstraintClassifiesAtCommit(t *testing.T) {
 		t.Fatalf("deferred FK at commit: %v, want ErrForeignKey", err)
 	}
 }
+
+// Raw writes and scanned reads use the same time encoding.
+func TestRawExecTimeRoundTrip(t *testing.T) {
+	db := openDB(t)
+	setup(t, db)
+	qdb, err := query.New(db, query.DialectSQLite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	joined := time.Date(2026, 7, 11, 10, 30, 0, 123456789, time.UTC)
+	if _, err := qdb.ExecContext(ctx,
+		`INSERT INTO users (email, joined, meta) VALUES (?, ?, '{}')`,
+		"raw@example.com", joined); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := query.Scalar[time.Time](ctx, qdb,
+		`SELECT joined FROM users WHERE email = ?`, "raw@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(joined) {
+		t.Fatalf("joined = %v, want %v", got, joined)
+	}
+
+	if _, err := qdb.ExecContext(ctx,
+		`UPDATE users SET joined = @at WHERE email = @who`,
+		sql.Named("at", joined.Add(time.Hour)), sql.Named("who", "raw@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	got, err = query.Scalar[time.Time](ctx, qdb,
+		`SELECT joined FROM users WHERE email = ?`, "raw@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(joined.Add(time.Hour)) {
+		t.Fatalf("joined after named update = %v, want %v", got, joined.Add(time.Hour))
+	}
+}

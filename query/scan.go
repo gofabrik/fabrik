@@ -277,6 +277,9 @@ func argOf(v any) any {
 			return nil
 		}
 		return argOf(*t)
+	case sql.NamedArg:
+		t.Value = argOf(t.Value)
+		return t
 	}
 	return v
 }

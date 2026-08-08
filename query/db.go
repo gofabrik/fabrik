@@ -52,14 +52,14 @@ func isNilExecutor(e Executor) bool {
 // Dialect returns the bound dialect.
 func (q *DB) Dialect() Dialect { return q.dialect }
 
-// QueryContext delegates to the bound executor.
+// QueryContext delegates to the bound executor after normalizing args.
 func (q *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return q.exec.QueryContext(ctx, query, args...)
+	return q.exec.QueryContext(ctx, query, normArgs(args)...)
 }
 
-// ExecContext delegates to the bound executor.
+// ExecContext delegates to the bound executor after normalizing args.
 func (q *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return q.exec.ExecContext(ctx, query, args...)
+	return q.exec.ExecContext(ctx, query, normArgs(args)...)
 }
 
 // Insert is [Insert] with the bound executor and dialect.
