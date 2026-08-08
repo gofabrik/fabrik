@@ -374,13 +374,7 @@ func TestSQLiteFireScheduleCAS(t *testing.T) {
 }
 
 func TestSQLiteNoDoubleClaim(t *testing.T) {
-	dsn := "file:" + filepath.Join(t.TempDir(), "race.db") + "?_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// #nosec G104 -- best-effort database cleanup after the test completes
-	defer db.Close() //nolint:errcheck // best-effort database cleanup after the test completes
+	db := openDB(t)
 	store, err := jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: true})
 	if err != nil {
 		t.Fatal(err)
@@ -423,6 +417,69 @@ func TestSQLiteNoDoubleClaim(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("job %d ran %d times (double-claim)", id, count)
 		}
+	}
+}
+
+func TestSQLiteLockedByGuard(t *testing.T) {
+	db := openDB(t)
+	store, err := jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC()
+	res, err := store.Insert(ctx, now, []jobs.Job{{
+		Kind: "task", HandlerID: "task", Payload: []byte(`{}`),
+		Queue: "default", MaxAttempts: 5, AvailableAt: now,
+	}})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("insert: %v (n=%d, want 1)", err, len(res))
+	}
+	id := res[0].ID
+	claimed, err := store.Claim(ctx, jobs.ClaimRequest{
+		WorkerID: "w1", Queues: []string{"default"}, Now: now, Lease: time.Minute, Limit: 1,
+		Handlers: map[jobs.HandlerKey]struct{}{{Kind: "task", HandlerID: "task"}: {}},
+	})
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim: %v (n=%d)", err, len(claimed))
+	}
+	// An available row with a lock owner must not be reclaimed.
+	if _, err := db.ExecContext(ctx, "UPDATE jobs SET state='available' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+	type rowState struct {
+		state, lockedBy string
+		lockedUntil     any
+		updatedAt       any
+	}
+	snap := func() rowState {
+		var r rowState
+		if err := db.QueryRowContext(ctx,
+			"SELECT state, locked_by, locked_until, updated_at FROM jobs WHERE id=?", id).
+			Scan(&r.state, &r.lockedBy, &r.lockedUntil, &r.updatedAt); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	before := snap()
+	if before.state != "available" {
+		t.Fatalf("state = %q after surgical reset, want available", before.state)
+	}
+	if before.lockedBy == "" {
+		t.Fatal("locked_by should still be set after surgical reset")
+	}
+	claimed2, err := store.Claim(ctx, jobs.ClaimRequest{
+		WorkerID: "w2", Queues: []string{"default"}, Now: now, Lease: time.Minute, Limit: 1,
+		Handlers: map[jobs.HandlerKey]struct{}{{Kind: "task", HandlerID: "task"}: {}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed2) != 0 {
+		t.Fatalf("locked_by guard failed: got %d claims, want 0", len(claimed2))
+	}
+	if after := snap(); after != before {
+		t.Fatalf("row changed by the skipped claim:\nbefore %+v\nafter  %+v", before, after)
 	}
 }
 
