@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"path"
 	"sort"
 	"strings"
@@ -13,9 +12,7 @@ import (
 	htmltpl "github.com/gofabrik/t/html/template"
 )
 
-// FuncMap maps template function names to functions, as
-// [text/template.FuncMap] does. It is a defined type so a web template
-// FuncMap is distinguishable from any other template FuncMap.
+// FuncMap maps template names to functions.
 type FuncMap map[string]any
 
 // defaultSection is the conventional section name whose partials act as the
@@ -98,7 +95,8 @@ type TemplateSource struct {
 // shadows a default partial with the same filename.
 //
 // funcMaps are merged after the built-in helpers in call order. Later maps
-// override earlier maps, and nil maps are ignored.
+// override earlier maps, and nil maps are ignored. Static helpers and
+// [RequestFuncs] stubs cannot share a name.
 func LoadTemplates(fsys fs.FS, dir string, funcMaps ...FuncMap) (*Templates, error) {
 	return LoadTemplateSources([]TemplateSource{{FS: fsys, Dir: dir}}, funcMaps...)
 }
@@ -106,10 +104,22 @@ func LoadTemplates(fsys fs.FS, dir string, funcMaps ...FuncMap) (*Templates, err
 // LoadTemplateSources builds one [Templates] from several trees. A section
 // may appear in only one source, and "_default" fallback works across
 // sources.
+//
+// Static helpers and [RequestFuncs] stubs cannot share a name.
 func LoadTemplateSources(sources []TemplateSource, funcMaps ...FuncMap) (*Templates, error) {
 	merged := defaultFuncs()
 	for _, fm := range funcMaps {
-		maps.Copy(merged, fm)
+		for name, fn := range fm {
+			if prev, ok := merged[name]; ok {
+				_, prevStub := prev.(requestStub)
+				_, nextStub := fn.(requestStub)
+				// Request-func overlays must not shadow static helpers.
+				if prevStub != nextStub {
+					return nil, fmt.Errorf("web: template func %q is both a static helper and a request func", name)
+				}
+			}
+			merged[name] = fn
+		}
 	}
 	if err := checkFuncs(merged); err != nil {
 		return nil, err
@@ -198,9 +208,8 @@ func (s *Templates) Render(w io.Writer, page, define string, data any) error {
 	return s.RenderFuncs(w, page, define, data, nil)
 }
 
-// RenderFuncs is Render with funcs overlaid for this execution only. Every
-// name in funcs must already be registered at load; overlaying an
-// unregistered name fails the render. A nil funcs is Render.
+// RenderFuncs renders with funcs overlaid for this execution; every name must
+// be registered during loading, and nil funcs are equivalent to [Templates.Render].
 func (s *Templates) RenderFuncs(w io.Writer, page, define string, data any, funcs FuncMap) error {
 	if define == "" {
 		define = defaultEntry

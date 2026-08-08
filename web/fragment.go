@@ -87,7 +87,7 @@ func (a *Adapter) renderFragment(w http.ResponseWriter, r *http.Request, v Templ
 	v.headers = mergeVary(v.headers, w.Header(), varyOnSelection...)
 
 	if !swapsAFragment(r) {
-		return a.render(w, v.name, a.blockFor(v.block), v.status, v.headers, v.data)
+		return a.render(w, r, v.name, a.blockFor(v.block), v.status, v.headers, v.data)
 	}
 
 	target := r.Header.Get("HX-Target")
@@ -107,7 +107,7 @@ func (a *Adapter) renderFragment(w http.ResponseWriter, r *http.Request, v Templ
 			headers: []headerPair{{"Cache-Control", "no-store"}},
 		}
 	}
-	return a.render(w, v.name, define, v.status, v.headers, v.data)
+	return a.render(w, r, v.name, define, v.status, v.headers, v.data)
 }
 
 // varyOnSelection are the request fields a fragment response's body depends on.
