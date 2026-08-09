@@ -8,6 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/gofabrik/fabrik/migrations"
+	"github.com/gofabrik/fabrik/migrations/sqlite"
 )
 
 func sqlFile(body string) *fstest.MapFile {
@@ -20,7 +21,7 @@ func TestSourcesMigrate_MultiStream(t *testing.T) {
 		{Stream: "todos", FS: fstest.MapFS{"0001_todos.sql": sqlFile(`CREATE TABLE todos (id INTEGER PRIMARY KEY)`)}},
 		{Stream: "auth", FS: fstest.MapFS{"0001_users.sql": sqlFile(`CREATE TABLE users (id INTEGER PRIMARY KEY)`)}},
 	}
-	if err := srcs.Migrate(context.Background(), db, migrations.DialectSQLite); err != nil {
+	if err := srcs.Migrate(context.Background(), db, sqlite.Driver()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -48,7 +49,7 @@ func TestSourcesMigrate_MultiStream(t *testing.T) {
 		}
 	}
 
-	if err := srcs.Migrate(context.Background(), db, migrations.DialectSQLite); err != nil {
+	if err := srcs.Migrate(context.Background(), db, sqlite.Driver()); err != nil {
 		t.Fatalf("re-run: %v", err)
 	}
 }
@@ -60,7 +61,7 @@ func TestSourcesMigrate_DirSubtree(t *testing.T) {
 			"migrations/0001_a.sql": sqlFile(`CREATE TABLE a (id INTEGER PRIMARY KEY)`),
 		}},
 	}
-	if err := srcs.Migrate(context.Background(), db, migrations.DialectSQLite); err != nil {
+	if err := srcs.Migrate(context.Background(), db, sqlite.Driver()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`SELECT * FROM a`); err != nil {
@@ -75,7 +76,7 @@ func TestSourcesMigrate_FailFastAcrossStreams(t *testing.T) {
 		{Stream: "b", FS: fstest.MapFS{"0001_bad.sql": sqlFile(`NOT VALID SQL`)}},
 		{Stream: "c", FS: fstest.MapFS{"0001_ok.sql": sqlFile(`CREATE TABLE t_c (id INTEGER PRIMARY KEY)`)}},
 	}
-	err := srcs.Migrate(context.Background(), db, migrations.DialectSQLite)
+	err := srcs.Migrate(context.Background(), db, sqlite.Driver())
 	if err == nil || !strings.Contains(err.Error(), "b/1_bad") {
 		t.Fatalf("err = %v, want failure naming b/1_bad", err)
 	}
@@ -93,7 +94,7 @@ func TestSourcesMigrate_DuplicateStream(t *testing.T) {
 		{Stream: "web", FS: fstest.MapFS{}},
 		{Stream: "web", FS: fstest.MapFS{}},
 	}
-	err := srcs.Migrate(context.Background(), db, migrations.DialectSQLite)
+	err := srcs.Migrate(context.Background(), db, sqlite.Driver())
 	if !errors.Is(err, migrations.ErrDuplicateStream) {
 		t.Fatalf("err = %v, want migrations.ErrDuplicateStream", err)
 	}
@@ -113,7 +114,7 @@ func TestSourcesMigrate_InvalidSources(t *testing.T) {
 		{"dot stream", migrations.Sources{{Stream: ".", FS: fstest.MapFS{}}}},
 	}
 	for _, tc := range cases {
-		if err := tc.srcs.Migrate(context.Background(), db, migrations.DialectSQLite); !errors.Is(err, migrations.ErrInvalidSource) {
+		if err := tc.srcs.Migrate(context.Background(), db, sqlite.Driver()); !errors.Is(err, migrations.ErrInvalidSource) {
 			t.Errorf("%s: err = %v, want migrations.ErrInvalidSource", tc.name, err)
 		}
 	}
@@ -129,11 +130,11 @@ func TestSourcesMigrate_RemovedStreamIsOrphan(t *testing.T) {
 		{Stream: "auth", FS: fstest.MapFS{"0001_users.sql": sqlFile(`CREATE TABLE users (id INTEGER PRIMARY KEY)`)}},
 		{Stream: "todos", FS: fstest.MapFS{"0001_todos.sql": sqlFile(`CREATE TABLE todos (id INTEGER PRIMARY KEY)`)}},
 	}
-	if err := both.Migrate(context.Background(), db, migrations.DialectSQLite); err != nil {
+	if err := both.Migrate(context.Background(), db, sqlite.Driver()); err != nil {
 		t.Fatal(err)
 	}
 	onlyTodos := both[1:]
-	err := onlyTodos.Migrate(context.Background(), db, migrations.DialectSQLite)
+	err := onlyTodos.Migrate(context.Background(), db, sqlite.Driver())
 	if !errors.Is(err, migrations.ErrOrphan) || !strings.Contains(err.Error(), "auth/1_users") {
 		t.Fatalf("err = %v, want orphan naming auth/1_users", err)
 	}
@@ -144,13 +145,13 @@ func TestSourcesMigrate_PerStreamDrift(t *testing.T) {
 	original := migrations.Sources{
 		{Stream: "auth", FS: fstest.MapFS{"0001_users.sql": sqlFile(`CREATE TABLE users (id INTEGER PRIMARY KEY)`)}},
 	}
-	if err := original.Migrate(context.Background(), db, migrations.DialectSQLite); err != nil {
+	if err := original.Migrate(context.Background(), db, sqlite.Driver()); err != nil {
 		t.Fatal(err)
 	}
 	tampered := migrations.Sources{
 		{Stream: "auth", FS: fstest.MapFS{"0001_users.sql": sqlFile(`CREATE TABLE users (id INTEGER PRIMARY KEY, oops TEXT)`)}},
 	}
-	err := tampered.Migrate(context.Background(), db, migrations.DialectSQLite)
+	err := tampered.Migrate(context.Background(), db, sqlite.Driver())
 	if !errors.Is(err, migrations.ErrDrift) || !strings.Contains(err.Error(), "auth/1_users") {
 		t.Fatalf("err = %v, want drift naming auth/1_users", err)
 	}
@@ -159,7 +160,7 @@ func TestSourcesMigrate_PerStreamDrift(t *testing.T) {
 func TestStatus_FreshDatabase(t *testing.T) {
 	db := openDB(t)
 
-	statuses, err := migrations.Status(context.Background(), db, migrations.DialectSQLite, fstest.MapFS{
+	statuses, err := migrations.Status(context.Background(), db, sqlite.Driver(), fstest.MapFS{
 		"0001_a.sql": sqlFile(`CREATE TABLE a (id INTEGER PRIMARY KEY)`),
 	})
 	if err != nil {
@@ -173,7 +174,7 @@ func TestStatus_FreshDatabase(t *testing.T) {
 		{Stream: "b", FS: fstest.MapFS{"0001_x.sql": sqlFile(`SELECT 1`)}},
 		{Stream: "a", FS: fstest.MapFS{"0002_y.sql": sqlFile(`SELECT 1`)}},
 	}
-	statuses, err = srcs.Status(context.Background(), db, migrations.DialectSQLite)
+	statuses, err = srcs.Status(context.Background(), db, sqlite.Driver())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func TestSourcesStatus_MixedStatesOrdering(t *testing.T) {
 		}},
 		{Stream: "todos", FS: fstest.MapFS{"0001_todos.sql": sqlFile(`CREATE TABLE todos (id INTEGER PRIMARY KEY)`)}},
 	}
-	if err := initial.Migrate(context.Background(), db, migrations.DialectSQLite); err != nil {
+	if err := initial.Migrate(context.Background(), db, sqlite.Driver()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,7 +208,7 @@ func TestSourcesStatus_MixedStatesOrdering(t *testing.T) {
 		}},
 		{Stream: "todos", FS: fstest.MapFS{"0001_todos.sql": sqlFile(`CREATE TABLE todos (id INTEGER PRIMARY KEY, oops TEXT)`)}},
 	}
-	statuses, err := inspect.Status(context.Background(), db, migrations.DialectSQLite)
+	statuses, err := inspect.Status(context.Background(), db, sqlite.Driver())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,15 +241,15 @@ func TestSourcesStatus_MixedStatesOrdering(t *testing.T) {
 func TestEmptyStreamIsOrdinary(t *testing.T) {
 	db := openDB(t)
 	fsys := fstest.MapFS{"0001_a.sql": sqlFile(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, fsys); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), fsys); err != nil {
 		t.Fatal(err)
 	}
-	if err := (migrations.Sources{{Stream: "", FS: fsys}}).Migrate(context.Background(), db, migrations.DialectSQLite); err != nil {
+	if err := (migrations.Sources{{Stream: "", FS: fsys}}).Migrate(context.Background(), db, sqlite.Driver()); err != nil {
 		t.Fatalf("hand-built empty stream should be idempotent with single-stream call: %v", err)
 	}
 
 	dup := migrations.Sources{{FS: fsys}, {Stream: "", FS: fsys}}
-	if err := dup.Migrate(context.Background(), db, migrations.DialectSQLite); !errors.Is(err, migrations.ErrDuplicateStream) {
+	if err := dup.Migrate(context.Background(), db, sqlite.Driver()); !errors.Is(err, migrations.ErrDuplicateStream) {
 		t.Fatalf("duplicate empty stream: err = %v, want migrations.ErrDuplicateStream", err)
 	}
 }
@@ -262,7 +263,7 @@ INSERT INTO settings (key, value) VALUES ('theme', 'dark');
 CREATE INDEX settings_value ON settings (value);
 `),
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src); err != nil {
 		t.Fatal(err)
 	}
 	var value string

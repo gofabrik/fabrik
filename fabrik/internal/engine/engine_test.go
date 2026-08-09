@@ -197,11 +197,11 @@ func TestWireOptionsFullComments(t *testing.T) {
 		t.Fatalf("WireOptions: %v", err)
 	}
 	src := string(res.Src)
-	// The select result inherits its enclosing provider's store.go:32 origin.
+	// The select result inherits its enclosing provider's store.go:33 origin.
 	for _, want := range []string{
 		"// provider shared/http.go:5",
-		"// provider:select store/store.go:23",
-		"// provider store/store.go:32",
+		"// provider:select store/store.go:24",
+		"// provider store/store.go:33",
 		"// hook shared/config.go:15",
 	} {
 		if !strings.Contains(src, want) {
@@ -303,7 +303,7 @@ func TestWireOptionsGraph(t *testing.T) {
 	}
 	pool := byID["serve/storePool"]
 	if pool.Kind != "call" || pool.Fn != "store.NewPool" || pool.Type != "*store.Pool" ||
-		pool.Directive != "provider" || pool.Pos != "store/store.go:44" {
+		pool.Directive != "provider" || pool.Pos != "store/store.go:45" {
 		t.Errorf("provider node = %+v", pool)
 	}
 	sel := byID["serve/storeStore"]

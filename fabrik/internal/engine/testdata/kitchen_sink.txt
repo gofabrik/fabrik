@@ -78,6 +78,7 @@ import (
 	"database/sql"
 
 	"github.com/gofabrik/fabrik/migrations"
+	"github.com/gofabrik/fabrik/migrations/sqlite"
 
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/httpserver"
@@ -121,7 +122,7 @@ func NewPool(ctx context.Context) (*Pool, error) { return &Pool{}, nil }
 func NewDB() (*sql.DB, error) { return sql.Open("sqlite", "file:app.db") }
 
 //fabrik:provider
-func NewDialect() migrations.Dialect { return migrations.DialectSQLite }
+func NewDriver() migrations.Driver { return sqlite.Driver() }
 
 //fabrik:cli:command
 func WarmCache(ctx cli.Context, p *Pool) error { return nil }
@@ -132,8 +133,8 @@ func Serve(ctx cli.Context, server *httpserver.Server) error {
 }
 
 //fabrik:cli:command
-func MigrateDB(ctx cli.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
-	return src.Migrate(ctx, db, d)
+func MigrateDB(ctx cli.Context, db *sql.DB, drv migrations.Driver, src migrations.Sources) error {
+	return src.Migrate(ctx, db, drv)
 }
 -- store/schema.go --
 package store
@@ -377,11 +378,11 @@ func run() int {
 					if err != nil {
 						return err
 					}
-					storeMigrationsDialect := store.NewDialect()
+					storeMigrationsDriver := store.NewDriver()
 					migrationSources := migrations.Sources{
 						{Stream: "store", FS: store.Migrations, Dir: "migrations"},
 					}
-					return store.MigrateDB(ctx, storeSqlDB, storeMigrationsDialect, migrationSources)
+					return store.MigrateDB(ctx, storeSqlDB, storeMigrationsDriver, migrationSources)
 				},
 			},
 		},

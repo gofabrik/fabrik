@@ -252,7 +252,7 @@ func (mg *Migrations) Validate(g *gen.Gen) diag.Diagnostics {
 	for _, d := range mg.decls {
 		if !d.built {
 			ds.Warn(d.pos, fmt.Sprintf("migrations %s can never run: nothing injects migrations.Sources", d.varName),
-				"add a migrate command: //fabrik:cli:command\nfunc Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error { return src.Migrate(ctx, db, migrations.DialectSQLite) }")
+				"add a migrate command: //fabrik:cli:command\nfunc Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error { return src.Migrate(ctx, db, sqlite.Driver()) }")
 		}
 	}
 	return ds
@@ -263,8 +263,8 @@ func (mg *Migrations) MissingHint(ty types.Type) (string, bool) {
 	switch types.TypeString(types.Unalias(ty), nil) {
 	case sourcesPath:
 		return "declare a migration tree: //fabrik:migrations on an embedded directory of NNNN_name.sql files", true
-	case migrationsPath + ".Dialect":
-		return "provide it next to your database: //fabrik:provider\nfunc NewDialect(cfg *DBConfig) migrations.Dialect { return migrations.DialectSQLite }", true
+	case migrationsPath + ".Driver":
+		return "provide it next to your database: //fabrik:provider\nfunc NewDriver(cfg *DBConfig) migrations.Driver { return sqlite.Driver() } (from migrations/sqlite)", true
 	}
 	return "", false
 }

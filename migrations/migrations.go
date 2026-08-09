@@ -1,4 +1,11 @@
 // Package migrations applies forward-only SQL migrations to a *sql.DB.
+//
+// The backend is supplied as a Driver value:
+//
+//	migrations.Migrate(ctx, db, sqlite.Driver(), src)
+//
+// See the sqlite, postgres and mysql leaf packages for Driver
+// implementations.
 package migrations
 
 import (
@@ -41,23 +48,6 @@ var (
 	// or an invalid Dir or Stream.
 	ErrInvalidSource = errors.New("invalid migration source")
 )
-
-type Dialect int
-
-const (
-	DialectSQLite Dialect = iota
-	DialectPostgres
-)
-
-func (d Dialect) String() string {
-	switch d {
-	case DialectSQLite:
-		return "sqlite"
-	case DialectPostgres:
-		return "postgres"
-	}
-	return fmt.Sprintf("Dialect(%d)", int(d))
-}
 
 type State int
 
@@ -107,18 +97,14 @@ type Source struct {
 // Sources is the migration configuration for one database.
 type Sources []Source
 
-// Migrate applies every pending migration in source to db, treating
-// the FS root as the migration directory (stream ""). See
-// [Sources.Migrate] for the full contract.
-func Migrate(ctx context.Context, db *sql.DB, d Dialect, source fs.FS) error {
-	return Sources{{FS: source}}.Migrate(ctx, db, d)
+// Migrate applies one root migration stream to db.
+func Migrate(ctx context.Context, db *sql.DB, drv Driver, source fs.FS) error {
+	return Sources{{FS: source}}.Migrate(ctx, db, drv)
 }
 
-// Status reports the state of every migration in source and in the
-// database, treating the FS root as the migration directory
-// (stream ""). See [Sources.Status] for the full contract.
-func Status(ctx context.Context, db *sql.DB, d Dialect, source fs.FS) ([]MigrationStatus, error) {
-	return Sources{{FS: source}}.Status(ctx, db, d)
+// Status reports one root migration stream without modifying the database.
+func Status(ctx context.Context, db *sql.DB, drv Driver, source fs.FS) ([]MigrationStatus, error) {
+	return Sources{{FS: source}}.Status(ctx, db, drv)
 }
 
 // Check validates source shape without touching a database.
@@ -127,37 +113,28 @@ func (s Sources) Check() error {
 	return err
 }
 
-// Migrate applies every pending migration in every stream, streams in
-// sorted stream order, versions ascending within each. Re-running is
-// idempotent.
-//
-// One engine session spans the whole call; each migration commits
-// independently inside it. A failing migration skips the rest of the
-// call, and applied migrations stay applied.
-//
-// Before applying anything, Migrate checks for changed files
-// ([ErrDrift]) and missing source rows ([ErrOrphan]).
-func (s Sources) Migrate(ctx context.Context, db *sql.DB, d Dialect) (rerr error) {
-	drv, err := driverFor(d)
-	if err != nil {
-		return err
+// Migrate validates drift and orphans, then applies streams and versions in
+// sorted order. Each migration commits independently, and reruns are idempotent.
+func (s Sources) Migrate(ctx context.Context, db *sql.DB, drv Driver) (rerr error) {
+	if drv == nil {
+		return errors.New("migrations: nil Driver")
 	}
 	streams, err := loadStreams(s)
 	if err != nil {
 		return err
 	}
 
-	sess, err := drv.openSession(ctx, db)
+	sess, err := drv.OpenSession(ctx, db)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if cerr := sess.close(); cerr != nil && rerr == nil {
+		if cerr := sess.Close(); cerr != nil && rerr == nil {
 			rerr = cerr
 		}
 	}()
 
-	if _, err := sess.ExecContext(ctx, drv.schemaSQL()); err != nil {
+	if _, err := sess.ExecContext(ctx, drv.SchemaSQL()); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
@@ -166,10 +143,10 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, d Dialect) (rerr error
 		return err
 	}
 
-	inSource := make(map[appliedKey]migration)
+	inSource := make(map[appliedKey]Migration)
 	for _, st := range streams {
 		for _, m := range st.migs {
-			inSource[appliedKey{stream: st.name, version: m.version}] = m
+			inSource[appliedKey{stream: st.name, version: m.Version}] = m
 		}
 	}
 	for _, k := range sortedKeys(applied) {
@@ -179,9 +156,9 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, d Dialect) (rerr error
 			return fmt.Errorf("migration %s is recorded as applied but missing from source: %w",
 				displayName(k.stream, k.version, row.name), ErrOrphan)
 		}
-		if row.checksum != m.checksum {
+		if row.checksum != m.Checksum {
 			return fmt.Errorf("migration %s has changed since it was applied (file checksum %s, stored %s): %w",
-				displayName(k.stream, k.version, m.name), m.checksum, row.checksum, ErrDrift)
+				displayName(k.stream, k.version, m.Name), m.Checksum, row.checksum, ErrDrift)
 		}
 	}
 
@@ -189,11 +166,11 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, d Dialect) (rerr error
 
 	for _, st := range streams {
 		for _, m := range st.migs {
-			if _, ok := applied[appliedKey{stream: st.name, version: m.version}]; ok {
+			if _, ok := applied[appliedKey{stream: st.name, version: m.Version}]; ok {
 				continue
 			}
-			if err := sess.apply(ctx, st.name, m, insertSQL); err != nil {
-				return fmt.Errorf("apply migration %s: %w", displayName(st.name, m.version, m.name), err)
+			if err := sess.Apply(ctx, st.name, m, insertSQL); err != nil {
+				return fmt.Errorf("apply migration %s: %w", displayName(st.name, m.Version, m.Name), err)
 			}
 		}
 	}
@@ -203,10 +180,9 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, d Dialect) (rerr error
 // Status reports source and database rows, sorted by (Stream, Version).
 // It is read-only and does not lock; concurrent Migrate calls may make
 // the snapshot transient.
-func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]MigrationStatus, error) {
-	drv, err := driverFor(d)
-	if err != nil {
-		return nil, err
+func (s Sources) Status(ctx context.Context, db *sql.DB, drv Driver) ([]MigrationStatus, error) {
+	if drv == nil {
+		return nil, errors.New("migrations: nil Driver")
 	}
 	streams, err := loadStreams(s)
 	if err != nil {
@@ -214,7 +190,7 @@ func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]Migration
 	}
 
 	applied := map[appliedKey]appliedRow{}
-	exists, err := drv.tableExists(ctx, db)
+	exists, err := drv.TableExists(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -229,29 +205,29 @@ func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]Migration
 	inSource := make(map[appliedKey]bool)
 	for _, st := range streams {
 		for _, m := range st.migs {
-			k := appliedKey{stream: st.name, version: m.version}
+			k := appliedKey{stream: st.name, version: m.Version}
 			inSource[k] = true
 			row, ok := applied[k]
 			if !ok {
 				out = append(out, MigrationStatus{
 					Stream:       st.name,
-					Version:      m.version,
-					Name:         m.name,
-					FileChecksum: m.checksum,
+					Version:      m.Version,
+					Name:         m.Name,
+					FileChecksum: m.Checksum,
 					State:        StatePending,
 				})
 				continue
 			}
 			state := StateApplied
-			if row.checksum != m.checksum {
+			if row.checksum != m.Checksum {
 				state = StateDrifted
 			}
 			out = append(out, MigrationStatus{
 				Stream:       st.name,
-				Version:      m.version,
-				Name:         m.name,
+				Version:      m.Version,
+				Name:         m.Name,
 				Checksum:     row.checksum,
-				FileChecksum: m.checksum,
+				FileChecksum: m.Checksum,
 				AppliedAt:    row.appliedAt,
 				State:        state,
 			})
@@ -279,20 +255,12 @@ func (s Sources) Status(ctx context.Context, db *sql.DB, d Dialect) ([]Migration
 	return out, nil
 }
 
-type migration struct {
-	version  int64
-	name     string
-	body     string
-	checksum string
-}
-
 type appliedRow struct {
 	name      string
 	checksum  string
 	appliedAt time.Time
 }
 
-// appliedKey identifies one bookkeeping row.
 type appliedKey struct {
 	stream  string
 	version int64
@@ -300,18 +268,11 @@ type appliedKey struct {
 
 type stream struct {
 	name string
-	migs []migration
+	migs []Migration
 }
 
 var filenameRE = regexp.MustCompile(`^(\d+)_([A-Za-z0-9_-]+)\.sql$`)
 
-// querier is satisfied by both *sql.DB and *sql.Conn.
-type querier interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}
-
-// loadStreams validates sources before any database work.
 func loadStreams(sources Sources) ([]stream, error) {
 	if len(sources) == 0 {
 		return nil, fmt.Errorf("at least one Source is required: %w", ErrInvalidSource)
@@ -384,16 +345,16 @@ func displayName(stream string, version int64, name string) string {
 	return n
 }
 
-func loadMigrations(source fs.FS, stream string) ([]migration, error) {
+func loadMigrations(source fs.FS, stream string) ([]Migration, error) {
 	entries, err := fs.ReadDir(source, ".")
 	if err != nil {
 		return nil, fmt.Errorf("read source (stream %q): %w", stream, err)
 	}
 
-	var migs []migration
+	var migs []Migration
 	seen := map[int64]string{}
 	for _, e := range entries {
-		// Migration trees are flat; nested SQL files would never run.
+		// Reject nested files instead of silently ignoring them.
 		if e.IsDir() {
 			return nil, fmt.Errorf("%q is a directory (stream %q): migration trees are flat: %w", e.Name(), stream, ErrInvalidSource)
 		}
@@ -418,19 +379,19 @@ func loadMigrations(source fs.FS, stream string) ([]migration, error) {
 			return nil, fmt.Errorf("read %q: %w", name, err)
 		}
 		sum := sha256.Sum256(body)
-		migs = append(migs, migration{
-			version:  version,
-			name:     match[2],
-			body:     string(body),
-			checksum: hex.EncodeToString(sum[:]),
+		migs = append(migs, Migration{
+			Version:  version,
+			Name:     match[2],
+			Body:     string(body),
+			Checksum: hex.EncodeToString(sum[:]),
 		})
 	}
 
-	sort.Slice(migs, func(i, j int) bool { return migs[i].version < migs[j].version })
+	sort.Slice(migs, func(i, j int) bool { return migs[i].Version < migs[j].Version })
 	return migs, nil
 }
 
-func loadApplied(ctx context.Context, q querier) (map[appliedKey]appliedRow, error) {
+func loadApplied(ctx context.Context, q Querier) (map[appliedKey]appliedRow, error) {
 	rows, err := q.QueryContext(ctx, `SELECT stream, version, name, checksum, applied_at FROM schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("query schema_migrations: %w", err)
