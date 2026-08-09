@@ -102,21 +102,83 @@ are construction errors at `New`.
 
 `Store` is three methods: `Load`, `Save`, `Delete`, moving opaque
 payload bytes under CAS versioning, with optional capabilities
-(`TTLBumper`, `UserIndexer`, `Scanner`, `Sweeper`). Two
-implementations ship, both fully capable: `MemoryStore`
-(process-local, zero config) and `SQLiteStore` (database/sql; bring
-your own driver). `SQLiteStore`
-bootstraps its schema with `SQLiteOptions{AutoCreate: true}`, or
-hand `SQLiteSchema()` to your migration tool; open the DB with a
-busy_timeout pragma and `Sweep` from a scheduler near the
+(`TTLBumper`, `UserIndexer`, `Scanner`, `Sweeper`). `MemoryStore` is
+process-local and zero config. Database-backed stores live in leaf
+packages, all four capabilities fully implemented.
+
+### Database-backed stores
+
+Three database backends are available as leaf packages. Each exposes
+`Store`, `Options{AutoCreate, Now}`, `New(db, opts)`, and `Schema()`.
+
+**SQLite** (`session/sqlite`):
+
+```go
+import "github.com/gofabrik/fabrik/session/sqlite"
+
+db, err := sql.Open("sqlite", "file:app.db?_pragma=busy_timeout(5000)")
+store, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
+```
+
+**PostgreSQL** (`session/postgres`):
+
+```go
+import "github.com/gofabrik/fabrik/session/postgres"
+
+db, err := sql.Open("pgx", "postgres://user:pass@host/db?sslmode=disable")
+store, err := postgres.New(db, postgres.Options{AutoCreate: true})
+```
+
+**MySQL / MariaDB** (`session/mysql`):
+
+```go
+import "github.com/gofabrik/fabrik/session/mysql"
+
+db, err := sql.Open("mysql", "user:pass@tcp(host:3306)/db?parseTime=true")
+store, err := mysql.New(db, mysql.Options{AutoCreate: true})
+```
+
+`Schema()` returns the table definition, safe to apply more than once;
+apply it through migrations in production, or pass `AutoCreate: true`
+in development and tests. `Options.Now` overrides the wall-clock
+source for expiry filtering and sweep. Open the SQLite DB with a
+busy_timeout pragma, and call `Sweep` from a scheduler near the
 idle-expiry cadence.
+
+#### Key-length contract
+
+| Backend    | Maximum SID length |
+|------------|---------------------|
+| SQLite     | no enforced limit  |
+| PostgreSQL | ~2704 bytes (B-tree index limit for incompressible keys) |
+| MySQL/MariaDB | 3072 bytes (`VARBINARY(3072)` primary key) |
+
+SIDs exceeding the backend limit are rejected by the database; on
+PostgreSQL the ceiling is content-dependent (B-tree compression), so
+only sufficiently incompressible SIDs over the limit reliably fail.
+
+On MySQL/MariaDB the indexed `user_id` column is `VARBINARY(191)`: user
+IDs longer than 191 bytes are rejected. On PostgreSQL `user_id` is
+B-tree indexed and shares the SID column's content-dependent ceiling
+(sufficiently incompressible values over ~2700 bytes fail on `Save`).
+SQLite enforces no user-id bound. SIDs and user ids are arbitrary bytes
+on every backend, including NUL and invalid UTF-8.
+
+#### MySQL/MariaDB notes
+
+`sid` is `VARBINARY(3072)` and `user_id` is `VARBINARY(191)`, so both
+compare byte-for-byte. MySQL indexes `user_id` unconditionally because
+it does not support the partial index used by SQLite and PostgreSQL.
+
+`BumpTTL` locks the row to distinguish an unchanged match from a missing
+or expired SID under MySQL's affected-row semantics.
 
 The `storetest` package is the conformance suite; every store
 implementation runs it:
 
 ```go
 func TestMyStore(t *testing.T) {
-	storetest.Run(t, func() session.Store { return NewMyStore() })
+	storetest.Run(t, func(t *testing.T) session.Store { return NewMyStore() })
 }
 ```
 

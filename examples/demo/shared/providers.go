@@ -21,6 +21,7 @@ import (
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
+	sqlitesession "github.com/gofabrik/fabrik/session/sqlite"
 	"github.com/gofabrik/fabrik/storage"
 	"github.com/gofabrik/fabrik/web"
 	_ "modernc.org/sqlite"
@@ -58,7 +59,8 @@ func NewJobsConfig() jobs.Config {
 //fabrik:inject db name=database
 //fabrik:provider
 func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error) {
-	store, err := session.NewSQLiteStore(db, session.SQLiteOptions{})
+	// Schema creation belongs to migration 0003_sessions.sql.
+	store, err := sqlitesession.New(db, sqlitesession.Options{AutoCreate: false})
 	if err != nil {
 		return nil, err
 	}

@@ -21,10 +21,10 @@
 // response-start commit. [Manager.Update] writes immediately with CAS
 // retry. [Manager.Promote] is login and [Manager.Destroy] is logout.
 //
-// The package ships an in-memory store ([MemoryStore]), a SQLite
-// store ([SQLiteStore]), and cookie and bearer token transports
-// ([Cookie], [Bearer], [Multi]). Stores declare optional
-// capabilities via interfaces ([TTLBumper], [UserIndexer],
+// The package ships an in-memory store ([MemoryStore]), database-backed
+// stores in the sqlite, postgres, and mysql subpackages, and cookie and
+// bearer token transports ([Cookie], [Bearer], [Multi]). Stores declare
+// optional capabilities via interfaces ([TTLBumper], [UserIndexer],
 // [Scanner], [Sweeper]); the storetest subpackage is the
 // conformance suite every store implementation runs.
 //
