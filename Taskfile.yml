@@ -45,6 +45,29 @@ tasks:
     env: { GOWORK: 'off' }
     cmds: [go test ./...]
 
+  db:up:
+    desc: Start Postgres, MySQL, and MariaDB via Docker Compose and wait until healthy
+    dir: '{{.ROOT_DIR}}'
+    cmds: [docker compose up -d --wait]
+
+  db:down:
+    desc: Stop and remove the database containers
+    dir: '{{.ROOT_DIR}}'
+    cmds: [docker compose down]
+
+  test:db:
+    desc: Run database-backed test modules with live DSNs
+    vars:
+      DBTEST_DIRS:
+        sh: cd {{.ROOT_DIR}} && go work edit -json | jq -r '.Use[].DiskPath' | grep '/dbtest$'
+    env:
+      TEST_POSTGRES_DSN: 'postgres://postgres:proto@localhost:55432/proto?sslmode=disable'
+      TEST_MYSQL_DSN: 'root:proto@tcp(localhost:53306)/proto?parseTime=true&multiStatements=true'
+      TEST_MARIADB_DSN: 'root:proto@tcp(localhost:53307)/proto?parseTime=true&multiStatements=true'
+    cmds:
+      - for: { var: DBTEST_DIRS }
+        cmd: cd {{.ROOT_DIR}}/{{.ITEM}} && go test ./...
+
   lint:
     desc: Lint, static analysis, and formatting across every module (report only, never gates)
     cmds:
