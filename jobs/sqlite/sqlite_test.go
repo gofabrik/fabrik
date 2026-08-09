@@ -1,6 +1,14 @@
--- The jobs/sqlite schema is managed by migrations, so
--- the store is constructed with AutoCreate: false and jobs.Run reconciles
--- schedules against tables these migrations created.
+package sqlite_test
+
+import (
+	"testing"
+
+	"github.com/gofabrik/fabrik/jobs/sqlite"
+)
+
+// TestSchemaUnchanged preserves compatibility with deployed schemas.
+func TestSchemaUnchanged(t *testing.T) {
+	const want = `
 CREATE TABLE IF NOT EXISTS jobs (
     id               TEXT    PRIMARY KEY,
     kind             TEXT    NOT NULL,
@@ -60,4 +68,14 @@ CREATE TABLE IF NOT EXISTS job_schedules (
     last_run_at  INTEGER,
     updated_at   INTEGER NOT NULL,
     PRIMARY KEY (sched_group, name)
-);
+);`
+	if got := sqlite.Schema(); got != want {
+		t.Fatalf("Schema() diverged from the pinned DDL:\n%s", got)
+	}
+}
+
+func TestNewRejectsNilDB(t *testing.T) {
+	if _, err := sqlite.New(nil, sqlite.Options{}); err == nil {
+		t.Fatal("nil db accepted")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	sqlitecache "github.com/gofabrik/fabrik/cache/sqlite"
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/jobs"
+	sqlitejobs "github.com/gofabrik/fabrik/jobs/sqlite"
 	"github.com/gofabrik/fabrik/mail"
 	mailtemplates "github.com/gofabrik/fabrik/mail/templates"
 	"github.com/gofabrik/fabrik/query"
@@ -46,7 +47,7 @@ func NewQueries(db *sql.DB) (*query.DB, error) {
 //fabrik:provider
 func NewJobStore(db *sql.DB) (jobs.Store, error) {
 	// Migrations create the jobs schema before schedule reconciliation.
-	return jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: false})
+	return sqlitejobs.New(db, sqlitejobs.Options{AutoCreate: false})
 }
 
 // NewJobsConfig configures the generated jobs manager.
