@@ -174,7 +174,7 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func() error) {
 		for {
 			select {
 			case <-ticker.C:
-				_ = store.Sweep(context.Background(), time.Now())
+				_, _ = store.Sweep(context.Background(), time.Now())
 			case <-done:
 				return
 			}

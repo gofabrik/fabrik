@@ -23,14 +23,14 @@ func TestMemoryStore_Sweep(t *testing.T) {
 	if ok, err := s.SetIfAbsent(ctx, "live", 2, now, now.Add(time.Hour)); err != nil || !ok {
 		t.Fatalf("seed live: ok=%v err=%v", ok, err)
 	}
-	removed := s.Sweep(ctx, now.Add(time.Minute))
-	if removed != 1 {
-		t.Fatalf("Sweep removed %d, want 1", removed)
+	removed, err := s.Sweep(ctx, now.Add(time.Minute))
+	if err != nil || removed != 1 {
+		t.Fatalf("Sweep = %d, %v; want 1, nil", removed, err)
 	}
 	if _, exists, _ := s.Get(ctx, "live", now.Add(time.Minute)); !exists {
 		t.Fatal("Sweep must keep live entries")
 	}
-	if removed := s.Sweep(ctx, now.Add(time.Minute)); removed != 0 {
-		t.Fatalf("second Sweep removed %d, want 0 (expired entry already gone)", removed)
+	if removed, err := s.Sweep(ctx, now.Add(time.Minute)); err != nil || removed != 0 {
+		t.Fatalf("second Sweep = %d, %v; want 0, nil (expired entry already gone)", removed, err)
 	}
 }
