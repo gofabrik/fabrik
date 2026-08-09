@@ -8,9 +8,11 @@
 package storetest
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -232,6 +234,71 @@ func Run(t *testing.T, factory func(t *testing.T) cache.Store) {
 		}
 	})
 
+	t.Run("KeyBinarySafe", func(t *testing.T) {
+		s := factory(t)
+		for i, key := range []string{"a\x00b", "\xff\xfe", "a"} {
+			set(t, s, key, cache.Entry{Value: []byte{byte(i)}})
+		}
+		for i, key := range []string{"a\x00b", "\xff\xfe", "a"} {
+			e, ok, err := s.Get(ctx, key, now)
+			if err != nil || !ok || len(e.Value) != 1 || e.Value[0] != byte(i) {
+				t.Fatalf("binary key %q = %v %v %v", key, e.Value, ok, err)
+			}
+		}
+	})
+
+	t.Run("LargeValue", func(t *testing.T) {
+		s := factory(t)
+		large := bytes.Repeat([]byte("x"), 65537)
+		set(t, s, "large", cache.Entry{Value: large})
+		e, ok, err := s.Get(ctx, "large", now)
+		if err != nil || !ok {
+			t.Fatalf("Get = %v %v", ok, err)
+		}
+		if !bytes.Equal(e.Value, large) {
+			t.Fatalf("large value did not round-trip (len got=%d want=%d)", len(e.Value), len(large))
+		}
+	})
+
+	t.Run("CaseDistinctKeys", func(t *testing.T) {
+		s := factory(t)
+		set(t, s, "Key", cache.Entry{Value: []byte("upper")})
+		set(t, s, "key", cache.Entry{Value: []byte("lower")})
+		e, ok, err := s.Get(ctx, "Key", now)
+		if err != nil || !ok || string(e.Value) != "upper" {
+			t.Fatalf("Get Key = %q %v %v", e.Value, ok, err)
+		}
+		e, ok, err = s.Get(ctx, "key", now)
+		if err != nil || !ok || string(e.Value) != "lower" {
+			t.Fatalf("Get key = %q %v %v", e.Value, ok, err)
+		}
+	})
+
+	t.Run("TrailingSpaceKeys", func(t *testing.T) {
+		s := factory(t)
+		set(t, s, "k", cache.Entry{Value: []byte("no-space")})
+		set(t, s, "k ", cache.Entry{Value: []byte("trailing-space")})
+		e, ok, err := s.Get(ctx, "k", now)
+		if err != nil || !ok || string(e.Value) != "no-space" {
+			t.Fatalf("Get 'k' = %q %v %v", e.Value, ok, err)
+		}
+		e, ok, err = s.Get(ctx, "k ", now)
+		if err != nil || !ok || string(e.Value) != "trailing-space" {
+			t.Fatalf("Get 'k ' = %q %v %v", e.Value, ok, err)
+		}
+	})
+
+	// Use incompressible data to exercise the portable 2048-byte boundary.
+	t.Run("BoundaryLengthKey", func(t *testing.T) {
+		s := factory(t)
+		key := IncompressibleKey(2048)
+		set(t, s, key, cache.Entry{Value: []byte("v"), Expires: now.Add(time.Minute)})
+		e, ok, err := s.Get(ctx, key, now)
+		if err != nil || !ok || string(e.Value) != "v" {
+			t.Fatalf("Get boundary key = %q %v %v", e.Value, ok, err)
+		}
+	})
+
 	t.Run("ConcurrentSetsDistinctKeys", func(t *testing.T) {
 		s := factory(t)
 		var wg sync.WaitGroup
@@ -266,4 +333,17 @@ func set(t *testing.T, s cache.Store, key string, e cache.Entry) {
 	if err := s.Set(context.Background(), key, e); err != nil {
 		t.Fatalf("Set %q: %v", key, err)
 	}
+}
+
+// IncompressibleKey returns deterministic data that resists compression.
+func IncompressibleKey(n int) string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	var b strings.Builder
+	b.Grow(n)
+	state := uint64(0x9E3779B97F4A7C15)
+	for range n {
+		state = state*6364136223846793005 + 1442695040888963407
+		b.WriteByte(alphabet[state>>58])
+	}
+	return b.String()
 }

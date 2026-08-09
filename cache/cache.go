@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"regexp"
 	"time"
 )
@@ -284,25 +283,4 @@ func (c *Cache[T]) lookupOrMiss(ctx context.Context, key string) (T, bool, error
 
 func isCtxErr(ctx context.Context, err error) bool {
 	return ctx.Err() != nil && errors.Is(err, ctx.Err())
-}
-
-// minInstant and maxInstant bound the expiry domain: instants
-// representable as int64 Unix nanoseconds.
-var (
-	minInstant = time.Unix(0, math.MinInt64)
-	maxInstant = time.Unix(0, math.MaxInt64)
-)
-
-func checkExpiry(t time.Time) error {
-	if t.IsZero() {
-		return nil
-	}
-	return checkNow(t)
-}
-
-func checkNow(t time.Time) error {
-	if t.Before(minInstant) || t.After(maxInstant) {
-		return fmt.Errorf("instant %v outside the int64 unix-nano domain", t)
-	}
-	return nil
 }

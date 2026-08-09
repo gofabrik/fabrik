@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/cache"
+	sqlitecache "github.com/gofabrik/fabrik/cache/sqlite"
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/mail"
@@ -78,7 +79,7 @@ func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 //fabrik:provider
 func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 	// Schema creation belongs to migration 0005_cache.sql.
-	store, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{AutoCreate: false})
+	store, err := sqlitecache.New(db, sqlitecache.Options{AutoCreate: false})
 	if err != nil {
 		return nil, nil, err
 	}
