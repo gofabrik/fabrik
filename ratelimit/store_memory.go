@@ -57,15 +57,15 @@ func (s *MemoryStore) CompareAndSwap(ctx context.Context, key string, old, newVa
 }
 
 // Sweep removes every entry expired at now and reports how many.
-func (s *MemoryStore) Sweep(ctx context.Context, now time.Time) int {
+func (s *MemoryStore) Sweep(ctx context.Context, now time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	removed := 0
+	var removed int64
 	for k, e := range s.m {
 		if !e.expiresAt.After(now) {
 			delete(s.m, k)
 			removed++
 		}
 	}
-	return removed
+	return removed, nil
 }

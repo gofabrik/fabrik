@@ -1,4 +1,8 @@
-package migrations
+// Package sqlite is the SQLite migration driver. Pass its value to the
+// migrations engine:
+//
+//	migrations.Migrate(ctx, db, sqlite.Driver(), src)
+package sqlite
 
 import (
 	"context"
@@ -6,15 +10,19 @@ import (
 	sqldriver "database/sql/driver"
 	"fmt"
 	"time"
+
+	"github.com/gofabrik/fabrik/migrations"
 )
 
-// sqliteDriver runs each migration inside its own BEGIN IMMEDIATE
-// transaction on a dedicated connection.
-type sqliteDriver struct{}
+// Driver returns the stateless SQLite migration driver.
+func Driver() migrations.Driver { return driver{} }
 
-func (sqliteDriver) placeholder(int) string { return "?" }
+// driver runs each migration in a dedicated BEGIN IMMEDIATE transaction.
+type driver struct{}
 
-func (sqliteDriver) schemaSQL() string {
+func (driver) Placeholder(int) string { return "?" }
+
+func (driver) SchemaSQL() string {
 	return `CREATE TABLE IF NOT EXISTS schema_migrations (
     stream     TEXT NOT NULL,
     version    BIGINT NOT NULL,
@@ -25,7 +33,7 @@ func (sqliteDriver) schemaSQL() string {
 )`
 }
 
-func (sqliteDriver) tableExists(ctx context.Context, q querier) (bool, error) {
+func (driver) TableExists(ctx context.Context, q migrations.Querier) (bool, error) {
 	rows, err := q.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`)
 	if err != nil {
 		return false, fmt.Errorf("probe schema_migrations: %w", err)
@@ -34,7 +42,7 @@ func (sqliteDriver) tableExists(ctx context.Context, q querier) (bool, error) {
 	return rows.Next(), rows.Err()
 }
 
-func (sqliteDriver) openSession(ctx context.Context, db *sql.DB) (session, error) {
+func (driver) OpenSession(ctx context.Context, db *sql.DB) (migrations.Session, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire connection: %w", err)
@@ -53,33 +61,33 @@ func (sqliteDriver) openSession(ctx context.Context, db *sql.DB) (session, error
 			return nil, fmt.Errorf("set SQLite busy_timeout: %w", err)
 		}
 	}
-	return &sqliteSession{c: conn}, nil
+	return &session{c: conn}, nil
 }
 
-type sqliteSession struct {
+type session struct {
 	c      *sql.Conn
 	closed bool
-	// tainted means ROLLBACK failed and the connection cannot reenter the pool.
+	// A failed rollback prevents the connection from reentering the pool.
 	tainted bool
 }
 
-func (s *sqliteSession) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+func (s *session) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	return s.c.ExecContext(ctx, query, args...)
 }
 
-func (s *sqliteSession) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+func (s *session) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	return s.c.QueryContext(ctx, query, args...)
 }
 
-func (s *sqliteSession) apply(ctx context.Context, stream string, m migration, insertSQL string) error {
+func (s *session) Apply(ctx context.Context, stream string, m migrations.Migration, insertSQL string) error {
 	if _, err := s.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
-	if _, err := s.ExecContext(ctx, m.body); err != nil {
+	if _, err := s.ExecContext(ctx, m.Body); err != nil {
 		s.rollback()
 		return err
 	}
-	if _, err := s.ExecContext(ctx, insertSQL, stream, m.version, m.name, m.checksum, time.Now().UTC()); err != nil {
+	if _, err := s.ExecContext(ctx, insertSQL, stream, m.Version, m.Name, m.Checksum, time.Now().UTC()); err != nil {
 		s.rollback()
 		return err
 	}
@@ -90,14 +98,14 @@ func (s *sqliteSession) apply(ctx context.Context, stream string, m migration, i
 	return nil
 }
 
-// rollback uses background context so caller cancellation cannot strand the tx.
-func (s *sqliteSession) rollback() {
+// rollback ignores caller cancellation so the transaction cannot be stranded.
+func (s *session) rollback() {
 	if _, err := s.ExecContext(context.Background(), "ROLLBACK"); err != nil {
 		s.tainted = true
 	}
 }
 
-func (s *sqliteSession) close() error {
+func (s *session) Close() error {
 	if s.closed {
 		return nil
 	}

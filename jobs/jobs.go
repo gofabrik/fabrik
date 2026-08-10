@@ -9,10 +9,10 @@
 //
 // Jobs are at-least-once: a worker can crash mid-attempt and the job
 // runs again, so non-idempotent side effects should carry their own
-// idempotency key. Two backends ship in this package: an in-memory store
-// (tests, examples, local dev) and a SQLite store (single node,
-// durable). Neither imports a SQL driver; the SQLite store takes a
-// caller-opened *sql.DB.
+// idempotency key. An in-memory store (tests, examples, local dev)
+// ships in this package; durable stores for SQLite, PostgreSQL, and
+// MySQL/MariaDB live in the sqlite, postgres, and mysql subpackages.
+// Each takes a caller-opened *sql.DB.
 package jobs
 
 import (

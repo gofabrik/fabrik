@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gofabrik/fabrik/session"
+	sessionsqlite "github.com/gofabrik/fabrik/session/sqlite"
 	"github.com/gofabrik/fabrik/session/storetest"
 
 	_ "modernc.org/sqlite"
@@ -26,8 +27,8 @@ func openDB(t *testing.T) *sql.DB {
 }
 
 func TestSQLiteStoreConformance(t *testing.T) {
-	storetest.Run(t, func() session.Store {
-		s, err := session.NewSQLiteStore(openDB(t), session.SQLiteOptions{AutoCreate: true})
+	storetest.Run(t, func(t *testing.T) session.Store {
+		s, err := sessionsqlite.New(openDB(t), sessionsqlite.Options{AutoCreate: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,18 +39,18 @@ func TestSQLiteStoreConformance(t *testing.T) {
 // The schema supports both AutoCreate and externally managed DDL.
 func TestSQLiteSchemaIdempotentAndManaged(t *testing.T) {
 	db := openDB(t)
-	if _, err := session.NewSQLiteStore(db, session.SQLiteOptions{AutoCreate: true}); err != nil {
+	if _, err := sessionsqlite.New(db, sessionsqlite.Options{AutoCreate: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.NewSQLiteStore(db, session.SQLiteOptions{AutoCreate: true}); err != nil {
+	if _, err := sessionsqlite.New(db, sessionsqlite.Options{AutoCreate: true}); err != nil {
 		t.Fatalf("second AutoCreate: %v", err)
 	}
 
 	managed := openDB(t)
-	if _, err := managed.Exec(session.SQLiteSchema()); err != nil {
+	if _, err := managed.Exec(sessionsqlite.Schema()); err != nil {
 		t.Fatal(err)
 	}
-	s, err := session.NewSQLiteStore(managed, session.SQLiteOptions{})
+	s, err := sessionsqlite.New(managed, sessionsqlite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

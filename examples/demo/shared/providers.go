@@ -13,13 +13,16 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/cache"
+	sqlitecache "github.com/gofabrik/fabrik/cache/sqlite"
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/jobs"
+	sqlitejobs "github.com/gofabrik/fabrik/jobs/sqlite"
 	"github.com/gofabrik/fabrik/mail"
 	mailtemplates "github.com/gofabrik/fabrik/mail/templates"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
+	sqlitesession "github.com/gofabrik/fabrik/session/sqlite"
 	"github.com/gofabrik/fabrik/storage"
 	"github.com/gofabrik/fabrik/web"
 	_ "modernc.org/sqlite"
@@ -44,7 +47,7 @@ func NewQueries(db *sql.DB) (*query.DB, error) {
 //fabrik:provider
 func NewJobStore(db *sql.DB) (jobs.Store, error) {
 	// Migrations create the jobs schema before schedule reconciliation.
-	return jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: false})
+	return sqlitejobs.New(db, sqlitejobs.Options{AutoCreate: false})
 }
 
 // NewJobsConfig configures the generated jobs manager.
@@ -57,7 +60,8 @@ func NewJobsConfig() jobs.Config {
 //fabrik:inject db name=database
 //fabrik:provider
 func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error) {
-	store, err := session.NewSQLiteStore(db, session.SQLiteOptions{})
+	// Schema creation belongs to migration 0003_sessions.sql.
+	store, err := sqlitesession.New(db, sqlitesession.Options{AutoCreate: false})
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +82,7 @@ func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 //fabrik:provider
 func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 	// Schema creation belongs to migration 0005_cache.sql.
-	store, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{AutoCreate: false})
+	store, err := sqlitecache.New(db, sqlitecache.Options{AutoCreate: false})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -173,7 +177,7 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func() error) {
 		for {
 			select {
 			case <-ticker.C:
-				_ = store.Sweep(context.Background(), time.Now())
+				_, _ = store.Sweep(context.Background(), time.Now())
 			case <-done:
 				return
 			}

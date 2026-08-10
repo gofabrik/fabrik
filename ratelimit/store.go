@@ -14,3 +14,8 @@ type Store interface {
 	SetIfAbsent(ctx context.Context, key string, value int64, now, expiresAt time.Time) (ok bool, err error)
 	CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (ok bool, err error)
 }
+
+// Sweeper optionally reclaims entries expired at now and reports how many it removed.
+type Sweeper interface {
+	Sweep(ctx context.Context, now time.Time) (int64, error)
+}

@@ -1,0 +1,4 @@
+change_type: breaking
+component: migrations
+note: Add PostgreSQL and MySQL/MariaDB storage for cache, rate limiting, sessions, and jobs, plus explicit migration drivers for each database.
+issues: [0]

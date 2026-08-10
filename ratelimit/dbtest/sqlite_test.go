@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/ratelimit"
+	rlsqlite "github.com/gofabrik/fabrik/ratelimit/sqlite"
 	"github.com/gofabrik/fabrik/ratelimit/storetest"
 	_ "modernc.org/sqlite"
 )
@@ -28,44 +29,46 @@ func openDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func newSQLiteStore(t *testing.T) *rlsqlite.Store {
+	t.Helper()
+	s, err := rlsqlite.New(openDB(t), rlsqlite.Options{AutoCreate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 func TestSQLiteStore_Conformance(t *testing.T) {
 	storetest.Run(t, func(t *testing.T) ratelimit.Store {
-		s, err := ratelimit.NewSQLiteStore(openDB(t), ratelimit.SQLiteOptions{AutoCreate: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return s
+		return newSQLiteStore(t)
 	})
 }
 
 func TestSQLiteStore_AutoCreate(t *testing.T) {
 	db := openDB(t)
-	s, err := ratelimit.NewSQLiteStore(db, ratelimit.SQLiteOptions{})
+	s, err := rlsqlite.New(db, rlsqlite.Options{})
 	if err != nil {
 		t.Fatalf("construction without AutoCreate must succeed (schema is the caller's job): %v", err)
 	}
 	if _, _, err := s.Get(context.Background(), "k", time.Now()); err == nil {
 		t.Fatal("operations without schema must error, not succeed silently")
 	}
-	if _, err := db.Exec(ratelimit.SQLiteSchema()); err != nil {
+	if _, err := db.Exec(rlsqlite.Schema()); err != nil {
 		t.Fatalf("caller-applied schema: %v", err)
 	}
-	if _, err := db.Exec(ratelimit.SQLiteSchema()); err != nil {
+	if _, err := db.Exec(rlsqlite.Schema()); err != nil {
 		t.Fatalf("schema must be idempotent: %v", err)
 	}
 	if _, _, err := s.Get(context.Background(), "k", time.Now()); err != nil {
 		t.Fatalf("Get after caller-applied schema: %v", err)
 	}
-	if _, err := ratelimit.NewSQLiteStore(nil, ratelimit.SQLiteOptions{}); err == nil {
+	if _, err := rlsqlite.New(nil, rlsqlite.Options{}); err == nil {
 		t.Fatal("nil db accepted")
 	}
 }
 
 func TestSQLiteStore_Sweep(t *testing.T) {
-	s, err := ratelimit.NewSQLiteStore(openDB(t), ratelimit.SQLiteOptions{AutoCreate: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	if ok, err := s.SetIfAbsent(ctx, "old", 1, now, now.Add(time.Second)); err != nil || !ok {
@@ -87,10 +90,7 @@ func TestSQLiteStore_Sweep(t *testing.T) {
 }
 
 func TestSQLiteStore_WorksWithLimiter(t *testing.T) {
-	s, err := ratelimit.NewSQLiteStore(openDB(t), ratelimit.SQLiteOptions{AutoCreate: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newSQLiteStore(t)
 	lim, err := ratelimit.New(ratelimit.PerMinute(6).WithBurst(2), s,
 		ratelimit.WithClock(func() time.Time { return time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC) }))
 	if err != nil {

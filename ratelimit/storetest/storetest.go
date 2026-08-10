@@ -4,6 +4,7 @@ package storetest
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -65,6 +66,23 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 		}
 		if v, exists, err := s.Get(ctx, "set", later); err != nil || !exists || v != 9 {
 			t.Fatalf("v=%d exists=%v err=%v after overwrite", v, exists, err)
+		}
+	})
+
+	t.Run("SetIfAbsentOnExpiredSameValue", func(t *testing.T) {
+		// An identical expired-row overwrite still succeeds.
+		s := factory(t)
+		exp := base.Add(time.Second)
+		later := exp.Add(time.Second)
+		if ok, err := s.SetIfAbsent(ctx, "k", 42, base, exp); err != nil || !ok {
+			t.Fatalf("seed: ok=%v err=%v", ok, err)
+		}
+		ok, err := s.SetIfAbsent(ctx, "k", 42, later, exp)
+		if err != nil || !ok {
+			t.Fatalf("SetIfAbsent overwriting an expired entry with identical value and expiry must succeed: ok=%v err=%v", ok, err)
+		}
+		if v, exists, err := s.Get(ctx, "k", base); err != nil || !exists || v != 42 {
+			t.Fatalf("after identical overwrite: v=%d exists=%v err=%v", v, exists, err)
 		}
 	})
 
@@ -152,6 +170,20 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 		}
 	})
 
+	t.Run("CASToEqualValueSucceeds", func(t *testing.T) {
+		// A matching CAS succeeds even when it changes no columns.
+		s := factory(t)
+		setLive(ctx, t, s, "k", 5, base, base.Add(time.Minute))
+		ok, err := s.CompareAndSwap(ctx, "k", 5, 5, base, base.Add(time.Minute))
+		if err != nil || !ok {
+			t.Fatalf("CAS old=5 new=5 on a live entry must succeed: ok=%v err=%v", ok, err)
+		}
+		v, exists, err := s.Get(ctx, "k", base)
+		if err != nil || !exists || v != 5 {
+			t.Fatalf("after equal-value CAS: v=%d exists=%v err=%v", v, exists, err)
+		}
+	})
+
 	t.Run("ConcurrentCASOneWinner", func(t *testing.T) {
 		s := factory(t)
 		setLive(ctx, t, s, "k", 10, base, base.Add(time.Minute))
@@ -179,6 +211,117 @@ func Run(t *testing.T, factory func(t *testing.T) ratelimit.Store) {
 			t.Fatalf("CAS winners = %d, want exactly one", wins)
 		}
 	})
+
+	t.Run("ConcurrentCASEqualValues", func(t *testing.T) {
+		// Every serialized caller observes the same matching value.
+		s := factory(t)
+		setLive(ctx, t, s, "k", 10, base, base.Add(time.Minute))
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		wins := 0
+		for range 50 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ok, err := s.CompareAndSwap(ctx, "k", 10, 10, base, base.Add(time.Minute))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				if ok {
+					wins++
+				}
+			}()
+		}
+		wg.Wait()
+		if wins != 50 {
+			t.Fatalf("equal-value CAS wins = %d of 50, want all", wins)
+		}
+	})
+
+	t.Run("SweepRemovesExpired", func(t *testing.T) {
+		s := factory(t)
+		sw, ok := s.(ratelimit.Sweeper)
+		if !ok {
+			t.Skip("store has no Sweeper capability")
+		}
+		if ok, err := s.SetIfAbsent(ctx, "old", 1, base, base.Add(time.Second)); err != nil || !ok {
+			t.Fatalf("seed old: ok=%v err=%v", ok, err)
+		}
+		if ok, err := s.SetIfAbsent(ctx, "live", 2, base, base.Add(time.Hour)); err != nil || !ok {
+			t.Fatalf("seed live: ok=%v err=%v", ok, err)
+		}
+		later := base.Add(time.Minute)
+		n, err := sw.Sweep(ctx, later)
+		if err != nil || n != 1 {
+			t.Fatalf("Sweep = %d, %v; want 1, nil", n, err)
+		}
+		if _, exists, err := s.Get(ctx, "live", later); err != nil || !exists {
+			t.Fatalf("Sweep must keep live entries (exists=%v err=%v)", exists, err)
+		}
+		if _, exists, err := s.Get(ctx, "old", later); err != nil || exists {
+			t.Fatalf("Sweep must remove expired entries (exists=%v err=%v)", exists, err)
+		}
+		n, err = sw.Sweep(ctx, later)
+		if err != nil || n != 0 {
+			t.Fatalf("second Sweep = %d, %v; want 0, nil", n, err)
+		}
+	})
+
+	t.Run("KeyBinarySafe", func(t *testing.T) {
+		s := factory(t)
+		for i, key := range []string{"a\x00b", "\xff\xfe"} {
+			if ok, err := s.SetIfAbsent(ctx, key, int64(i+1), base, base.Add(time.Minute)); err != nil || !ok {
+				t.Fatalf("SetIfAbsent binary key %q: ok=%v err=%v", key, ok, err)
+			}
+		}
+		for i, key := range []string{"a\x00b", "\xff\xfe"} {
+			v, exists, err := s.Get(ctx, key, base)
+			if err != nil || !exists || v != int64(i+1) {
+				t.Fatalf("Get binary key %q = %d %v %v", key, v, exists, err)
+			}
+		}
+	})
+
+	t.Run("TrailingSpaceKeys", func(t *testing.T) {
+		s := factory(t)
+		setLive(ctx, t, s, "k", 1, base, base.Add(time.Minute))
+		setLive(ctx, t, s, "k ", 2, base, base.Add(time.Minute))
+		v, exists, err := s.Get(ctx, "k", base)
+		if err != nil || !exists || v != 1 {
+			t.Fatalf("Get 'k' = %d %v %v", v, exists, err)
+		}
+		v, exists, err = s.Get(ctx, "k ", base)
+		if err != nil || !exists || v != 2 {
+			t.Fatalf("Get 'k ' = %d %v %v", v, exists, err)
+		}
+	})
+
+	t.Run("CaseDistinctKeys", func(t *testing.T) {
+		s := factory(t)
+		setLive(ctx, t, s, "Key", 1, base, base.Add(time.Minute))
+		setLive(ctx, t, s, "key", 2, base, base.Add(time.Minute))
+		v, exists, err := s.Get(ctx, "Key", base)
+		if err != nil || !exists || v != 1 {
+			t.Fatalf("Get 'Key' = %d %v %v", v, exists, err)
+		}
+		v, exists, err = s.Get(ctx, "key", base)
+		if err != nil || !exists || v != 2 {
+			t.Fatalf("Get 'key' = %d %v %v", v, exists, err)
+		}
+	})
+
+	t.Run("BoundaryLengthKey", func(t *testing.T) {
+		s := factory(t)
+		key := IncompressibleKey(2048)
+		setLive(ctx, t, s, key, 99, base, base.Add(time.Minute))
+		v, exists, err := s.Get(ctx, key, base)
+		if err != nil || !exists || v != 99 {
+			t.Fatalf("Get boundary key = %d %v %v", v, exists, err)
+		}
+	})
 }
 
 func setLive(ctx context.Context, t *testing.T, s ratelimit.Store, key string, v int64, now, exp time.Time) {
@@ -186,4 +329,17 @@ func setLive(ctx context.Context, t *testing.T, s ratelimit.Store, key string, v
 	if ok, err := s.SetIfAbsent(ctx, key, v, now, exp); err != nil || !ok {
 		t.Fatalf("seed %s: ok=%v err=%v", key, ok, err)
 	}
+}
+
+// IncompressibleKey returns deterministic data that resists compression.
+func IncompressibleKey(n int) string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	var b strings.Builder
+	b.Grow(n)
+	state := uint64(0x9E3779B97F4A7C15)
+	for range n {
+		state = state*6364136223846793005 + 1442695040888963407
+		b.WriteByte(alphabet[state>>58])
+	}
+	return b.String()
 }

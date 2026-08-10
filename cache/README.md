@@ -71,7 +71,7 @@ key := fmt.Sprintf("user/%d/profile@%d", u.ID, u.Revision)
 
 A revision change makes the next fetch a miss without deleting the old
 key. `MemoryStore` drops old versions as its least recently used
-entries once full; SQLite rows persist until `Sweep`. This requires
+entries once full; database-backed rows persist until `Sweep`. This requires
 the caller to know the revision and does not flush arbitrary groups.
 
 ## Stores
@@ -80,23 +80,59 @@ the caller to know the revision and does not flush arbitrary groups.
 (`<= 0` is unbounded); once full, the least recently used entry is
 evicted. Expired entries are removed as they are read.
 
-`SQLiteStore` keeps the cache in a SQLite database, so it survives
-restarts and is shared by every process using that database file. The
-caller registers a driver and should set a busy timeout because the
-store does not retry `SQLITE_BUSY`:
+### Database-backed stores
+
+Three database backends are available as leaf packages. Each exposes
+`Store`, `Options{AutoCreate}`, `New(db, opts)`, and `Schema()`.
+Reads leave expired rows for `Sweep` to remove.
+
+**SQLite** (`cache/sqlite`):
 
 ```go
+import "github.com/gofabrik/fabrik/cache/sqlite"
+
 db, err := sql.Open("sqlite", "file:app.db?_pragma=busy_timeout(5000)")
-if err != nil {
-	return err
-}
-store, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{})
+store, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
 ```
 
-`SQLiteSchema()` returns the table definition, safe to apply more
-than once; apply it through migrations in production, or pass
-`SQLiteOptions{AutoCreate: true}` in development and tests. Reads
-never delete: expired rows stay until `Sweep` removes them.
+**PostgreSQL** (`cache/postgres`):
+
+```go
+import "github.com/gofabrik/fabrik/cache/postgres"
+
+db, err := sql.Open("pgx", "postgres://user:pass@host/db?sslmode=disable")
+store, err := postgres.New(db, postgres.Options{AutoCreate: true})
+```
+
+**MySQL / MariaDB** (`cache/mysql`):
+
+```go
+import "github.com/gofabrik/fabrik/cache/mysql"
+
+db, err := sql.Open("mysql", "user:pass@tcp(host:3306)/db?parseTime=true")
+store, err := mysql.New(db, mysql.Options{AutoCreate: true})
+```
+
+`Schema()` returns the table definition, safe to apply more than once;
+apply it through migrations in production, or pass `AutoCreate: true`
+in development and tests.
+
+#### Key-length contract
+
+Keys up to 2048 bytes work on every backend. Above that the limits are
+backend-specific:
+
+- MySQL/MariaDB: 3072-byte ceiling (`VARBINARY(3072)` primary key,
+  InnoDB's index maximum). Keys compare byte-for-byte.
+- PostgreSQL: B-tree index entries are limited to roughly 2700 bytes
+  after compression, so an incompressible key over that fails at `Set`
+  while a repetitive key of the same length may succeed.
+- SQLite: no practical limit.
+
+Keys are arbitrary bytes on every backend. NUL bytes and invalid UTF-8
+are valid key content.
+
+### Common behavior
 
 Stores hold `Entry` values (bytes plus absolute expiry) and never read
 the wall clock: `Get` and `Sweep` receive the caller's notion of now.

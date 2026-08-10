@@ -350,7 +350,7 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 	ds = append(ds, sds...)
 	if !ok {
 		ds.Error(b.pos(), "no provider for jobs.Store",
-			"add a //fabrik:provider returning jobs.Store (jobs.NewMemoryStore() or jobs.NewSQLiteStore(db, ...))")
+			"add a //fabrik:provider returning jobs.Store (jobs.NewMemoryStore() or sqlite.New(db, ...) from jobs/sqlite)")
 		return "", ds
 	}
 

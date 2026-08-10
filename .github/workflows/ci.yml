@@ -14,6 +14,44 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOTOOLCHAIN: local
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: proto
+          POSTGRES_DB: proto
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: proto
+          MYSQL_DATABASE: proto
+        ports:
+          - 53306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -pproto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: proto
+          MARIADB_DATABASE: proto
+        ports:
+          - 53307:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -23,6 +61,10 @@ jobs:
       - name: Build pinned Task
         run: GOWORK=off go -C internal/tools build -o "$RUNNER_TEMP/task" github.com/go-task/task/v3/cmd/task
       - name: Per-PR gate (build, test, manifest lint, go.work drift, changelog validate)
+        env:
+          TEST_POSTGRES_DSN: 'postgres://postgres:proto@localhost:55432/proto?sslmode=disable'
+          TEST_MYSQL_DSN: 'root:proto@tcp(localhost:53306)/proto?parseTime=true&multiStatements=true'
+          TEST_MARIADB_DSN: 'root:proto@tcp(localhost:53307)/proto?parseTime=true&multiStatements=true'
         run: "$RUNNER_TEMP/task ci"
 
   changelog-fragment:
