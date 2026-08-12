@@ -1,0 +1,4 @@
+change_type: new_component
+component: auth
+note: Add an authentication library for carrying request identities and authenticating them from sessions.
+issues: [0]
