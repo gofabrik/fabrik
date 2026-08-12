@@ -21,6 +21,7 @@ import (
 	"github.com/gofabrik/fabrik/router"
 	web2 "github.com/gofabrik/fabrik/web"
 
+	"demo/auth"
 	"demo/shared"
 	"demo/web"
 )
@@ -270,14 +271,14 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
-		config.Section("session"),
+	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(configOpts,
+		config.Section("crossorigin"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedCrossOriginConfig, err := config.Load[shared.CrossOriginConfig](append(configOpts,
-		config.Section("crossorigin"),
+	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
+		config.Section("session"),
 	)...)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -322,18 +323,27 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedErrorPages := &shared.ErrorPages{}
-	sharedWebFuncMap := shared.NewTemplateFuncs()
+	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+	authAuthAuthenticator, err := auth.NewAuthenticator(sharedSessionManager)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedErrorPages := &shared.ErrorPages{}
+	sharedWebFuncMap := shared.NewTemplateFuncs()
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 	sharedWebRequestFuncs := shared.NewTemplateRequestFuncs(sharedSessionManager, sharedFlash)
 	requestFuncs := web2.MergeRequestFuncs(web2.DefaultRequestFuncs(), sharedWebRequestFuncs)
+
 	appTemplates, err := web2.LoadTemplateSources([]web2.TemplateSource{
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web.Templates, Dir: "templates"},
@@ -342,11 +352,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates), web2.WithRequestFuncs(requestFuncs))
-
-	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
 	// web.Greeter, selected by greeter.kind
 	var webGreeter web.Greeter
 	switch webGreeterConfig.Kind {
@@ -390,15 +395,13 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
+	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
 	webCache, err := web.NewGreetingCache(sharedCacheStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-
-	r := router.New()
-
 	webHandlers := &web.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
@@ -421,6 +424,9 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Cache:   webCache,
 	}
 	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
+
+	r := router.New()
+
 	webDocs := &web.Docs{
 		Router: r,
 	}
@@ -438,7 +444,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	webGreetingsList := &web.GreetingsList{
 		Queries: sharedQueryDB,
 	}
-
 	webGreetingEditor := &web.GreetingEditor{
 		Queries: sharedQueryDB,
 	}
@@ -454,6 +459,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
 	r.Use(sessionMiddlewareMW)
+	identifyMW := auth.Identify(authAuthAuthenticator)
+	r.Use(identifyMW)
 	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
