@@ -4,6 +4,8 @@ module-sets:
     modules:
       - github.com/gofabrik/fabrik/assetmapper
       - github.com/gofabrik/fabrik/assetmapper/directive
+      - github.com/gofabrik/fabrik/auth
+      - github.com/gofabrik/fabrik/auth/session
       - github.com/gofabrik/fabrik/cache
       - github.com/gofabrik/fabrik/cli
       - github.com/gofabrik/fabrik/cli/directive
