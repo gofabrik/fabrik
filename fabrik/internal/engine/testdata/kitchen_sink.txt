@@ -65,7 +65,7 @@ package shared
 
 import "net/http"
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func Recovered(next http.Handler) http.Handler { return next }
 
 //fabrik:http:middleware name=auth
@@ -304,6 +304,7 @@ func run() int {
 						return err
 					}
 					sharedHttpServer := shared.NewServer(sharedConfig)
+					// unconstrained (file order)
 					r.Use(shared.Recovered)
 					// embedded Static, served under /static
 					webStatic, err := fs.Sub(web.Static, "static")

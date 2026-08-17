@@ -26,7 +26,7 @@ func (b *Box[T]) Get(w http.ResponseWriter, r *http.Request) {}
 //fabrik:http:group /api
 type Group[T any] struct{}
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func Trace[T any](next http.Handler) http.Handler { return next }
 
 //fabrik:http:notfound

@@ -1,0 +1,41 @@
+Ordering contradictions are declaration-level: they fire even in a
+command-scoped application where no command demands the router,
+alongside the usual warnings.
+-- go.mod --
+module app
+
+go 1.27
+
+require github.com/gofabrik/fabrik/cli v0.1.0
+
+replace github.com/gofabrik/fabrik/cli => CLIDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- cmd/cmd.go --
+package cmd
+
+import "github.com/gofabrik/fabrik/cli"
+
+// Print the version.
+//
+//fabrik:cli:command path="version"
+func Version(ctx cli.Context) error { return nil }
+-- web/web.go --
+package web
+
+import "net/http"
+
+//fabrik:http:middleware global=true after=guard
+func Logged(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=guard
+func Guard(next http.Handler) http.Handler { return next }
+-- want/diags --
+error: web/web.go:5:44: after=guard: middleware "guard" is not global
+  help: ordering applies to the global stack; route middleware order is the middleware= list
+warning: web/web.go:8:1: middleware "guard" is never referenced
+  help: list it in a middleware= chain, or add global=true to run it everywhere

@@ -292,15 +292,17 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }
 
 ## fabrik:http:middleware
 
-**`//fabrik:http:middleware [name=NAME]`**
+**`//fabrik:http:middleware [name=NAME] [global=true] [requires=...] [after=...] [before=...]`**
 
-Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. Bare middleware is global, including 404/405; every global runs before any named route middleware. `insert=first` registers a global before the unmarked ones, `insert=last` after them (first-registered is outermost). Within one insert group the relative order is unspecified; middleware that must order within a group are composed into one declaration. With `name=`, routes and groups opt in through their `middleware=` chain.
+Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. `global=true` attaches the middleware to every route, including 404/405; every global runs before any route middleware. `name=` is identity: routes and groups opt in through their `middleware=` chain, and ordering options reference names. A declaration with neither does nothing.
+
+Ordering the global stack: `requires=x` is hard (x must exist and run earlier; on route middleware it instead requires x to be global or listed earlier in the chain); `after=x`/`before=x` order softly when x is a global and stay silent when nothing declares x; `before=*`/`after=*` place the middleware outermost/innermost. Unconstrained globals keep declaration order (file, then line). Contradictory constraints are generation errors.
 
 ```go
 //fabrik:http:middleware name=auth
 func RequireAuth(next http.Handler) http.Handler { ... }
 
-//fabrik:http:middleware
+//fabrik:http:middleware name=session global=true
 func SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {
 	return m.Middleware
 }
@@ -309,7 +311,10 @@ func SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {
 Options:
 
 - `name=`
-- `insert=` - one of first, last
+- `global=` - e.g. true, false
+- `requires=`
+- `after=`
+- `before=`
 
 ## fabrik:http:notfound
 

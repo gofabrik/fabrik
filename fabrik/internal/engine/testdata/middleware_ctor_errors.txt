@@ -16,7 +16,7 @@ import "net/http"
 
 type Widget struct{}
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func Unresolvable(w *Widget) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler { return next }
 }

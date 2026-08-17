@@ -669,3 +669,45 @@ func TestEmbeddedCycleDetectedThroughSymlinkedDir(t *testing.T) {
 		t.Errorf("Diags = %v, want the cycle reported against the physical output package", res.Diags)
 	}
 }
+
+func TestMiddlewareLabelCommentLevels(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "middleware_ordering.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(level gen.CommentLevel) string {
+		dir := t.TempDir()
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = r
+		}
+		writeFixtureTree(t, dir, txtar.Parse(data))
+		res, err := WireOptions(dir, nil, Options{Comments: level})
+		if err != nil {
+			t.Fatalf("WireOptions: %v", err)
+		}
+		return string(res.Src)
+	}
+
+	labels := []string{"// before=*", "// unconstrained (file order)", "// after=phantom (inactive); requires=session"}
+	sections := run(gen.CommentsSections)
+	for _, want := range labels {
+		if !strings.Contains(sections, want) {
+			t.Errorf("sections output missing %q", want)
+		}
+	}
+	full := run(gen.CommentsFull)
+	for _, want := range labels {
+		if !strings.Contains(full, want) {
+			t.Errorf("full output missing %q", want)
+		}
+	}
+	off := run(gen.CommentsOff)
+	for _, label := range append(labels, "// Middleware") {
+		if strings.Contains(off, label) {
+			t.Errorf("comments=off still contains %q", label)
+		}
+	}
+}

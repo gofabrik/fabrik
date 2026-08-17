@@ -1,0 +1,80 @@
+Ordering contradictions are generation errors: unknown or route-scoped
+requires= targets, soft edges to route-scoped middleware, edges against
+the wildcard bands, globals listed in middleware= chains, unsatisfied
+chain requirements, and requires= cycles.
+-- go.mod --
+module app
+
+go 1.27
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- app/mw.go --
+package app
+
+import "net/http"
+
+//fabrik:http:middleware global=true requires=ghost
+func GhostRequirer(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware global=true requires=routed
+func RoutedRequirer(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware global=true after=routed
+func RoutedFollower(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=routed
+func Routed(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=inner global=true after=*
+func Inner(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=innerchaser global=true after=inner
+func InnerChaser(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=gsession global=true
+func GSession(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=admin requires=auth
+func Admin(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=auth
+func Auth(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=r1 requires=r2
+func R1(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=r2 requires=r1
+func R2(next http.Handler) http.Handler { return next }
+
+//fabrik:http GET /admin middleware=admin
+func AdminPage(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:http GET /home middleware=gsession
+func Home(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: app/mw.go:5:47: requires=ghost: unknown middleware "ghost"
+  help: declare it: //fabrik:http:middleware name=ghost
+error: app/mw.go:8:47: global middleware app.RoutedRequirer requires=routed which is not global
+  help: a global cannot depend on route-scoped middleware
+error: app/mw.go:11:44: after=routed: middleware "routed" is not global
+  help: ordering applies to the global stack; route middleware order is the middleware= list
+warning: app/mw.go:14:1: middleware "routed" is never referenced
+  help: list it in a middleware= chain, or add global=true to run it everywhere
+error: app/mw.go:20:61: after=inner contradicts the wildcard band order (innerchaser is in an earlier band)
+  help: the edge demands an order the before=*/after=* bands already forbid
+warning: app/mw.go:29:1: middleware "auth" is never referenced
+  help: list it in a middleware= chain, or add global=true to run it everywhere
+warning: app/mw.go:32:1: middleware "r1" is never referenced
+  help: list it in a middleware= chain, or add global=true to run it everywhere
+error: app/mw.go:32:43: requires= cycle: r1 -> r2 -> r1
+  help: break the cycle by removing a requires= edge
+warning: app/mw.go:35:1: middleware "r2" is never referenced
+  help: list it in a middleware= chain, or add global=true to run it everywhere
+error: app/mw.go:38:37: middleware "admin" requires=auth, which is neither global nor earlier in this chain
+  help: add auth before admin in the middleware= list
+error: app/mw.go:41:36: global middleware "gsession" referenced in a middleware= chain (it would run twice)
+  help: remove it from the chain; it already runs on every route
