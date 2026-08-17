@@ -294,7 +294,7 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }
 
 **`//fabrik:http:middleware [name=NAME] [global=true] [requires=...] [after=...] [before=...]`**
 
-Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. `global=true` attaches the middleware to every route, including 404/405; every global runs before any route middleware. `name=` is identity: routes and groups opt in through their `middleware=` chain, and ordering options reference names. A declaration with neither does nothing.
+Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. `global=true` attaches the middleware to every route, including 404/405; every global runs before any route middleware. `name=` is identity: routes and groups opt in through their `middleware=` chain, and ordering options reference names. A declaration with neither is a generation error.
 
 Ordering the global stack: `requires=x` is hard (x must exist and run earlier; on route middleware it instead requires x to be global or listed earlier in the chain); `after=x`/`before=x` order softly when x is a global and stay silent when nothing declares x; `before=*`/`after=*` place the middleware outermost/innermost. Unconstrained globals keep declaration order (file, then line). Contradictory constraints are generation errors.
 

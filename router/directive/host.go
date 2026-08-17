@@ -117,6 +117,7 @@ func (h *Host) FinishBundle(g *gen.Gen) diag.Diagnostics {
 		for _, fn := range h.deferred {
 			ds = append(ds, fn(g)...)
 		}
+		h.mw.graphSection(g)
 		return ""
 	})
 	return ds
@@ -207,6 +208,13 @@ func (h *Host) EmitRoute(g *gen.Gen, args RouteArgs, recvObj *types.TypeName, po
 	key := args.Method + " " + pattern
 	if d, ok := h.routes.add(key, pos); !ok {
 		return append(ds, d)
+	}
+	if len(mws) > 0 {
+		names := make([]string, len(mws))
+		for i, nd := range mws {
+			names[i] = displayName(nd)
+		}
+		h.mw.chains = append(h.mw.chains, resolvedChain{route: key, names: names})
 	}
 
 	h.record(func(g *gen.Gen) diag.Diagnostics {

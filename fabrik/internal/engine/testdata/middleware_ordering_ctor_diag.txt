@@ -1,5 +1,4 @@
-An ordering cycle does not mask other middleware diagnostics: the
-unresolved constructor binding reports alongside the cycle error.
+Ordering cycles do not suppress constructor diagnostics.
 -- go.mod --
 module app
 

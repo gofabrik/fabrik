@@ -1158,3 +1158,60 @@ type Store struct{}
 		t.Fatalf("folded attribution wrong: %+v", want)
 	}
 }
+
+func TestGraphSectionAppearsInJSON(t *testing.T) {
+	g := New()
+	g.SetModule("demo")
+	g.SetDirective("provider")
+	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "v", Expr: "mk()"})
+
+	type testPayload struct {
+		Items []string `json:"items"`
+	}
+	g.GraphSection("middleware", testPayload{Items: []string{"a", "b"}})
+
+	gr := g.Graph()
+	if gr.Sections == nil {
+		t.Fatal("Sections is nil after GraphSection registration")
+	}
+	data, err := json.Marshal(gr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"sections"`) {
+		t.Fatalf("JSON must contain sections key:\n%s", text)
+	}
+	if !strings.Contains(text, `"middleware"`) {
+		t.Fatalf("JSON must contain middleware section:\n%s", text)
+	}
+	if !strings.Contains(text, `"items"`) {
+		t.Fatalf("JSON must contain payload fields:\n%s", text)
+	}
+
+	// DOT and Mermaid are unchanged by sections.
+	dot := gr.DOT()
+	if strings.Contains(dot, "sections") || strings.Contains(dot, "middleware") {
+		t.Fatalf("DOT must not mention sections:\n%s", dot)
+	}
+	mmd := gr.Mermaid()
+	if strings.Contains(mmd, "sections") || strings.Contains(mmd, "middleware") {
+		t.Fatalf("Mermaid must not mention sections:\n%s", mmd)
+	}
+}
+
+func TestGraphSectionsOmittedWhenEmpty(t *testing.T) {
+	g := New()
+	g.SetModule("demo")
+	g.SetDirective("provider")
+	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "v", Expr: "mk()"})
+
+	gr := g.Graph()
+	data, err := json.Marshal(gr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"sections"`) {
+		t.Fatalf("empty sections must be omitted from JSON:\n%s", data)
+	}
+}

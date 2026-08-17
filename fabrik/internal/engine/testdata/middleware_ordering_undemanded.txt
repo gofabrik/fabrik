@@ -1,6 +1,4 @@
-Ordering contradictions are declaration-level: they fire even in a
-command-scoped application where no command demands the router,
-alongside the usual warnings.
+Declaration-level ordering diagnostics do not depend on router demand.
 -- go.mod --
 module app
 

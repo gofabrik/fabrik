@@ -270,17 +270,21 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 	}
 
 	args := tokens[1:]
-	if partial, kind, ok := activeMWChain(meta, args, trailingSpace); ok {
+	if partial, key, kind, ok := activeMWChain(meta, args, trailingSpace); ok {
 		directive := "http:middleware"
 		if kind == gen.KindCLIMiddlewareRef {
 			directive = "cli:middleware"
 		}
-		return s.middlewareCompletions(uri, partial, directive)
+		items := s.middlewareCompletions(uri, partial, directive)
+		if (key == "after" || key == "before") && (partial == "" || strings.HasPrefix("*", partial)) {
+			items = append(items, completionItem{Label: "*", Kind: 12, Detail: "all", InsertText: "*"})
+		}
+		return items
 	}
 	return argCompletions(meta, args, trailingSpace)
 }
 
-func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, gen.ValueKind, bool) {
+func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, string, gen.ValueKind, bool) {
 	for i, arg := range slices.Backward(args) {
 		key, val, hasEq := strings.Cut(arg, "=")
 		if !hasEq {
@@ -288,24 +292,24 @@ func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, ge
 		}
 		kind, isMW := mwAttrKind(meta, key)
 		if !isMW {
-			return "", 0, false
+			return "", "", 0, false
 		}
 		cur := val
 		for j := i + 1; j < len(args); j++ {
 			if !strings.HasSuffix(cur, ",") {
-				return "", 0, false
+				return "", "", 0, false
 			}
 			cur = args[j]
 		}
 		if !trailingSpace {
-			return cur, kind, true
+			return cur, key, kind, true
 		}
 		if strings.HasSuffix(cur, ",") {
-			return "", kind, true
+			return "", key, kind, true
 		}
-		return "", 0, false
+		return "", "", 0, false
 	}
-	return "", 0, false
+	return "", "", 0, false
 }
 
 func mwAttrKind(meta gen.Meta, key string) (gen.ValueKind, bool) {

@@ -3,6 +3,7 @@ package directive
 import (
 	"fmt"
 	"go/token"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -10,26 +11,19 @@ import (
 	"github.com/gofabrik/fabrik/diag"
 )
 
-// Wildcard bands for global middleware: before=* is the outer band,
-// after=* the inner; everything else sits between. Edges never cross
-// bands: a cross-band edge is either satisfied by band order (kept as
-// a recorded reason) or a generation error.
+// Wildcards split globals into outer, middle, and inner bands; edges must agree with band order.
 const (
 	bandOuter = iota
 	bandMiddle
 	bandInner
 )
 
-// orderedGlobal is one resolved global stack entry with its
-// placement-reason label.
 type orderedGlobal struct {
 	nd    *mwNode
 	label string
 }
 
-// inactiveEdge is a soft ordering reference whose target no
-// declaration provides. Generation stays silent; the inspection
-// surfaces carry it.
+// inactiveEdge records an unresolved soft reference for inspection output.
 type inactiveEdge struct {
 	nd  *mwNode
 	opt string
@@ -41,8 +35,6 @@ type orderResult struct {
 	inactive []inactiveEdge
 }
 
-// mwEdge is one from-before-to ordering relation, tagged with the
-// declaring node and the option text that produced it.
 type mwEdge struct {
 	from, to *mwNode
 	decl     *mwNode
@@ -61,13 +53,7 @@ func band(nd *mwNode) int {
 	return bandMiddle
 }
 
-// resolveOrder orders the global middleware stack from declared
-// constraints: requires= (hard, implies after), soft after=/before=,
-// and the before=*/after=* bands, falling back to loader order
-// (file, line). Unknown hard targets, global-requires-non-global, and
-// pure requires= cycles are validateDecls' findings; this resolver
-// skips those edges and stays quiet about those cycles so each is
-// reported exactly once.
+// resolveOrder applies wildcard bands and dependency edges, breaking ties by declaration order.
 func resolveOrder(globals, decls []*mwNode, byName map[string]*mwNode, labels map[*mwNode]string) (orderResult, diag.Diagnostics) {
 	var res orderResult
 	var ds diag.Diagnostics
@@ -113,16 +99,14 @@ func resolveOrder(globals, decls []*mwNode, byName map[string]*mwNode, labels ma
 		}
 	}
 
-	// Cross-band edges: band order either already satisfies the edge
-	// (kept as a reason) or contradicts it (an error, hard and soft
-	// alike). Only same-band edges enter the toposort graph.
+	// Band order satisfies or rejects cross-band edges; only same-band edges enter the graph.
 	graph := map[*mwNode][]mwEdge{}
 	indeg := map[*mwNode]int{}
 	for _, e := range edges {
 		bf, bt := band(e.from), band(e.to)
 		switch {
 		case bf < bt:
-			// Satisfied by band placement; the labels keep the relation.
+			// Band placement already satisfies the edge.
 		case bf > bt:
 			ds.Error(e.pos, fmt.Sprintf("%s contradicts the wildcard band order (%s is in an earlier band)", e.opt, labels[e.decl]),
 				"the edge demands an order the before=*/after=* bands already forbid")
@@ -131,8 +115,7 @@ func resolveOrder(globals, decls []*mwNode, byName map[string]*mwNode, labels ma
 			graph[e.from] = append(graph[e.from], e)
 			indeg[e.to]++
 		}
-		// The non-declaring endpoint records the relation too, so a
-		// targeted node never reads as unconstrained.
+		// Record incoming relations so targeted nodes are not labeled unconstrained.
 		other := e.from
 		rel := "before " + labels[e.to]
 		if e.decl == e.from {
@@ -143,11 +126,7 @@ func resolveOrder(globals, decls []*mwNode, byName map[string]*mwNode, labels ma
 		}
 	}
 
-	// Nodes on any pure requires= cycle are validateDecls' findings;
-	// computed over every declaration (the same graph validateDecls
-	// walks) so a cycle reported below never overlaps an
-	// already-reported node set, whatever placements or bands its
-	// members have.
+	// Exclude nodes already covered by requires-cycle diagnostics.
 	condemned := map[*mwNode]bool{}
 	remaining := append([]*mwNode(nil), decls...)
 	for {
@@ -169,7 +148,7 @@ func resolveOrder(globals, decls []*mwNode, byName map[string]*mwNode, labels ma
 		remaining = rest
 	}
 
-	// Kahn per band, ready queue in loader order (file, line).
+	// Sort each band topologically, breaking ties by declaration order.
 	byBand := map[int][]*mwNode{}
 	for _, g := range globals {
 		byBand[band(g)] = append(byBand[band(g)], g)
@@ -204,11 +183,7 @@ func resolveOrder(globals, decls []*mwNode, byName map[string]*mwNode, labels ma
 			}
 		}
 		if emitted < len(members) {
-			// Report one non-requires cycle (pure requires= cycles are
-			// validateDecls' findings), then emit the stuck members in
-			// declaration order anyway: the stack stays complete and
-			// unrelated diagnostics still surface; the cycle error
-			// aborts generation.
+			// Report one independent cycle, but keep the stack complete for other diagnostics.
 			stuck := map[*mwNode]bool{}
 			var stuckList []*mwNode
 			for _, nd := range members {
@@ -247,8 +222,7 @@ func resolveOrder(globals, decls []*mwNode, byName map[string]*mwNode, labels ma
 	return res, ds
 }
 
-// stuckCycle finds one cycle inside the stuck subgraph by DFS with
-// backtracking, deterministically (declaration-order roots and edges).
+// stuckCycle returns one deterministic cycle from the stuck subgraph.
 func stuckCycle(stuck map[*mwNode]bool, graph map[*mwNode][]mwEdge) []mwEdge {
 	nodes := make([]*mwNode, 0, len(stuck))
 	for nd := range stuck {
@@ -299,10 +273,7 @@ func stuckCycle(stuck map[*mwNode]bool, graph map[*mwNode][]mwEdge) []mwEdge {
 	return nil
 }
 
-// reasonLabel renders a node's own declared constraints plus the
-// relations other declarations target it with, sorted; inactive soft
-// edges stay visible. Unconstrained appears only when the node
-// declares nothing and nothing targets it.
+// reasonLabel summarizes active and inactive placement constraints.
 func reasonLabel(nd *mwNode, incoming []string, inactive []inactiveEdge) string {
 	parts := append([]string(nil), incoming...)
 	if nd.beforeAll {
@@ -341,12 +312,7 @@ func reasonLabel(nd *mwNode, incoming []string, inactive []inactiveEdge) string 
 	return strings.Join(slices.Compact(parts), "; ")
 }
 
-// validateDecls checks declaration-level invariants for every
-// middleware declaration, referenced or not: requires targets must
-// exist, a global may not require a non-global, and the requires
-// graph must be acyclic. Warnings: a named non-global never
-// referenced, and a bare declaration (no name, not global) that
-// nothing can ever run.
+// validateDecls reports hard-constraint errors, inert declarations, and unused names.
 func validateDecls(decls []*mwNode, byName map[string]*mwNode, labels map[*mwNode]string) diag.Diagnostics {
 	var ds diag.Diagnostics
 	for _, nd := range decls {
@@ -363,8 +329,8 @@ func validateDecls(decls []*mwNode, byName map[string]*mwNode, labels map[*mwNod
 			}
 		}
 		if nd.name == "" && !nd.global {
-			ds.Warn(nd.pos, fmt.Sprintf("middleware %s is inert (no name, not global)", labels[nd]),
-				"add global=true to run it everywhere, or name= to reference it from middleware= chains")
+			ds.Error(nd.pos, fmt.Sprintf("middleware %s is inert (no name, not global)", labels[nd]),
+				"add global=true to run it everywhere, or name= to reference it from middleware= chains; bare declarations were global before the ordering options existed, so silence here would drop middleware on regeneration")
 		}
 		if nd.name != "" && !nd.global && !nd.used {
 			ds.Warn(nd.pos, fmt.Sprintf("middleware %q is never referenced", nd.name),
@@ -408,10 +374,7 @@ func validateDecls(decls []*mwNode, byName map[string]*mwNode, labels map[*mwNod
 	return ds
 }
 
-// requiresCycle finds one cycle in the requires= graph over the given
-// declarations only, deterministically (declaration order roots and
-// edges). Targets outside the set are ignored so iterative cycle
-// removal terminates.
+// requiresCycle returns one deterministic cycle within decls.
 func requiresCycle(decls []*mwNode, byName map[string]*mwNode) []*mwNode {
 	member := make(map[*mwNode]bool, len(decls))
 	for _, nd := range decls {
@@ -462,8 +425,7 @@ func requiresCycle(decls []*mwNode, byName map[string]*mwNode) []*mwNode {
 	return nil
 }
 
-// mwLabels builds display labels: name= when present, else pkg.Fn,
-// disambiguated with file:line on collision.
+// mwLabels returns checkout-independent display names unique within decls.
 func mwLabels(decls []*mwNode) map[*mwNode]string {
 	labels := make(map[*mwNode]string, len(decls))
 	count := map[string]int{}
@@ -471,9 +433,17 @@ func mwLabels(decls []*mwNode) map[*mwNode]string {
 		labels[nd] = displayName(nd)
 		count[labels[nd]]++
 	}
+	again := map[string]int{}
 	for _, nd := range decls {
-		if count[labels[nd]] > 1 {
-			labels[nd] = fmt.Sprintf("%s (%s:%d)", labels[nd], nd.pos.Filename, nd.pos.Line)
+		if count[labels[nd]] != 1 {
+			labels[nd] = fmt.Sprintf("%s (%s:%d)", labels[nd], filepath.Base(nd.pos.Filename), nd.pos.Line)
+		}
+		again[labels[nd]]++
+	}
+	// Add the import path only when file and line still collide.
+	for _, nd := range decls {
+		if again[labels[nd]] != 1 && nd.pkg != nil {
+			labels[nd] = fmt.Sprintf("%s (%s/%s:%d)", displayName(nd), nd.pkg.Path(), filepath.Base(nd.pos.Filename), nd.pos.Line)
 		}
 	}
 	return labels

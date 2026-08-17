@@ -77,7 +77,7 @@ func TestParseOrderingRequiresGlobal(t *testing.T) {
 	if !found {
 		t.Fatalf("after= on a non-global should error, got %v", msgs)
 	}
-	// requires= is legal on route middleware; it validates per chain.
+	// Route middleware can require globals or earlier chain members.
 	if _, msgs := parseMW(t, "name=admin requires=authenticated"); len(msgs) != 0 {
 		t.Fatalf("requires= on a named route middleware: %v", msgs)
 	}

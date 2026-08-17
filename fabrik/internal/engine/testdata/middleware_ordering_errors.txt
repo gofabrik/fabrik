@@ -1,7 +1,4 @@
-Ordering contradictions are generation errors: unknown or route-scoped
-requires= targets, soft edges to route-scoped middleware, edges against
-the wildcard bands, globals listed in middleware= chains, unsatisfied
-chain requirements, and requires= cycles.
+Invalid global and route middleware ordering constraints fail generation.
 -- go.mod --
 module app
 
@@ -50,6 +47,9 @@ func R1(next http.Handler) http.Handler { return next }
 //fabrik:http:middleware name=r2 requires=r1
 func R2(next http.Handler) http.Handler { return next }
 
+//fabrik:http:middleware
+func BareNoop(next http.Handler) http.Handler { return next }
+
 //fabrik:http GET /admin middleware=admin
 func AdminPage(w http.ResponseWriter, r *http.Request) {}
 
@@ -74,7 +74,9 @@ error: app/mw.go:32:43: requires= cycle: r1 -> r2 -> r1
   help: break the cycle by removing a requires= edge
 warning: app/mw.go:35:1: middleware "r2" is never referenced
   help: list it in a middleware= chain, or add global=true to run it everywhere
-error: app/mw.go:38:37: middleware "admin" requires=auth, which is neither global nor earlier in this chain
+error: app/mw.go:38:1: middleware app.BareNoop is inert (no name, not global)
+  help: add global=true to run it everywhere, or name= to reference it from middleware= chains; bare declarations were global before the ordering options existed, so silence here would drop middleware on regeneration
+error: app/mw.go:41:37: middleware "admin" requires=auth, which is neither global nor earlier in this chain
   help: add auth before admin in the middleware= list
-error: app/mw.go:41:36: global middleware "gsession" referenced in a middleware= chain (it would run twice)
+error: app/mw.go:44:36: global middleware "gsession" referenced in a middleware= chain (it would run twice)
   help: remove it from the chain; it already runs on every route

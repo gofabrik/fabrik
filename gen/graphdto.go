@@ -22,6 +22,7 @@ type Graph struct {
 	Nodes     []GraphNode     `json:"nodes,omitempty"`
 	Edges     []GraphEdge     `json:"edges,omitempty"`
 	Fragments []GraphFragment `json:"fragments,omitempty"` // Extracted region functions, absent outside fragment emission.
+	Sections  map[string]any  `json:"sections,omitempty"`  // Directive-contributed data for JSON output.
 }
 
 // GraphFragment is one extracted region function.
@@ -95,6 +96,14 @@ type GraphEdge struct {
 	To   string `json:"to"`
 }
 
+// GraphSection adds directive-specific data to [Graph.Sections].
+func (g *Gen) GraphSection(name string, payload any) {
+	if g.sections == nil {
+		g.sections = map[string]any{}
+	}
+	g.sections[name] = payload
+}
+
 // Graph exports the structural graph and must run after [Gen.Render] finalizes aliases; it never registers imports.
 func (g *Gen) Graph() *Graph {
 	gr := &Graph{Version: graphSchemaVersion, Module: g.module}
@@ -112,6 +121,9 @@ func (g *Gen) Graph() *Graph {
 		}
 		return gr.Edges[i].To < gr.Edges[j].To
 	})
+	if len(g.sections) > 0 {
+		gr.Sections = g.sections
+	}
 	return gr
 }
 

@@ -2,11 +2,13 @@ package directive
 
 import (
 	"go/token"
+	"go/types"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gofabrik/fabrik/diag"
+	"github.com/gofabrik/fabrik/gen"
 )
 
 func mw(name string, global bool, file string, line int, opt ...func(*mwNode)) *mwNode {
@@ -165,8 +167,7 @@ func TestOrderCrossBandContradictionErrors(t *testing.T) {
 }
 
 func TestOrderCrossBandHardContradictionErrors(t *testing.T) {
-	// requires= is hard: the implied after-edge against the band order
-	// is as fatal as a soft one.
+	// Hard dependencies cannot contradict wildcard band order.
 	tail := mw("tail", true, "a.go", 1, inner)
 	mid := mw("mid", true, "b.go", 1, requires("tail"))
 	_, _, _, ds := stackNames(t, []*mwNode{tail, mid}, index([]*mwNode{tail, mid}))
@@ -217,8 +218,7 @@ func TestOrderPerBandCycleErrors(t *testing.T) {
 }
 
 func TestOrderRequiresOnlyCycleLeftToValidate(t *testing.T) {
-	// A pure requires= cycle is validateDecls' finding; the resolver
-	// stays quiet so it is reported exactly once.
+	// Pure requires cycles are reported only by validateDecls.
 	a := mw("a", true, "m.go", 10, requires("b"))
 	b := mw("b", true, "m.go", 20, requires("a"))
 	decls := []*mwNode{a, b}
@@ -229,8 +229,7 @@ func TestOrderRequiresOnlyCycleLeftToValidate(t *testing.T) {
 }
 
 func TestOrderIndependentCycleStillReports(t *testing.T) {
-	// Both passes together report exactly two cycles: validateDecls the
-	// pure requires= one, the resolver the independent soft one.
+	// Validation and resolution each report their independent cycle.
 	a := mw("a", true, "m.go", 10, requires("b"))
 	b := mw("b", true, "m.go", 20, requires("a"))
 	g1 := mw("g1", true, "m.go", 30, after("g2"))
@@ -268,10 +267,7 @@ func TestValidateDeclsReportsAllRequiresCycles(t *testing.T) {
 }
 
 func TestOrderStackStaysCompleteUnderCycle(t *testing.T) {
-	// The branch node's first outgoing edge leads to a dead end (sink);
-	// only a backtracking search reaches the cycle behind the second
-	// edge. The stack still carries every global so unrelated
-	// diagnostics can fire.
+	// Cycle detection backtracks past dead ends without dropping globals from the stack.
 	x := mw("x", true, "m.go", 10, after("b"))
 	sink := mw("sink", true, "m.go", 20, after("x"))
 	b := mw("b", true, "m.go", 30, after("x"))
@@ -284,8 +280,7 @@ func TestOrderStackStaysCompleteUnderCycle(t *testing.T) {
 }
 
 func TestValidateDeclsCycleRemovalTerminates(t *testing.T) {
-	// c depends on a removed cycle's member; the second pass must not
-	// rediscover the removed cycle forever.
+	// Dependencies into a removed cycle do not make validation rediscover it.
 	a := mw("a", false, "m.go", 10, requires("b"))
 	b := mw("b", false, "m.go", 20, requires("a"))
 	c := mw("c", false, "m.go", 30, requires("a"))
@@ -310,7 +305,6 @@ func TestValidateDeclsCycleRemovalTerminates(t *testing.T) {
 }
 
 func TestOrderOneNonRequiresCycleAcrossBands(t *testing.T) {
-	// Independent soft cycles in two bands: the resolver reports one.
 	o1 := mw("o1", true, "m.go", 10, outer, after("o2"))
 	o2 := mw("o2", true, "m.go", 20, outer, after("o1"))
 	m1 := mw("m1", true, "m.go", 30, after("m2"))
@@ -367,25 +361,52 @@ func TestValidateDeclsFindings(t *testing.T) {
 	ds := validateDecls(decls, index(decls), mwLabels(decls))
 	wantError(t, ds, "unknown middleware")
 	wantError(t, ds, "not global")
+	wantError(t, ds, "inert")
 	var warns []string
 	for _, d := range ds {
 		if d.Severity == diag.SevWarning {
 			warns = append(warns, d.Message)
 		}
 	}
-	if len(warns) != 2 {
-		t.Fatalf("warnings = %v, want unreferenced + bare", warns)
+	if len(warns) != 1 || !strings.Contains(warns[0], "never referenced") {
+		t.Fatalf("warnings = %v, want only the unreferenced one", warns)
 	}
 }
 
 func TestLabelsDisambiguateOnCollision(t *testing.T) {
-	a := mw("x", true, "pkga/mw.go", 3)
-	b := mw("x", true, "pkgb/mw.go", 7)
+	a := mw("x", true, "/abs/checkout/pkga/mw.go", 3)
+	b := mw("x", true, "/abs/checkout/pkgb/mw.go", 7)
 	a.name, b.name = "", ""
 	a.fn, b.fn = "LogAndRecover", "LogAndRecover"
+	a.pkg = types.NewPackage("example.com/app/pkga", "mwpkg")
+	b.pkg = types.NewPackage("example.com/app/pkgb", "mwpkg")
 	labels := mwLabels([]*mwNode{a, b})
 	if labels[a] == labels[b] {
 		t.Fatalf("colliding labels: %q vs %q", labels[a], labels[b])
+	}
+	if labels[a] != "mwpkg.LogAndRecover (mw.go:3)" || labels[b] != "mwpkg.LogAndRecover (mw.go:7)" {
+		t.Fatalf("collision format = %q, %q; want pkg.Fn (file:line) with a base filename", labels[a], labels[b])
+	}
+	if strings.Contains(labels[a], "/abs/") {
+		t.Fatalf("label leaks the checkout path: %q", labels[a])
+	}
+
+	// Import paths disambiguate identical package, file, and line labels.
+	c := mw("x", true, "/abs/checkout/pkga/mw.go", 3)
+	d := mw("x", true, "/abs/checkout/pkgb/mw.go", 3)
+	c.name, d.name = "", ""
+	c.fn, d.fn = "LogAndRecover", "LogAndRecover"
+	c.pkg = types.NewPackage("example.com/app/pkga", "mwpkg")
+	d.pkg = types.NewPackage("example.com/app/pkgb", "mwpkg")
+	labels = mwLabels([]*mwNode{c, d})
+	if labels[c] == labels[d] {
+		t.Fatalf("same base file and line collided: %q vs %q", labels[c], labels[d])
+	}
+	if labels[c] != "mwpkg.LogAndRecover (example.com/app/pkga/mw.go:3)" {
+		t.Fatalf("import-path disambiguation = %q", labels[c])
+	}
+	if strings.Contains(labels[c], "/abs/") || strings.Contains(labels[d], "/abs/") {
+		t.Fatalf("label leaks the checkout path: %q %q", labels[c], labels[d])
 	}
 }
 
@@ -411,9 +432,7 @@ func TestOrderDeterministicAcrossRuns(t *testing.T) {
 }
 
 func TestOrderMixedCycleOverlappingRequiresCycleNotReported(t *testing.T) {
-	// The mixed path a -> c -> b -> a overlaps the pure requires= cycle
-	// {a, b}; validateDecls owns that node set, so the two passes
-	// together report exactly one cycle.
+	// Resolver diagnostics do not duplicate an overlapping requires cycle.
 	a := mw("a", true, "m.go", 10, requires("b"))
 	b := mw("b", true, "m.go", 20, requires("a"))
 	c := mw("c", true, "m.go", 30, after("a"), before("b"))
@@ -432,9 +451,7 @@ func TestOrderMixedCycleOverlappingRequiresCycleNotReported(t *testing.T) {
 }
 
 func TestOrderCrossBandRequiresCycleCondemnsAcrossBands(t *testing.T) {
-	// The requires= cycle spans two bands; the soft cycle a<->c shares
-	// node a with it, so only the contradiction and the requires cycle
-	// report, never an overlapping soft cycle.
+	// An overlapping soft cycle is suppressed when its node belongs to a requires cycle.
 	a := mw("a", true, "m.go", 10, requires("b"), after("c"))
 	b := mw("b", true, "m.go", 20, inner, requires("a"))
 	c := mw("c", true, "m.go", 30, after("a"))
@@ -458,10 +475,56 @@ func TestOrderCrossBandRequiresCycleCondemnsAcrossBands(t *testing.T) {
 	}
 }
 
+func TestGraphSectionPayload(t *testing.T) {
+	logger := mw("logger", true, "m.go", 10, outer)
+	session := mw("session", true, "m.go", 20, requires("logger"))
+	auth := mw("auth", false, "m.go", 30)
+	auth.used = true
+
+	m := &Middleware{
+		byName:  map[string]*mwNode{"logger": logger, "session": session, "auth": auth},
+		globals: []*mwNode{logger, session},
+		decls:   []*mwNode{logger, session, auth},
+		chains: []resolvedChain{
+			{route: "GET /admin", names: []string{"auth"}},
+		},
+	}
+	session.after = append(session.after, mwRef{name: "missing", pos: token.Position{Filename: "m.go", Line: 21}})
+
+	g := gen.New()
+	m.graphSection(g)
+
+	gr := g.Graph()
+	if gr.Sections == nil {
+		t.Fatal("Sections is nil after graphSection")
+	}
+	section, ok := gr.Sections["middleware"]
+	if !ok {
+		t.Fatal("middleware section not registered")
+	}
+	mwSection, ok := section.(MWGraphSection)
+	if !ok {
+		t.Fatalf("section type = %T, want MWGraphSection", section)
+	}
+	if len(mwSection.Stack) != 2 {
+		t.Fatalf("stack length = %d, want 2", len(mwSection.Stack))
+	}
+	if mwSection.Stack[0].Name != "logger" {
+		t.Fatalf("stack[0].Name = %q, want logger", mwSection.Stack[0].Name)
+	}
+	if mwSection.Stack[1].Name != "session" {
+		t.Fatalf("stack[1].Name = %q, want session", mwSection.Stack[1].Name)
+	}
+	if len(mwSection.Chains) != 1 || mwSection.Chains[0].Route != "GET /admin" {
+		t.Fatalf("chains = %+v, want one GET /admin chain", mwSection.Chains)
+	}
+	if len(mwSection.Inactive) != 1 || mwSection.Inactive[0].Ref != "after=missing" {
+		t.Fatalf("inactive = %+v, want after=missing", mwSection.Inactive)
+	}
+}
+
 func TestOrderCrossLayerRequiresCycleCondemns(t *testing.T) {
-	// The requires= cycle includes a non-global; its global member is
-	// still condemned, so the overlapping soft cycle a<->c never
-	// reports beside it.
+	// Requires cycles containing route middleware also suppress overlapping soft-cycle diagnostics.
 	a := mw("a", true, "m.go", 10, requires("b"), after("c"))
 	b := mw("b", false, "m.go", 20, requires("a"))
 	b.used = true
