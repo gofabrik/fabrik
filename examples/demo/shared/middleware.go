@@ -30,7 +30,7 @@ func CrossOriginMiddleware(c *http.CrossOriginProtection) func(http.Handler) htt
 }
 
 //fabrik:http:middleware
-func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
+func SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {
 	return m.Middleware
 }
 

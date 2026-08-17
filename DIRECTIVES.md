@@ -301,7 +301,7 @@ Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constr
 func RequireAuth(next http.Handler) http.Handler { ... }
 
 //fabrik:http:middleware
-func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
+func SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {
 	return m.Middleware
 }
 ```

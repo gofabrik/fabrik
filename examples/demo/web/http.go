@@ -46,7 +46,7 @@ type Greeting struct {
 type Handlers struct {
 	Greeter Greeter
 	Queries *query.DB
-	Session *session.Manager[shared.Session]
+	Session *session.Manager
 	Flash   *flash.Flash
 	Jobs    *jobs.Manager
 	Cache   *cache.Cache[[]Greeting]
@@ -56,7 +56,7 @@ type Handlers struct {
 func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 	ctx := req.Context()
 
-	s, err := h.Session.Get(ctx)
+	s, err := h.Session.Get[shared.Session](ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ type GreetForm struct {
 }
 
 type Greetings struct {
-	Session *session.Manager[shared.Session]
+	Session *session.Manager
 	Flash   *flash.Flash
 	Queries *query.DB
 	Jobs    *jobs.Manager

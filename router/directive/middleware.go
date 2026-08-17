@@ -37,7 +37,7 @@ func (*Middleware) Meta() gen.Meta {
 			"Within one insert group the relative order is unspecified; middleware " +
 			"that must order within a group are composed into one declaration. With " +
 			"`name=`, routes and groups opt in through their `middleware=` chain.\n\n" +
-			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n\n//fabrik:http:middleware\nfunc SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {\n\treturn m.Middleware\n}\n```",
+			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n\n//fabrik:http:middleware\nfunc SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {\n\treturn m.Middleware\n}\n```",
 		Example: "//fabrik:http:middleware",
 		Tier:    gen.TierBind,
 		Attrs: []gen.AttrSpec{

@@ -13,7 +13,7 @@ import (
 
 // serve runs one request through the middleware. The handler sees the
 // session context; the returned recorder carries any Set-Cookie.
-func serve(t *testing.T, m *Manager[appSession], sid string, handler func(w http.ResponseWriter, r *http.Request)) *httptest.ResponseRecorder {
+func serve(t *testing.T, m *Manager, sid string, handler func(w http.ResponseWriter, r *http.Request)) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/", nil)
 	if sid != "" {
@@ -103,7 +103,7 @@ func (h *hookStore) Delete(ctx context.Context, sid string) error {
 
 func TestFreshSessionZeroValueAndStagedView(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -146,7 +146,7 @@ func TestFreshSessionZeroValueAndStagedView(t *testing.T) {
 func TestReadsNeverMint(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = h.Get(r.Context())
@@ -180,7 +180,7 @@ func TestUntouchedRequestWithDeadCookieClearsNothing(t *testing.T) {
 
 func TestTouchedStaleTokenClearsAtCommit(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "dead-sid", func(w http.ResponseWriter, r *http.Request) {
 		v, err := h.Get(r.Context())
@@ -199,7 +199,7 @@ func TestTouchedStaleTokenClearsAtCommit(t *testing.T) {
 
 func TestStaleTokenSetSupersedesClear(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "dead-sid", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = h.Get(r.Context())
@@ -223,7 +223,7 @@ func TestStaleTokenSetSupersedesClear(t *testing.T) {
 func TestSingleCommitForMultipleDirtyHandles(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
-	ha := m.app
+	ha := appH(m)
 	hb, _ := Use(m, NewKey[otherShape]("other"))
 
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +244,7 @@ func TestSingleCommitForMultipleDirtyHandles(t *testing.T) {
 func TestSaveThenUpdateFoldsAndConsumes(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
-	h := m.app
+	h := appH(m)
 
 	var sid string
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -278,7 +278,7 @@ func TestSaveThenUpdateFoldsAndConsumes(t *testing.T) {
 
 func TestUpdateClosureErrorAbortsCleanly(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 	boom := errors.New("boom")
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +302,7 @@ func TestUpdateClosureErrorAbortsCleanly(t *testing.T) {
 func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		if err := h.Update(r.Context(), func(s *appSession) error {
@@ -334,7 +334,7 @@ func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
 
 func TestCommitReMergePreservesOtherCells(t *testing.T) {
 	m := newTestManager(t)
-	ha := m.app
+	ha := appH(m)
 	hb, _ := Use(m, NewKey[otherShape]("other"))
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -369,7 +369,7 @@ func TestCommitReMergePreservesOtherCells(t *testing.T) {
 
 func TestCommitSameCellStagedSaveWins(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "v1"})
@@ -393,7 +393,7 @@ func TestCommitSameCellStagedSaveWins(t *testing.T) {
 
 func TestCommitDeletedRecordStaysGone(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "v1"})
@@ -418,7 +418,7 @@ func TestCommitConflictExhaustionSurfaces(t *testing.T) {
 	mem := NewMemoryStore()
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = 1 })
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "v1"})
@@ -454,7 +454,7 @@ func TestCommitConflictExhaustionSurfaces(t *testing.T) {
 
 func TestHandlerWritesNothingStillCommits(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "silent"})
@@ -470,7 +470,7 @@ func TestHandlerWritesNothingStillCommits(t *testing.T) {
 
 func TestRedirectCommitsBeforeHeaders(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "redirected"})
@@ -490,7 +490,7 @@ func TestSIDCollisionRemintsBounded(t *testing.T) {
 	m := newTestManager(t, func(c *Config) {
 		c.NewSID = func() (string, error) { s := sids[i%len(sids)]; i++; return s, nil }
 	})
-	h := m.app
+	h := appH(m)
 
 	// Occupy "dup".
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +513,7 @@ func TestSIDCollisionRemintsBounded(t *testing.T) {
 		c.NewSID = func() (string, error) { return "dup2", nil }
 		c.MaxRetries = 1
 	})
-	ha := always.app
+	ha := appH(always)
 	serve(t, always, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = ha.Save(r.Context(), appSession{Name: "x"})
 	})
@@ -531,7 +531,7 @@ func TestEmptyNewSIDIsGeneratorFailure(t *testing.T) {
 		c.Store = store
 		c.NewSID = func() (string, error) { return "", nil }
 	})
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "x"})
@@ -549,7 +549,7 @@ func TestEmptyNewSIDIsGeneratorFailure(t *testing.T) {
 func TestCanonicalEmptyPayload(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "v"})
@@ -574,7 +574,7 @@ func TestCanonicalEmptyPayload(t *testing.T) {
 func TestClearAbsentStagesNothing(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		if err := h.Clear(r.Context()); err != nil {
@@ -594,7 +594,7 @@ func TestClearAbsentStagesNothing(t *testing.T) {
 func TestNoMiddlewareAndWrongManager(t *testing.T) {
 	m1 := newTestManager(t)
 	m2 := newTestManager(t)
-	h1 := m1.app
+	h1 := appH(m1)
 
 	// Bare contexts return ErrNoSession.
 	if _, err := h1.Get(context.Background()); !errors.Is(err, ErrNoSession) {
@@ -614,7 +614,7 @@ func TestNoMiddlewareAndWrongManager(t *testing.T) {
 
 func TestUpdateClosureRunsOutsideLock(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -649,7 +649,7 @@ func TestUpdateClosureRunsOutsideLock(t *testing.T) {
 
 func TestUpdateSnapshotRaceDirtyFlagRule(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = h.Save(r.Context(), appSession{Name: "v1"})

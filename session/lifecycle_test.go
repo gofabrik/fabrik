@@ -17,7 +17,7 @@ import (
 )
 
 // establish mints a session with one saved cell and returns its SID.
-func establish(t *testing.T, m *Manager[appSession], h *Handle[appSession], name string) string {
+func establish(t *testing.T, m *Manager, h *Handle[appSession], name string) string {
 	t.Helper()
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		if err := h.Save(r.Context(), appSession{Name: name}); err != nil {
@@ -34,7 +34,7 @@ func establish(t *testing.T, m *Manager[appSession], h *Handle[appSession], name
 func TestRenewRotatesAndPreservesAbsoluteExpiry(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "alice")
 
 	before, err := mem.Load(context.Background(), sid)
@@ -87,7 +87,7 @@ func TestRenewSessionlessIsNotFound(t *testing.T) {
 func TestPromoteEstablishedRotatesWithIdentity(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "cart")
 
 	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +140,7 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 	mem := NewMemoryStore()
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
-	h := m.app
+	h := appH(m)
 	other, _ := Use(m, NewKey[otherShape]("other"))
 
 	// Use an aged absolute expiry to prove rotation preserves it.
@@ -192,7 +192,7 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 	if !rec.AbsoluteExpiry.After(oldRec.AbsoluteExpiry) {
 		t.Fatal("fresh session inherited the old hard deadline")
 	}
-	if _, ok, _ := m.c.loadCell(context.Background(), newSID, other.Key()); ok {
+	if _, ok, _ := m.loadCell(context.Background(), newSID, other.Key()); ok {
 		t.Fatal("pre-Destroy cell leaked into the fresh session")
 	}
 	got, _ := h.Load(context.Background(), newSID)
@@ -219,7 +219,7 @@ func TestDestroyFailedDeleteFailsCommit(t *testing.T) {
 	mem := NewMemoryStore()
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	store.beforeDelete = func(string) error { return errors.New("store down") }
@@ -240,7 +240,7 @@ func TestDestroyFailedDeleteFailsCommit(t *testing.T) {
 func TestDestroyStaleAndCleanLogout(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 
 	// Destroy on a stale token is idempotent.
 	serve(t, m, "dead", func(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +267,7 @@ func TestDestroyStaleAndCleanLogout(t *testing.T) {
 
 func TestPostCommitMutatorMatrix(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
@@ -301,7 +301,7 @@ func TestPostCommitMutatorMatrix(t *testing.T) {
 
 	// Staged mutators error after response start, even for no-ops.
 	fresh := newTestManager(t)
-	hf := fresh.app
+	hf := appH(fresh)
 	serve(t, fresh, "", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if err := hf.Clear(r.Context()); !errors.Is(err, ErrAlreadyCommitted) {
@@ -316,7 +316,7 @@ func TestPostCommitMutatorMatrix(t *testing.T) {
 
 func TestFlushIsResponseStart(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
@@ -356,7 +356,7 @@ func TestWriterAdvertisesOnlySupportedInterfaces(t *testing.T) {
 func TestCorruptCellOperationMatrix(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	other, _ := Use(m, NewKey[otherShape]("other"))
 	sid := establish(t, m, h, "fine")
 
@@ -400,7 +400,7 @@ func TestCorruptCellOperationMatrix(t *testing.T) {
 func TestMalformedEnvelopeMatrix(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "fine")
 
 	rec, _ := mem.Load(context.Background(), sid)
@@ -453,7 +453,7 @@ func TestMalformedEnvelopeMatrix(t *testing.T) {
 func TestDestroyNeverDecodesEnvelope(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "fine")
 
 	rec, _ := mem.Load(context.Background(), sid)
@@ -479,7 +479,7 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		mem := NewMemoryStore()
 		m := newTestManager(t, func(c *Config) { c.Store = mem })
-		h := m.app
+		h := appH(m)
 		other, _ := Use(m, NewKey[otherShape]("other"))
 		sid := establish(t, m, h, "alice")
 		ctx := context.Background()
@@ -540,8 +540,8 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 	})
 }
 
-func hasOutOfBand(m *Manager[appSession], sid, key string) (bool, error) {
-	_, ok, err := m.c.loadCell(context.Background(), sid, key)
+func hasOutOfBand(m *Manager, sid, key string) (bool, error) {
+	_, ok, err := m.loadCell(context.Background(), sid, key)
 	return ok, err
 }
 
@@ -566,7 +566,7 @@ func TestReadOnlyBumpTokenRules(t *testing.T) {
 		c.IdleExpiry = 10 * time.Minute
 		c.IdleBumpInterval = time.Minute
 	})
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	// Within the bump interval: throttled, no token.
@@ -598,7 +598,7 @@ func TestReadOnlyBumpTokenRules(t *testing.T) {
 		c.IdleExpiry = 10 * time.Minute
 		c.IdleBumpInterval = time.Minute
 	})
-	hp := plain.app
+	hp := appH(plain)
 	psid := establish(t, plain, hp, "v")
 	clock = clock.Add(5 * time.Minute)
 	rr = serve(t, plain, psid, func(w http.ResponseWriter, r *http.Request) {
@@ -615,7 +615,7 @@ func TestReadOnlyBumpTokenRules(t *testing.T) {
 		c.IdleExpiry = 10 * time.Minute
 		c.IdleBumpInterval = time.Minute
 	})
-	hfail := failing.app
+	hfail := appH(failing)
 	clock = clock.Add(2 * time.Minute) // past the interval, record still live
 	rr = serve(t, failing, sid, func(w http.ResponseWriter, r *http.Request) {
 		if _, err := hfail.Get(r.Context()); err != nil {
@@ -650,7 +650,7 @@ func TestTokenExpiryMinRule(t *testing.T) {
 func TestPostCommitUpdateMovesServerSideOnly(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
@@ -684,7 +684,7 @@ func TestPostCommitUpdateMovesServerSideOnly(t *testing.T) {
 func TestUpdateThenStagedSaveVersionCoherence(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = -1 })
-	ha := m.app
+	ha := appH(m)
 	hb, _ := Use(m, NewKey[otherShape]("other"))
 	sid := establish(t, m, ha, "v")
 
@@ -712,7 +712,7 @@ func TestUpdateThenStagedSaveVersionCoherence(t *testing.T) {
 func TestDestroyThenPromoteVisibility(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 	serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -738,7 +738,7 @@ func TestCommitFailureDiscardsHandlerBody(t *testing.T) {
 		c.MaxRetries = -1
 		c.Logger = slog.New(slog.NewTextHandler(&logs, nil))
 	})
-	h := m.app
+	h := appH(m)
 
 	store.beforeSave = func(Record) error { return errors.New("store down") }
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -826,19 +826,19 @@ func TestWriterAdvertisementIsExhaustive(t *testing.T) {
 func TestMultiTokenValidation(t *testing.T) {
 	cfg := testConfig()
 	cfg.Token = Multi{}
-	if _, err := New[appSession](cfg); err == nil || !strings.Contains(err.Error(), "no members") {
+	if _, err := New(cfg); err == nil || !strings.Contains(err.Error(), "no members") {
 		t.Errorf("empty Multi accepted: %v", err)
 	}
 	cfg.Token = Multi{Cookie{}, nil}
-	if _, err := New[appSession](cfg); err == nil || !strings.Contains(err.Error(), "nil") {
+	if _, err := New(cfg); err == nil || !strings.Contains(err.Error(), "nil") {
 		t.Errorf("nil Multi member accepted: %v", err)
 	}
 	cfg.Token = Multi{Cookie{}, Bearer{}}
-	if _, err := New[appSession](cfg); err != nil {
+	if _, err := New(cfg); err != nil {
 		t.Errorf("valid Multi rejected: %v", err)
 	}
 	cfg.Token = Multi{Multi{Cookie{}}, Multi{}}
-	if _, err := New[appSession](cfg); err == nil {
+	if _, err := New(cfg); err == nil {
 		t.Error("nested empty Multi accepted")
 	}
 }
@@ -846,7 +846,7 @@ func TestMultiTokenValidation(t *testing.T) {
 // A panicking Update closure leaves the request state usable.
 func TestUpdatePanicIsRecoverable(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
@@ -870,7 +870,7 @@ func TestUpdatePanicIsRecoverable(t *testing.T) {
 func TestCommitSurvivesCanceledRequestContext(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -913,7 +913,7 @@ func (h *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // Hijack after a write follows net/http behavior.
 func TestHijackAfterWriteIsAllowed(t *testing.T) {
 	m := newTestManager(t)
-	h := m.app
+	h := appH(m)
 	sid := establish(t, m, h, "v")
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -941,7 +941,7 @@ func TestHijackAfterWriteIsAllowed(t *testing.T) {
 func TestHijackRefusedAfterFailedCommit(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = -1 })
-	h := m.app
+	h := appH(m)
 
 	store.beforeSave = func(Record) error { return errors.New("store down") }
 	req := httptest.NewRequest("GET", "/", nil)

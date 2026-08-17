@@ -35,10 +35,10 @@ func (c *countingStore) saveCount() int {
 	return c.saves
 }
 
-func harness(t *testing.T) (*session.Manager[appSession], *Flash, *countingStore) {
+func harness(t *testing.T) (*session.Manager, *Flash, *countingStore) {
 	t.Helper()
 	store := &countingStore{Store: session.NewMemoryStore()}
-	m, err := session.New[appSession](session.Config{
+	m, err := session.New(session.Config{
 		Store:          store,
 		Token:          session.Cookie{},
 		AbsoluteExpiry: time.Hour,
@@ -55,9 +55,9 @@ func harness(t *testing.T) (*session.Manager[appSession], *Flash, *countingStore
 }
 
 // Use a retry budget high enough for the intentional contention in this file.
-func managerWithRetries(t *testing.T, retries int) (*session.Manager[appSession], *Flash) {
+func managerWithRetries(t *testing.T, retries int) (*session.Manager, *Flash) {
 	t.Helper()
-	m, err := session.New[appSession](session.Config{
+	m, err := session.New(session.Config{
 		Store:          session.NewMemoryStore(),
 		Token:          session.Cookie{},
 		AbsoluteExpiry: time.Hour,
@@ -76,7 +76,7 @@ func managerWithRetries(t *testing.T, retries int) (*session.Manager[appSession]
 
 // serve runs one request through the session middleware and returns
 // the response's session cookie value, if any.
-func serve(t *testing.T, m *session.Manager[appSession], sid string, handler func(ctx context.Context)) string {
+func serve(t *testing.T, m *session.Manager, sid string, handler func(ctx context.Context)) string {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/", nil)
 	if sid != "" {
@@ -247,7 +247,7 @@ func TestCoexistsWithAppData(t *testing.T) {
 		_ = fl.Add(ctx, "success", "Saved.")
 	})
 	serve(t, m, sid, func(ctx context.Context) {
-		s, err := m.Get(ctx)
+		s, err := m.Get[appSession](ctx)
 		if err != nil || s.Name != "alice" {
 			t.Fatalf("app data = %+v, %v", s, err)
 		}
