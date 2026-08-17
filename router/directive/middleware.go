@@ -16,6 +16,13 @@ type Middleware struct {
 	byName  map[string]*mwNode
 	host    *Host
 	globals []*mwNode
+	decls   []*mwNode
+
+	ordOnce bool
+	ord     orderResult
+	ordDs   diag.Diagnostics
+
+	chains []resolvedChain
 }
 
 // NewMiddleware returns a Middleware directive for one run.
@@ -25,32 +32,46 @@ func (*Middleware) Name() string { return "http:middleware" }
 
 func (*Middleware) Meta() gen.Meta {
 	return gen.Meta{
-		Synopsis: "Middleware: direct or constructor form, global or named [name=NAME]",
-		Doc: "**`//fabrik:http:middleware [name=NAME]`**\n\n" +
+		Synopsis: "Middleware: direct or constructor form, global=true or referenced by name",
+		Doc: "**`//fabrik:http:middleware [name=NAME] [global=true] [requires=...] [after=...] [before=...]`**\n\n" +
 			"Direct form: `func(next http.Handler) http.Handler`, referenced in place. " +
 			"Constructor form: binding-resolved parameters returning " +
 			"`func(http.Handler) http.Handler` or `router.Middleware`, optionally with " +
-			"a trailing error; it is built once before route registration. Bare " +
-			"middleware is global, including 404/405; every global runs before any " +
-			"named route middleware. `insert=first` registers a global before the " +
-			"unmarked ones, `insert=last` after them (first-registered is outermost). " +
-			"Within one insert group the relative order is unspecified; middleware " +
-			"that must order within a group are composed into one declaration. With " +
-			"`name=`, routes and groups opt in through their `middleware=` chain.\n\n" +
-			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n\n//fabrik:http:middleware\nfunc SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {\n\treturn m.Middleware\n}\n```",
-		Example: "//fabrik:http:middleware",
+			"a trailing error; it is built once before route registration. " +
+			"`global=true` attaches the middleware to every route, including 404/405; " +
+			"every global runs before any route middleware. `name=` is identity: routes " +
+			"and groups opt in through their `middleware=` chain, and ordering options " +
+			"reference names. A declaration with neither is a generation error.\n\n" +
+			"Ordering the global stack: `requires=x` is hard (x must exist and run " +
+			"earlier; on route middleware it instead requires x to be global or listed " +
+			"earlier in the chain); `after=x`/`before=x` order softly when x is a " +
+			"global and stay silent when nothing declares x; `before=*`/`after=*` " +
+			"place the middleware outermost/innermost. Unconstrained globals keep " +
+			"declaration order (file, then line). Contradictory constraints are " +
+			"generation errors.\n\n" +
+			"```go\n//fabrik:http:middleware name=auth\nfunc RequireAuth(next http.Handler) http.Handler { ... }\n\n//fabrik:http:middleware name=session global=true\nfunc SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {\n\treturn m.Middleware\n}\n```",
+		Example: "//fabrik:http:middleware global=true",
 		Tier:    gen.TierBind,
 		Attrs: []gen.AttrSpec{
 			{Key: "name", Kind: gen.KindFreeform},
-			{Key: "insert", Kind: gen.KindEnum, Values: []string{"first", "last"}},
+			{Key: "global", Kind: gen.KindFreeform, Values: []string{"true", "false"}},
+			{Key: "requires", Kind: gen.KindMiddlewareRef},
+			{Key: "after", Kind: gen.KindMiddlewareRef},
+			{Key: "before", Kind: gen.KindMiddlewareRef},
 		},
 	}
 }
 
 type mwNode struct {
 	pos    token.Position
-	name   string // "" is global
-	insert string // global group: "", "first", or "last"
+	name   string // declaration identity
+	global bool   // runs on every route
+
+	requires  []mwRef // required earlier middleware
+	after     []mwRef // soft order after global targets
+	before    []mwRef // soft order before global targets
+	afterAll  bool    // inner wildcard band
+	beforeAll bool    // outer wildcard band
 
 	fn   string
 	obj  types.Object
@@ -80,21 +101,65 @@ func (m *Middleware) Parse(a gen.Annotation) (any, diag.Diagnostics) {
 				"use a short identifier: name=auth")
 		}
 	}
-	if ins, ok := args.Attr["insert"]; ok {
-		nd.insert = ins.Text
-		if nd.insert != "first" && nd.insert != "last" {
-			ds.Error(a.ArgPos(ins.Col), fmt.Sprintf("invalid insert value %q", nd.insert),
-				"insert=first or insert=last")
+	if gl, ok := args.Attr["global"]; ok {
+		switch gl.Text {
+		case "true":
+			nd.global = true
+		case "false":
+		default:
+			ds.Error(a.ArgPos(gl.Col), fmt.Sprintf("invalid global value %q", gl.Text),
+				"global=true or global=false")
 		}
-		if _, named := args.Attr["name"]; named {
-			ds.Error(a.Pos, "insert orders global middleware; named middleware are ordered by their middleware= list",
-				"drop insert= or drop name=")
-		}
+	}
+	nd.requires, _, ds = parseOrderRefs(a, args, "requires", false, ds)
+	nd.after, nd.afterAll, ds = parseOrderRefs(a, args, "after", true, ds)
+	nd.before, nd.beforeAll, ds = parseOrderRefs(a, args, "before", true, ds)
+	if nd.beforeAll && nd.afterAll {
+		ds.Error(a.Pos, "before=* and after=* on one declaration contradict each other",
+			"a middleware cannot be both outermost and innermost; keep one")
+	}
+	if !nd.global && (len(nd.after) > 0 || len(nd.before) > 0 || nd.afterAll || nd.beforeAll) {
+		ds.Error(a.Pos, "after=/before= order the global stack; this declaration is not global=true",
+			"route middleware order is the middleware= list; add global=true to order this in the global stack")
 	}
 	if ds.HasFatal() {
 		return nil, ds
 	}
 	return nd, ds
+}
+
+// parseOrderRefs separates comma-delimited names from an allowed wildcard.
+func parseOrderRefs(a gen.Annotation, args gen.Args, key string, starOK bool, ds diag.Diagnostics) ([]mwRef, bool, diag.Diagnostics) {
+	arg, ok := args.Attr[key]
+	if !ok {
+		return nil, false, ds
+	}
+	var refs []mwRef
+	star := false
+	offset := 0
+	for _, part := range strings.SplitAfter(arg.Text, ",") {
+		ref := strings.TrimSuffix(part, ",")
+		lead := len(ref) - len(strings.TrimLeft(ref, " \t"))
+		ref = strings.TrimSpace(ref)
+		pos := a.ArgPos(arg.Col + offset + lead)
+		offset += len(part)
+
+		if ref == "*" {
+			if !starOK {
+				ds.Error(pos, "requires=* is not a target", "requires= names a middleware; * is for after=/before= placement")
+				continue
+			}
+			star = true
+			continue
+		}
+		if !isIdentifier(ref) {
+			ds.Error(pos, fmt.Sprintf("invalid middleware name %q in %s=", ref, key),
+				"use declared names, comma-separated, or * for outermost/innermost placement")
+			continue
+		}
+		refs = append(refs, mwRef{name: ref, pos: pos})
+	}
+	return refs, star, ds
 }
 
 func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
@@ -148,40 +213,45 @@ func (m *Middleware) Check(n any, t gen.Typed) diag.Diagnostics {
 	nd.fn = fn.Name()
 	nd.obj = fn
 	nd.pkg = fn.Pkg()
+	m.decls = append(m.decls, nd)
 	return ds
 }
 
 func (m *Middleware) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	nd := n.(*mwNode)
-	if nd.name != "" {
-		// Named constructors build on first reference.
+	if !nd.global {
+		// Named route middleware constructors build on first use.
 		return nil
 	}
-	// Group globals while preserving loader order within each insertion group.
 	m.globals = append(m.globals, nd)
 	if len(m.globals) > 1 {
 		return nil
 	}
 	m.host.record(func(g *gen.Gen) diag.Diagnostics {
+		// Ordering errors are reported during validation; a complete stack preserves constructor diagnostics.
 		var ds diag.Diagnostics
 		r := routerSingleton(g)
-		for _, group := range []string{"first", "", "last"} {
-			for _, gn := range m.globals {
-				if gn.insert != group {
-					continue
-				}
-				expr, eds := m.expr(g, gn)
-				ds = append(ds, eds...)
-				g.Node(&gen.Call{
-					Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: gn.pos}},
-					Fn:   r + ".Use",
-					Args: []string{expr},
-				})
-			}
+		for _, e := range m.ordering().stack {
+			expr, eds := m.expr(g, e.nd)
+			ds = append(ds, eds...)
+			g.Node(&gen.Call{
+				Base: gen.Base{Phase: gen.PhaseMiddleware, Origin: gen.Origin{Pos: e.nd.pos}, Label: e.label},
+				Fn:   r + ".Use",
+				Args: []string{expr},
+			})
 		}
 		return ds
 	})
 	return nil
+}
+
+// ordering shares one resolved stack and diagnostic set between validation and emission.
+func (m *Middleware) ordering() orderResult {
+	if !m.ordOnce {
+		m.ordOnce = true
+		m.ord, m.ordDs = resolveOrder(m.globals, m.decls, m.byName, mwLabels(m.decls))
+	}
+	return m.ord
 }
 
 // expr renders one middleware reference and builds constructors once.
@@ -234,19 +304,19 @@ func mwOnceKey(nd *mwNode) string {
 	return "middleware:" + nd.pkg.Path() + "." + nd.fn + "#" + nd.name
 }
 
-// Validate warns about unreferenced named middleware.
+// Validate resolves global ordering and reports declaration-level middleware diagnostics.
 func (m *Middleware) Validate(*gen.Gen) diag.Diagnostics {
-	var ds diag.Diagnostics
-	for _, name := range m.names() {
-		if nd := m.byName[name]; !nd.used {
-			ds.Warn(nd.pos, fmt.Sprintf("middleware %q is never referenced", name),
-				"list it in a middleware= chain, or drop name= to make it global")
-		}
-	}
-	return ds
+	m.ordering()
+	ds := append(diag.Diagnostics(nil), m.ordDs...)
+	return append(ds, validateDecls(m.decls, m.byName, mwLabels(m.decls))...)
 }
 
-// resolve maps middleware= references to declarations.
+type resolvedChain struct {
+	route string
+	names []string
+}
+
+// resolve rejects globals and requires each dependency to be global or earlier in the chain.
 func (m *Middleware) resolve(refs []mwRef) ([]*mwNode, diag.Diagnostics) {
 	var out []*mwNode
 	var ds diag.Diagnostics
@@ -260,10 +330,91 @@ func (m *Middleware) resolve(refs []mwRef) ([]*mwNode, diag.Diagnostics) {
 			ds.Error(ref.pos, fmt.Sprintf("unknown middleware %q", ref.name), help)
 			continue
 		}
+		if nd.global {
+			ds.Error(ref.pos, fmt.Sprintf("global middleware %q referenced in a middleware= chain (it would run twice)", ref.name),
+				"remove it from the chain; it already runs on every route")
+			continue
+		}
 		nd.used = true
+		for _, req := range nd.requires {
+			target := m.byName[req.name]
+			if target == nil {
+				// Validate reports unknown targets.
+				continue
+			}
+			if target.global {
+				continue
+			}
+			earlier := false
+			for _, prev := range out {
+				if prev == target {
+					earlier = true
+					break
+				}
+			}
+			if !earlier {
+				ds.Error(ref.pos, fmt.Sprintf("middleware %q requires=%s, which is neither global nor earlier in this chain", ref.name, req.name),
+					fmt.Sprintf("add %s before %s in the middleware= list", req.name, ref.name))
+			}
+		}
 		out = append(out, nd)
 	}
 	return out, ds
+}
+
+// MWGraphStack is one global middleware in resolved order.
+type MWGraphStack struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// MWGraphChain is one route's middleware chain.
+type MWGraphChain struct {
+	Route string   `json:"route"`
+	Names []string `json:"names"`
+}
+
+// MWGraphInactive is a soft ordering reference with no matching declaration.
+type MWGraphInactive struct {
+	Source string `json:"source"`
+	Ref    string `json:"ref"`
+	Pos    string `json:"pos"`
+}
+
+// MWGraphSection is the middleware inspection payload for the graph sidecar.
+type MWGraphSection struct {
+	Stack    []MWGraphStack    `json:"stack,omitempty"`
+	Chains   []MWGraphChain    `json:"chains,omitempty"`
+	Inactive []MWGraphInactive `json:"inactive,omitempty"`
+}
+
+func (m *Middleware) graphSection(g *gen.Gen) {
+	ord := m.ordering()
+	labels := mwLabels(m.decls)
+	var section MWGraphSection
+	for _, e := range ord.stack {
+		section.Stack = append(section.Stack, MWGraphStack{
+			Name:   labels[e.nd],
+			Reason: e.label,
+		})
+	}
+	sort.Slice(m.chains, func(i, j int) bool { return m.chains[i].route < m.chains[j].route })
+	for _, c := range m.chains {
+		section.Chains = append(section.Chains, MWGraphChain{
+			Route: c.route,
+			Names: c.names,
+		})
+	}
+	for _, ie := range ord.inactive {
+		section.Inactive = append(section.Inactive, MWGraphInactive{
+			Source: labels[ie.nd],
+			Ref:    ie.opt,
+			Pos:    fmt.Sprintf("%s:%d", g.RelFile(ie.pos.Filename), ie.pos.Line),
+		})
+	}
+	if len(section.Stack) > 0 || len(section.Chains) > 0 || len(section.Inactive) > 0 {
+		g.GraphSection("middleware", section)
+	}
 }
 
 // names returns the declared middleware names, sorted.

@@ -16,7 +16,7 @@ import (
 // Middleware can be passed as a method value or used to wrap a handler:
 //
 //	mux.Handle("/", sessMgr.Middleware(app))
-func (m *core) Middleware(next http.Handler) http.Handler {
+func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sid, _ := m.cfg.Token.Read(r)
 		st := &state{arrivedSID: sid}

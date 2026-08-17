@@ -10,7 +10,7 @@ type Session struct {
 	CartSize int
 }
 
-sessions, err := session.New[Session](session.Config{
+sessions, err := session.New(session.Config{
 	Store:          session.NewMemoryStore(),
 	Token:          session.Cookie{Name: "session", HttpOnly: true, SameSite: http.SameSiteLaxMode},
 	AbsoluteExpiry: 24 * time.Hour,
@@ -19,7 +19,7 @@ sessions, err := session.New[Session](session.Config{
 
 mux := http.NewServeMux()
 mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-	s, _ := sessions.Get(r.Context())
+	s, _ := sessions.Get[Session](r.Context())
 	s.CartSize++
 	_ = sessions.Save(r.Context(), s)
 })
@@ -44,6 +44,10 @@ One value carries everything:
   JSON-marshalable fields round-trip; unexported fields silently do
   not persist; a value that fails to encode or decode errors at
   `Save`/`Get`/`Update`, not at construction.
+- **The first typed access pins your struct.** `New` takes no type
+  parameter; the first typed app-data operation requires a struct and
+  fixes its type for the manager, with pin errors preceding
+  request-scoped errors.
 - **Reads never mint.** A session exists once something writes: a
   staged `Save` or `Promote` mints at commit; a sessionless
   `Update` mints immediately. `Get` on a fresh visitor is your

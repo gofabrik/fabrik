@@ -59,13 +59,13 @@ func NewJobsConfig() jobs.Config {
 
 //fabrik:inject db name=database
 //fabrik:provider
-func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error) {
+func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager, error) {
 	// Schema creation belongs to migration 0003_sessions.sql.
 	store, err := sqlitesession.New(db, sqlitesession.Options{AutoCreate: false})
 	if err != nil {
 		return nil, err
 	}
-	return session.New[Session](session.Config{
+	return session.New(session.Config{
 		Store:          store,
 		Token:          session.Cookie{Name: "demo_session", HttpOnly: true, Secure: c.CookieSecure, SameSite: http.SameSiteLaxMode},
 		AbsoluteExpiry: 24 * time.Hour,
@@ -74,7 +74,7 @@ func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error)
 }
 
 //fabrik:provider
-func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
+func NewFlash(m *session.Manager) (*flash.Flash, error) {
 	return flash.New(m)
 }
 
@@ -228,10 +228,10 @@ func humanizeAge(t time.Time) string {
 // read: the typed session and the pending flash messages.
 //
 //fabrik:provider
-func NewTemplateRequestFuncs(sessions *session.Manager[Session], fl *flash.Flash) web.RequestFuncs {
+func NewTemplateRequestFuncs(sessions *session.Manager, fl *flash.Flash) web.RequestFuncs {
 	return web.RequestFuncs{
 		"session": func(r *http.Request) any {
-			return func() (Session, error) { return sessions.Get(r.Context()) }
+			return func() (Session, error) { return sessions.Get[Session](r.Context()) }
 		},
 		"flashes": func(r *http.Request) any {
 			ctx := r.Context()

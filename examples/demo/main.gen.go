@@ -447,12 +447,16 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Middleware
+	// before=*
 	r.Use(shared.LogAndRecover)
 	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
+	// unconstrained (file order)
 	r.Use(secureHeadersMiddlewareMW)
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
+	// unconstrained (file order)
 	r.Use(crossOriginMiddlewareMW)
 	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
+	// unconstrained (file order)
 	r.Use(sessionMiddlewareMW)
 	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
 	if err != nil {

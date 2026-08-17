@@ -109,6 +109,8 @@ type Gen struct {
 	batchID  string // active order-sensitive emission batch
 	batchSeq int
 
+	sections map[string]any
+
 	embedded  bool
 	outputPkg string
 }
@@ -183,13 +185,17 @@ func (g *Gen) originComment(n Node) string {
 	if !o.Pos.IsValid() {
 		return "// " + o.Directive
 	}
-	file := o.Pos.Filename
+	return fmt.Sprintf("// %s %s:%d", o.Directive, g.RelFile(o.Pos.Filename), o.Pos.Line)
+}
+
+// RelFile returns a checkout-independent path relative to the source root when possible.
+func (g *Gen) RelFile(file string) string {
 	if g.srcRoot != "" {
 		if rel, err := filepath.Rel(g.srcRoot, file); err == nil {
-			file = rel
+			return rel
 		}
 	}
-	return fmt.Sprintf("// %s %s:%d", o.Directive, file, o.Pos.Line)
+	return file
 }
 
 func (g *Gen) nodeComments(b *bytes.Buffer, n Node) {

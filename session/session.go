@@ -4,7 +4,7 @@
 //		Name string
 //	}
 //
-//	sessions, err := session.New[Session](session.Config{
+//	sessions, err := session.New(session.Config{
 //		Store:          session.NewMemoryStore(),
 //		Token:          session.Cookie{Name: "session", HttpOnly: true},
 //		AbsoluteExpiry: 24 * time.Hour,
@@ -13,7 +13,7 @@
 //
 //	handler := sessions.Middleware(mux)
 //
-//	s, err := sessions.Get(r.Context())
+//	s, err := sessions.Get[Session](r.Context())
 //	s.Name = "alice"
 //	err = sessions.Save(r.Context(), s)
 //

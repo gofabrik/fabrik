@@ -131,6 +131,13 @@ func (h *Handle) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	if d, ok := h.host.routes.add(pattern, nd.pos); !ok {
 		return append(ds, d)
 	}
+	if len(mws) > 0 {
+		names := make([]string, len(mws))
+		for i, mw := range mws {
+			names[i] = displayName(mw)
+		}
+		h.host.mw.chains = append(h.host.mw.chains, resolvedChain{route: pattern, names: names})
+	}
 
 	h.host.record(func(g *gen.Gen) diag.Diagnostics {
 		var ds diag.Diagnostics

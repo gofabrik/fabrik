@@ -15,7 +15,7 @@ import (
 //		...
 //	}
 type Registry interface {
-	registry() *core
+	registry() *Manager
 }
 
 // Use registers a typed library cell and returns its handle.
@@ -27,6 +27,9 @@ type Registry interface {
 func Use[T any](m Registry, key Key[T]) (*Handle[T], error) {
 	if key.name == "" {
 		return nil, fmt.Errorf("session.Use: zero Key (declare one with session.NewKey)")
+	}
+	if key.name == appKey {
+		return nil, fmt.Errorf("session.Use: the cell name %q is reserved for the app session (use the Manager's typed accessors)", appKey)
 	}
 	t := reflect.TypeFor[T]()
 	if err := checkCellType(t, "Use"); err != nil {
@@ -47,7 +50,7 @@ func Use[T any](m Registry, key Key[T]) (*Handle[T], error) {
 
 // Handle is typed access to one session cell.
 type Handle[T any] struct {
-	m   *core
+	m   *Manager
 	key string
 }
 

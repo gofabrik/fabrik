@@ -22,13 +22,13 @@ func testConfig() Config {
 	}
 }
 
-func newTestManager(t *testing.T, mutate ...func(*Config)) *Manager[appSession] {
+func newTestManager(t *testing.T, mutate ...func(*Config)) *Manager {
 	t.Helper()
 	cfg := testConfig()
 	for _, fn := range mutate {
 		fn(&cfg)
 	}
-	m, err := New[appSession](cfg)
+	m, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,12 +49,14 @@ func TestNewKeyPanics(t *testing.T) {
 	mustPanic("reserved name", func() { NewKey[appSession]("app") })
 }
 
-func TestNewRejectsNonStruct(t *testing.T) {
-	if _, err := New[int](testConfig()); err == nil {
-		t.Error("int accepted as session type")
+func TestTypedAccessRejectsNonStruct(t *testing.T) {
+	// Type errors precede ErrNoSession.
+	m := newTestManager(t)
+	if _, err := m.Get[int](t.Context()); err == nil || !strings.Contains(err.Error(), "app-cell access") {
+		t.Errorf("int session type: want shape error before ErrNoSession, got %v", err)
 	}
-	if _, err := New[map[string]any](testConfig()); err == nil {
-		t.Error("map accepted as session type")
+	if err := m.Save(t.Context(), map[string]any{}); err == nil || !strings.Contains(err.Error(), "app-cell access") {
+		t.Errorf("map session type: want shape error before ErrNoSession, got %v", err)
 	}
 }
 
@@ -106,20 +108,18 @@ func TestKeyRegistryMatrix(t *testing.T) {
 		t.Fatal("distinct names collapsed")
 	}
 
-	// The registry guards the reserved app cell.
 	if _, err := Use(m, Key[otherShape]{name: "app"}); err == nil {
 		t.Error("library key collided with the app cell silently")
 	}
-	// Same type plus reserved name is still idempotent.
-	if _, err := Use(m, Key[appSession]{name: "app"}); err != nil {
-		t.Errorf("same-type app-key registration: %v", err)
+	if _, err := Use(m, Key[appSession]{name: "app"}); err == nil {
+		t.Error("forged same-type app key accepted")
 	}
 }
 
 func TestManagerSatisfiesRegistry(t *testing.T) {
 	m := newTestManager(t)
 	var r Registry = m
-	if r.registry() != m.c {
+	if r.registry() != m {
 		t.Fatal("Registry view does not anchor the same engine")
 	}
 }
@@ -151,7 +151,7 @@ func TestConfigValidation(t *testing.T) {
 	broken.Store = nil
 	broken.Token = nil
 	broken.AbsoluteExpiry = 0
-	if _, err := New[appSession](broken); err == nil {
+	if _, err := New(broken); err == nil {
 		t.Fatal("empty config accepted")
 	} else {
 		for _, want := range []string{"Store is required", "Token is required", "AbsoluteExpiry"} {
@@ -163,26 +163,26 @@ func TestConfigValidation(t *testing.T) {
 
 	neg := base
 	neg.IdleExpiry = -time.Second
-	if _, err := New[appSession](neg); err == nil {
+	if _, err := New(neg); err == nil {
 		t.Error("negative IdleExpiry accepted")
 	}
 
 	tooLong := base
 	tooLong.IdleExpiry = 2 * base.AbsoluteExpiry
-	if _, err := New[appSession](tooLong); err == nil {
+	if _, err := New(tooLong); err == nil {
 		t.Error("IdleExpiry exceeding AbsoluteExpiry accepted")
 	}
 
 	bumpNoIdle := base
 	bumpNoIdle.IdleExpiry = 0
 	bumpNoIdle.IdleBumpInterval = time.Minute
-	if _, err := New[appSession](bumpNoIdle); err == nil {
+	if _, err := New(bumpNoIdle); err == nil {
 		t.Error("IdleBumpInterval accepted with idle expiry disabled")
 	}
 
 	negBump := base
 	negBump.IdleBumpInterval = -time.Second
-	if _, err := New[appSession](negBump); err == nil {
+	if _, err := New(negBump); err == nil {
 		t.Error("negative IdleBumpInterval accepted")
 	}
 }
@@ -190,16 +190,16 @@ func TestConfigValidation(t *testing.T) {
 func TestMaxRetriesSemantics(t *testing.T) {
 	// 0 uses the package default; negative disables retries.
 	m := newTestManager(t)
-	if m.c.maxRetries != defaultMaxRetries {
-		t.Fatalf("zero MaxRetries resolved to %d, want %d", m.c.maxRetries, defaultMaxRetries)
+	if m.maxRetries != defaultMaxRetries {
+		t.Fatalf("zero MaxRetries resolved to %d, want %d", m.maxRetries, defaultMaxRetries)
 	}
 	m = newTestManager(t, func(c *Config) { c.MaxRetries = -5 })
-	if m.c.maxRetries != 0 {
-		t.Fatalf("negative MaxRetries resolved to %d, want 0", m.c.maxRetries)
+	if m.maxRetries != 0 {
+		t.Fatalf("negative MaxRetries resolved to %d, want 0", m.maxRetries)
 	}
 	m = newTestManager(t, func(c *Config) { c.MaxRetries = 7 })
-	if m.c.maxRetries != 7 {
-		t.Fatalf("MaxRetries resolved to %d, want 7", m.c.maxRetries)
+	if m.maxRetries != 7 {
+		t.Fatalf("MaxRetries resolved to %d, want 7", m.maxRetries)
 	}
 }
 
@@ -208,8 +208,15 @@ func TestUseRejectsNilRegistry(t *testing.T) {
 	if _, err := Use(nil, key); err == nil {
 		t.Error("nil Registry accepted")
 	}
-	var m *Manager[appSession] // typed nil satisfies the interface
+	var m *Manager // A typed nil still implements Registry.
 	if _, err := Use(m, key); err == nil {
 		t.Error("typed-nil manager accepted")
 	}
+}
+
+func appH(m *Manager) *Handle[appSession] {
+	if err := pinApp[appSession](m); err != nil {
+		panic(err)
+	}
+	return appHandle[appSession](m)
 }

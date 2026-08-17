@@ -52,7 +52,7 @@ func FilesA(w http.ResponseWriter, r *http.Request) {}
 func FilesB(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
 warning: web/web.go:8:1: middleware "idle" is never referenced
-  help: list it in a middleware= chain, or drop name= to make it global
+  help: list it in a middleware= chain, or add global=true to run it everywhere
 error: web/web.go:11:39: unknown middleware "missing"
   help: declared names: auth, duponly, idle, wrapped
 error: web/web.go:17:37: unknown middleware "nosuch"

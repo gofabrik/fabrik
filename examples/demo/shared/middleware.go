@@ -10,12 +10,12 @@ import (
 
 // LogAndRecover logs requests outside panic recovery and runs before unmarked middleware.
 //
-//fabrik:http:middleware insert=first
+//fabrik:http:middleware global=true before=*
 func LogAndRecover(next http.Handler) http.Handler {
 	return middleware.Logger(middleware.Recover(next))
 }
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func SecureHeadersMiddleware(assets assetmapper.Server) func(http.Handler) http.Handler {
 	return middleware.SecureHeaders(
 		middleware.WithCSP(middleware.CSP{
@@ -24,13 +24,13 @@ func SecureHeadersMiddleware(assets assetmapper.Server) func(http.Handler) http.
 	)
 }
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func CrossOriginMiddleware(c *http.CrossOriginProtection) func(http.Handler) http.Handler {
 	return c.Handler
 }
 
-//fabrik:http:middleware
-func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
+//fabrik:http:middleware global=true
+func SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {
 	return m.Middleware
 }
 

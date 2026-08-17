@@ -14,7 +14,7 @@ package shared
 
 import "net/http"
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func RequestID(next http.Handler) http.Handler { return next }
 
 //fabrik:http:middleware name=auth
@@ -63,6 +63,7 @@ func run() int {
 		r := router.New()
 
 		// Middleware
+		// unconstrained (file order)
 		r.Use(shared.RequestID)
 
 		// Register

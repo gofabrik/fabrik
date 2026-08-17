@@ -669,3 +669,117 @@ func TestEmbeddedCycleDetectedThroughSymlinkedDir(t *testing.T) {
 		t.Errorf("Diags = %v, want the cycle reported against the physical output package", res.Diags)
 	}
 }
+
+func TestMiddlewareLabelCommentLevels(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "middleware_ordering.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(level gen.CommentLevel) string {
+		dir := t.TempDir()
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = r
+		}
+		writeFixtureTree(t, dir, txtar.Parse(data))
+		res, err := WireOptions(dir, nil, Options{Comments: level})
+		if err != nil {
+			t.Fatalf("WireOptions: %v", err)
+		}
+		return string(res.Src)
+	}
+
+	labels := []string{"// before=*", "// unconstrained (file order)", "// after=phantom (inactive); requires=session"}
+	sections := run(gen.CommentsSections)
+	for _, want := range labels {
+		if !strings.Contains(sections, want) {
+			t.Errorf("sections output missing %q", want)
+		}
+	}
+	full := run(gen.CommentsFull)
+	for _, want := range labels {
+		if !strings.Contains(full, want) {
+			t.Errorf("full output missing %q", want)
+		}
+	}
+	off := run(gen.CommentsOff)
+	for _, label := range append(labels, "// Middleware") {
+		if strings.Contains(off, label) {
+			t.Errorf("comments=off still contains %q", label)
+		}
+	}
+}
+
+func TestMiddlewareGraphSectionInSidecar(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "middleware_ordering.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+	res, err := WireOptions(dir, nil, Options{Graph: true})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	if res.Graph == nil {
+		t.Fatal("no graph produced")
+	}
+	raw, err := json.Marshal(res.Graph.Sections["middleware"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var section struct {
+		Stack []struct {
+			Name   string `json:"name"`
+			Reason string `json:"reason"`
+		} `json:"stack"`
+		Chains []struct {
+			Route string   `json:"route"`
+			Names []string `json:"names"`
+		} `json:"chains"`
+		Inactive []struct {
+			Source string `json:"source"`
+			Ref    string `json:"ref"`
+			Pos    string `json:"pos"`
+		} `json:"inactive"`
+	}
+	if err := json.Unmarshal(raw, &section); err != nil {
+		t.Fatal(err)
+	}
+
+	wantStack := [][2]string{
+		{"zeta.Logged", "before=*"},
+		{"beta.Tail", "unconstrained (file order)"},
+		{"session", "before sessionauth"},
+		{"sessionauth", "after=phantom (inactive); requires=session"},
+	}
+	if len(section.Stack) != len(wantStack) {
+		t.Fatalf("stack = %+v, want %d entries", section.Stack, len(wantStack))
+	}
+	for i, want := range wantStack {
+		if section.Stack[i].Name != want[0] || section.Stack[i].Reason != want[1] {
+			t.Errorf("stack[%d] = %+v, want %v", i, section.Stack[i], want)
+		}
+	}
+	if len(section.Chains) != 2 ||
+		section.Chains[0].Route != "/files" ||
+		strings.Join(section.Chains[0].Names, ",") != "guard" ||
+		section.Chains[1].Route != "GET /{$}" ||
+		strings.Join(section.Chains[1].Names, ",") != "guard,audit" {
+		t.Errorf("chains = %+v, want /files with guard and GET /{$$} with guard,audit", section.Chains)
+	}
+	if len(section.Inactive) != 1 || section.Inactive[0].Source != "sessionauth" ||
+		section.Inactive[0].Ref != "after=phantom" || section.Inactive[0].Pos != "alpha/mw.go:5" {
+		t.Errorf("inactive = %+v, want sessionauth after=phantom alpha/mw.go:5", section.Inactive)
+	}
+	if all, err := json.Marshal(res.Graph); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(all), dir) {
+		t.Errorf("graph JSON leaks the checkout path %q", dir)
+	}
+}
