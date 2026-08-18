@@ -1,0 +1,4 @@
+change_type: breaking
+component: fabrik
+note: Rename the pre-release assetmapper module and standalone command to assets, add requires= validation for CLI middleware, fix nightly dependency reporting, and refresh framework documentation.
+issues: [0]
