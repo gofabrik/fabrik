@@ -136,9 +136,9 @@ Options:
 
 ## fabrik:cli:middleware
 
-**`//fabrik:cli:middleware name=<token>`**
+**`//fabrik:cli:middleware name=<token> [requires=a,b]`**
 
-Declared on an exported `func(cli.Handler) cli.Handler`: registers the function under a name that `middleware=` chains on `//fabrik:cli:command`, `//fabrik:cli:group`, and `//fabrik:cli:root` reference. Chains attach in declaration order; the cli library applies root middleware outermost, then each ancestor, then the command's own. Unreferenced declarations warn.
+Declared on an exported `func(cli.Handler) cli.Handler`: registers the function under a name that `middleware=` chains on `//fabrik:cli:command`, `//fabrik:cli:group`, and `//fabrik:cli:root` reference. Chains attach in declaration order; the cli library applies root middleware outermost, then each ancestor, then the command's own. `requires=` lists middleware that must run earlier through the root, an ancestor group or command, or an earlier entry in the same `middleware=` list; unmet requirements fail wiring. Unreferenced declarations warn.
 
 ```go
 //fabrik:cli:middleware name=confirm
@@ -148,6 +148,7 @@ func Confirm(next cli.Handler) cli.Handler { ... }
 Options:
 
 - `name=`
+- `requires=`
 
 ## fabrik:cli:root
 
