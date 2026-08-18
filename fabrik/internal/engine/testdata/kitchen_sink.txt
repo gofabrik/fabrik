@@ -16,14 +16,14 @@ replace github.com/gofabrik/fabrik/cli => CLIDIR
 replace github.com/gofabrik/fabrik/httpserver => HTTPSERVERDIR
 
 require (
-	github.com/gofabrik/fabrik/assetmapper v0.0.0
+	github.com/gofabrik/fabrik/assets v0.0.0
 	github.com/gofabrik/fabrik/migrations v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
 	github.com/gofabrik/fabrik/web v0.0.0
 )
 
 replace (
-	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+	github.com/gofabrik/fabrik/assets => ASSETSDIR
 	github.com/gofabrik/fabrik/migrations => MIGRATIONSDIR
 	github.com/gofabrik/fabrik/config => CONFIGDIR
 	github.com/gofabrik/fabrik/web => WEBDIR
@@ -236,7 +236,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/httpserver"
@@ -312,7 +312,7 @@ func run() int {
 						return err
 					}
 					r.Handle("/static/", http.StripPrefix("/static", http.FileServerFS(webStatic)))
-					assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+					assetCompiled, err := assets.Build([]assets.Root{
 						{FS: web.Assets, Dir: "assets"},
 					}, nil)
 					if err != nil {

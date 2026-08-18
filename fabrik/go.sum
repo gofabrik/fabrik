@@ -1,7 +1,3 @@
-github.com/gofabrik/fabrik/assetmapper v0.1.0 h1:L3D6a6nRcT38ZYbvBqKx4Ttlaj+tpQBcZO9l1mma9VA=
-github.com/gofabrik/fabrik/assetmapper v0.1.0/go.mod h1:UdOGzo6/nxqacZer2TSMOuI1T70om0n2Nh+ENIYc5QE=
-github.com/gofabrik/fabrik/assetmapper/directive v0.1.0 h1:7Y72A4m+o4E9Gw+NLlB3WSr6BSUM/gd9z/RAWeESgWc=
-github.com/gofabrik/fabrik/assetmapper/directive v0.1.0/go.mod h1:HWUdIly9kevlDvbxH6KiMWcpQR8/Jm7gpL4b/GXuT8g=
 github.com/gofabrik/fabrik/config/directive v0.1.0 h1:gwp7Ww/gXMVOZ48h/DC0n/xqNDB7TJ4udjpkizD/fR8=
 github.com/gofabrik/fabrik/config/directive v0.1.0/go.mod h1:IJjTOEio1K740o+q4YrDglnyyfZxDgluXDcbklRPN/o=
 github.com/gofabrik/fabrik/diag v0.1.0 h1:Tdl3Ot4R3ZBbLkADG8AIjvGt9VCZfLA8i/7jdFbsrrM=

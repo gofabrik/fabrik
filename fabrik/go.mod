@@ -5,8 +5,8 @@ go 1.27
 toolchain go1.27rc2
 
 require (
-	github.com/gofabrik/fabrik/assetmapper v0.1.0
-	github.com/gofabrik/fabrik/assetmapper/directive v0.1.0
+	github.com/gofabrik/fabrik/assets v0.1.0
+	github.com/gofabrik/fabrik/assets/directive v0.1.0
 	github.com/gofabrik/fabrik/cli/directive v0.1.0
 	github.com/gofabrik/fabrik/config/directive v0.1.0
 	github.com/gofabrik/fabrik/diag v0.1.0

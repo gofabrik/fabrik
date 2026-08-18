@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/httpserver"
@@ -264,7 +264,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 
-	assetmapperOptions, err := config.Load[assetmapper.Options](append(configOpts,
+	assetsOptions, err := config.Load[assets.Options](append(configOpts,
 		config.Section("assets"),
 	)...)
 	if err != nil {
@@ -302,19 +302,19 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Providers
-	assetKind, err := assetmapperOptions.Mode()
+	assetKind, err := assetsOptions.Mode()
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	var assetServer assetmapper.Server
+	var assetServer assets.Server
 	switch assetKind {
-	case assetmapper.KindSource:
-		assetServer, err = assetmapper.NewSource([]assetmapper.Root{
+	case assets.KindSource:
+		assetServer, err = assets.NewSource([]assets.Root{
 			{FS: os.DirFS("shared/assets")},
 			{FS: os.DirFS("web/assets")},
 		}, nil)
-	case assetmapper.KindCompiled:
-		assetServer, err = assetmapper.Build([]assetmapper.Root{
+	case assets.KindCompiled:
+		assetServer, err = assets.Build([]assets.Root{
 			{FS: shared.Assets, Dir: "assets"},
 			{FS: web.Assets, Dir: "assets"},
 		}, nil)

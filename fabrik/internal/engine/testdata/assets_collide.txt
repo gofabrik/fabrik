@@ -6,9 +6,9 @@ module app
 
 go 1.27
 
-require github.com/gofabrik/fabrik/assetmapper v0.0.0
+require github.com/gofabrik/fabrik/assets v0.0.0
 
-replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+replace github.com/gofabrik/fabrik/assets => ASSETSDIR
 -- main.go --
 package main
 

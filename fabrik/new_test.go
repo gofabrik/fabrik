@@ -30,7 +30,7 @@ func TestScaffoldGoModPinsFabrik(t *testing.T) {
 			t.Errorf("go.mod missing %q:\n%s", want, got)
 		}
 	}
-	for _, m := range []string{"config", "assetmapper"} {
+	for _, m := range []string{"config", "assets"} {
 		if !strings.Contains(got, "github.com/gofabrik/fabrik/"+m+" v9.9.9") {
 			t.Errorf("generator-only module %s not pinned:\n%s", m, got)
 		}

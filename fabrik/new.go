@@ -25,7 +25,7 @@ const starterRoot = "templates/starter"
 
 // starterFabrikModules includes dependencies introduced by code generation.
 var starterFabrikModules = []string{
-	"github.com/gofabrik/fabrik/assetmapper",
+	"github.com/gofabrik/fabrik/assets",
 	"github.com/gofabrik/fabrik/cli",
 	"github.com/gofabrik/fabrik/config",
 	"github.com/gofabrik/fabrik/httpserver",

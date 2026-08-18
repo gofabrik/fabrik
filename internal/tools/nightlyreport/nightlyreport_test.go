@@ -244,9 +244,9 @@ func TestTestOutput(t *testing.T) {
 
 func TestSlug(t *testing.T) {
 	for in, want := range map[string]string{
-		"./diag":                  "diag",
-		"./assetmapper/directive": "assetmapper-directive",
-		"./internal/tools":        "internal-tools",
+		"./diag":             "diag",
+		"./assets/directive": "assets-directive",
+		"./internal/tools":   "internal-tools",
 	} {
 		if got := Slug(in); got != want {
 			t.Errorf("Slug(%q) = %q, want %q", in, got, want)

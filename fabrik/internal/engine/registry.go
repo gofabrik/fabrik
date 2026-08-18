@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	assetsdir "github.com/gofabrik/fabrik/assetmapper/directive"
+	assetsdir "github.com/gofabrik/fabrik/assets/directive"
 	clidir "github.com/gofabrik/fabrik/cli/directive"
 	configdir "github.com/gofabrik/fabrik/config/directive"
 	"github.com/gofabrik/fabrik/fabrik/internal/directives/core"
@@ -119,7 +119,7 @@ type assetOptionsSource struct {
 	cfg *configdir.Config
 }
 
-const assetOptionsPtr = "*github.com/gofabrik/fabrik/assetmapper.Options"
+const assetOptionsPtr = "*github.com/gofabrik/fabrik/assets.Options"
 
 func (r assetOptionsSource) Node() (string, token.Position, bool) {
 	nd := r.cfg.NodeByType(assetOptionsPtr)

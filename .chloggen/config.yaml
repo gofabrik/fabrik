@@ -5,7 +5,7 @@ default_change_logs:
 
 components:
   - fabrik
-  - assetmapper
+  - assets
   - cache
   - config
   - diag

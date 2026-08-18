@@ -130,7 +130,7 @@ var fixtureModules = []struct{ token, path, rel string }{
 	{"ROUTERDIR", "github.com/gofabrik/fabrik/router", "../../../router"},
 	{"CONFIGDIR", "github.com/gofabrik/fabrik/config", "../../../config"},
 	{"WEBDIR", "github.com/gofabrik/fabrik/web", "../../../web"},
-	{"ASSETSDIR", "github.com/gofabrik/fabrik/assetmapper", "../../../assetmapper"},
+	{"ASSETSDIR", "github.com/gofabrik/fabrik/assets", "../../../assets"},
 	{"MIGRATIONSDIR", "github.com/gofabrik/fabrik/migrations", "../../../migrations"},
 	{"JOBSDIR", "github.com/gofabrik/fabrik/jobs", "../../../jobs"},
 	{"CLIDIR", "github.com/gofabrik/fabrik/cli", "../../../cli"},
