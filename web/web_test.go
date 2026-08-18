@@ -844,7 +844,7 @@ func TestHTMLKeepsItsContentType(t *testing.T) {
 }
 
 func TestStatusStaysComparable(t *testing.T) {
-	if web.Status(404) != web.Status(404) || web.Status(404) == web.Status(200) {
+	if web.Status(404) != web.Status(404) || web.Status(404) == web.Status(200) { //nolint:gocritic,staticcheck // deliberate identity comparison verifying Status value semantics
 		t.Fatal("Status must compare by value")
 	}
 }

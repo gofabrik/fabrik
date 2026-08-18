@@ -127,6 +127,7 @@ jobs:
           set -euo pipefail
           modules=$(printf '%s' '${{ needs.discover.outputs.modules }}' | jq -r 'join(",")')
           GOWORK=off go -C internal/tools run ./cmd/nightly-report \
+            -root "$GITHUB_WORKSPACE" \
             -artifacts "$GITHUB_WORKSPACE/artifacts" \
             -modules "$modules" \
             -freshness "$GITHUB_WORKSPACE/freshness.json" \

@@ -1,13 +1,13 @@
-Without assetmapper.Options, assets use compiled construction and bind both
-*assetmapper.Compiled and assetmapper.Server.
+Without assets.Options, assets use compiled construction and bind both
+*assets.Compiled and assets.Server.
 -- go.mod --
 module app
 
 go 1.27
 
-require github.com/gofabrik/fabrik/assetmapper v0.0.0
+require github.com/gofabrik/fabrik/assets v0.0.0
 
-replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+replace github.com/gofabrik/fabrik/assets => ASSETSDIR
 -- main.go --
 package main
 
@@ -30,11 +30,11 @@ package web
 import (
 	"net/http"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 )
 
 type Handlers struct {
-	Assets assetmapper.Server
+	Assets assets.Server
 }
 
 //fabrik:http GET /{$}
@@ -49,7 +49,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
@@ -59,7 +59,7 @@ func run() int {
 	if err := func() (err error) {
 		// Providers
 		r := router.New()
-		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+		assetCompiled, err := assets.Build([]assets.Root{
 			{FS: web.Assets, Dir: "assets"},
 		}, nil)
 		if err != nil {

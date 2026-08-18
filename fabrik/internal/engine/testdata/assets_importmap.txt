@@ -5,9 +5,9 @@ module app
 
 go 1.27
 
-require github.com/gofabrik/fabrik/assetmapper v0.0.0
+require github.com/gofabrik/fabrik/assets v0.0.0
 
-replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+replace github.com/gofabrik/fabrik/assets => ASSETSDIR
 -- main.go --
 package main
 
@@ -29,5 +29,5 @@ export {}
   "app": {"path": "gone.js", "entrypoint": true}
 }
 -- want/diags --
-error: web/assets.go:5:1: assetmapper.Check: importmap entry "app" resolves to "gone.js", which is not a known asset
+error: web/assets.go:5:1: assets.Check: importmap entry "app" resolves to "gone.js", which is not a known asset
   help: assets are compiled and checked at generation time; fix the tree and rerun

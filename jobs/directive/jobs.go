@@ -401,8 +401,10 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 		register(&gen.Call{
 			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: jn.pos}},
 			Fn:   fmt.Sprintf("%s.On[%s]", jobsImport, msg),
-			Args: []string{mgr, fmt.Sprintf("%q", jn.name),
-				fmt.Sprintf("func(c %s.Context, m %s) error {\nreturn %s\n}", jobsImport, msg, call)},
+			Args: []string{
+				mgr, fmt.Sprintf("%q", jn.name),
+				fmt.Sprintf("func(c %s.Context, m %s) error {\nreturn %s\n}", jobsImport, msg, call),
+			},
 			Err: gen.ErrInline,
 		})
 	}
@@ -413,8 +415,10 @@ func (b *builder) build(g *gen.Gen) (string, diag.Diagnostics) {
 		register(&gen.Call{
 			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: cn.pos}},
 			Fn:   jobsImport + ".RegisterCron",
-			Args: []string{mgr, fmt.Sprintf("%q", cn.name), fmt.Sprintf("%q", cn.schedule),
-				fmt.Sprintf("func(c %s.Context) error {\nreturn %s\n}", jobsImport, call)},
+			Args: []string{
+				mgr, fmt.Sprintf("%q", cn.name), fmt.Sprintf("%q", cn.schedule),
+				fmt.Sprintf("func(c %s.Context) error {\nreturn %s\n}", jobsImport, call),
+			},
 			Err: gen.ErrInline,
 		})
 	}

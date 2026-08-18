@@ -57,9 +57,11 @@ func TestValidateGraphCycle(t *testing.T) {
 func TestValidateGraphRawMetadata(t *testing.T) {
 	g := New()
 	g.SetDirective("config")
-	g.Node(&Raw{Base: Base{Phase: PhaseConfig, Origin: Origin{Pos: vpos("c.go", 2)}},
+	g.Node(&Raw{
+		Base:    Base{Phase: PhaseConfig, Origin: Origin{Pos: vpos("c.go", 2)}},
 		Defines: []string{"declared", "phantom"},
-		Lines:   []string{"declared := load()"}})
+		Lines:   []string{"declared := load()"},
+	})
 	ds := g.ValidateGraph()
 	if len(ds) != 1 || !strings.Contains(ds[0].Message, `"phantom"`) {
 		t.Fatalf("diagnostics = %v, want the undeclared define reported", ds)
@@ -70,8 +72,10 @@ func TestValidateGraphRawUsesNotFree(t *testing.T) {
 	g := New()
 	g.SetDirective("config")
 	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "real", Expr: "1"})
-	g.Node(&Raw{Base: Base{Phase: PhaseWire, Uses: []string{"real"}, Origin: Origin{Pos: vpos("c.go", 5)}},
-		Lines: []string{"_ = 2"}})
+	g.Node(&Raw{
+		Base:  Base{Phase: PhaseWire, Uses: []string{"real"}, Origin: Origin{Pos: vpos("c.go", 5)}},
+		Lines: []string{"_ = 2"},
+	})
 	ds := g.ValidateGraph()
 	if len(ds) != 1 || !strings.Contains(ds[0].Message, `"real"`) || !strings.Contains(ds[0].Message, "not used") {
 		t.Fatalf("diagnostics = %v, want the stale Uses entry reported", ds)
@@ -121,7 +125,7 @@ func TestSelectChildrenInheritPhase(t *testing.T) {
 		}},
 	}
 	g.Node(sel)
-	if got := sel.Cases[0].Result.Base.Phase; got != PhaseWire {
+	if got := sel.Cases[0].Result.Phase; got != PhaseWire {
 		t.Fatalf("result phase = %v, want inherited PhaseWire", got)
 	}
 	if got := sel.Cases[0].Body[0].base().Phase; got != PhaseWire {
@@ -198,8 +202,10 @@ func TestValidateGraphNestedSelectRawMetadata(t *testing.T) {
 		Var:  "iv", Iface: "x.J", KeyExpr: `"k2"`, FmtPkg: "fmt",
 		Cases: []Case{{
 			Value: "deep",
-			Body: []Node{&Raw{Base: Base{Origin: Origin{Pos: vpos("n.go", 9)}},
-				Defines: []string{"missing"}, Lines: []string{"_ = 1"}}},
+			Body: []Node{&Raw{
+				Base:    Base{Origin: Origin{Pos: vpos("n.go", 9)}},
+				Defines: []string{"missing"}, Lines: []string{"_ = 1"},
+			}},
 			Result: Call{Var: "ir", Fn: "mkInner"},
 		}},
 	}
@@ -224,13 +230,15 @@ func TestValidateGraphRawFreeIdentsAreScopeAware(t *testing.T) {
 	g.SetDirective("config")
 	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "real", Expr: "1"})
 	// Selectors, composite keys, and shadowed locals are not free uses.
-	g.Node(&Raw{Base: Base{Phase: PhaseWire, Uses: []string{"real"}, Origin: Origin{Pos: vpos("c.go", 5)}},
+	g.Node(&Raw{
+		Base: Base{Phase: PhaseWire, Uses: []string{"real"}, Origin: Origin{Pos: vpos("c.go", 5)}},
 		Lines: []string{
 			"x := pkg.real",
 			"_ = T{real: 1}",
 			"func() { real := 2; _ = real }()",
 			"_ = x",
-		}})
+		},
+	})
 	ds := g.ValidateGraph()
 	if len(ds) != 1 || !strings.Contains(ds[0].Message, "not used") {
 		t.Fatalf("diagnostics = %v, want the stale Uses entry despite lookalike identifiers", ds)
@@ -242,9 +250,11 @@ func TestValidateGraphRawSelfDefineIsNotAUse(t *testing.T) {
 	g.SetDirective("config")
 	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "x", Expr: "1"})
 	// A Raw-local declaration makes the flow variable's Uses entry stale.
-	g.Node(&Raw{Base: Base{Phase: PhaseWire, Uses: []string{"x"}, Origin: Origin{Pos: vpos("c.go", 5)}},
+	g.Node(&Raw{
+		Base:    Base{Phase: PhaseWire, Uses: []string{"x"}, Origin: Origin{Pos: vpos("c.go", 5)}},
 		Defines: []string{"y"},
-		Lines:   []string{"y := 1", "x := y", "_ = x"}})
+		Lines:   []string{"y := 1", "x := y", "_ = x"},
+	})
 	ds := g.ValidateGraph()
 	if len(ds) != 1 || !strings.Contains(ds[0].Message, "not used") {
 		t.Fatalf("diagnostics = %v, want the self-defined lookalike rejected", ds)
@@ -277,8 +287,10 @@ func TestValidateGraphCycleAttributionFromNestedUses(t *testing.T) {
 		Var:  "a", Iface: "x.I", KeyExpr: `"k"`, FmtPkg: "fmt",
 		Cases: []Case{{
 			Value: "one",
-			Body: []Node{&Raw{Base: Base{Uses: []string{"b"}, Origin: Origin{Pos: vpos("a.go", 5)}},
-				Lines: []string{"_ = b"}}},
+			Body: []Node{&Raw{
+				Base:  Base{Uses: []string{"b"}, Origin: Origin{Pos: vpos("a.go", 5)}},
+				Lines: []string{"_ = b"},
+			}},
 			Result: Call{Var: "r", Fn: "mk"},
 		}},
 	}

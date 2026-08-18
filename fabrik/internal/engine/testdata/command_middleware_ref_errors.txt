@@ -1,5 +1,7 @@
-Middleware reference resolution: unknown names error with the known list,
-and unreferenced declarations warn.
+Middleware reference resolution: unknown names error with the known
+list, unreferenced declarations warn, and unsatisfied and unknown
+requires= targets error at every chain site: root, group, and
+command.
 -- go.mod --
 module app
 
@@ -28,15 +30,42 @@ func Lonely(next cli.Handler) cli.Handler { return next }
 //fabrik:cli:middleware name=orphan
 func Orphan(next cli.Handler) cli.Handler { return next }
 
+//fabrik:cli:middleware name=needy requires=confirm
+func Needy(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:middleware name=lost requires=nowhere,alsogone
+func Lost(next cli.Handler) cli.Handler { return next }
+
+//fabrik:cli:root middleware=needy
+var _root struct{}
+
+//fabrik:cli:group name=tools middleware=needy
+var _tools struct{}
+
 //fabrik:cli:command middleware=ghost,lonely,phantom
 func Migrate(ctx cli.Context) error { return nil }
 
 //fabrik:cli:command middleware=confirm
 func Status(ctx cli.Context) error { return nil }
+
+//fabrik:cli:command middleware=needy,confirm
+func Verify(ctx cli.Context) error { return nil }
 -- want/diags --
 warning: shared/shared.go:11:1: CLI middleware "orphan" is declared but never referenced
   help: reference it with middleware= or remove the declaration
-error: shared/shared.go:14:1: unknown CLI middleware "ghost"
-  help: known: confirm, lonely, orphan
-error: shared/shared.go:14:1: unknown CLI middleware "phantom"
-  help: known: confirm, lonely, orphan
+warning: shared/shared.go:17:1: CLI middleware "lost" is declared but never referenced
+  help: reference it with middleware= or remove the declaration
+error: shared/shared.go:17:44: requires=nowhere: unknown CLI middleware "nowhere"
+  help: known: confirm, lonely, lost, needy, orphan
+error: shared/shared.go:17:52: requires=alsogone: unknown CLI middleware "alsogone"
+  help: known: confirm, lonely, lost, needy, orphan
+error: shared/shared.go:20:1: middleware "needy" requires=confirm, which does not run earlier in this chain
+  help: add confirm before needy in the middleware= list, or attach it to the root or an ancestor group
+error: shared/shared.go:23:1: middleware "needy" requires=confirm, which does not run earlier in this chain
+  help: add confirm before needy in the middleware= list, or attach it to the root or an ancestor group
+error: shared/shared.go:26:1: unknown CLI middleware "ghost"
+  help: known: confirm, lonely, lost, needy, orphan
+error: shared/shared.go:26:1: unknown CLI middleware "phantom"
+  help: known: confirm, lonely, lost, needy, orphan
+error: shared/shared.go:32:1: middleware "needy" requires=confirm, which does not run earlier in this chain
+  help: add confirm before needy in the middleware= list, or attach it to the root or an ancestor group

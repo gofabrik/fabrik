@@ -637,10 +637,14 @@ func Run(t *testing.T, factory func(t *testing.T) Backend) {
 		base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		var js []jobs.Job
 		for range 4 {
-			js = append(js, jobs.Job{Kind: "task", HandlerID: "task", Payload: []byte(`{}`),
-				Queue: "a", MaxAttempts: 1, AvailableAt: base.Add(-time.Second)})
-			js = append(js, jobs.Job{Kind: "task", HandlerID: "task", Payload: []byte(`{}`),
-				Queue: "b", MaxAttempts: 1, AvailableAt: base.Add(-time.Second)})
+			js = append(js, jobs.Job{
+				Kind: "task", HandlerID: "task", Payload: []byte(`{}`),
+				Queue: "a", MaxAttempts: 1, AvailableAt: base.Add(-time.Second),
+			})
+			js = append(js, jobs.Job{
+				Kind: "task", HandlerID: "task", Payload: []byte(`{}`),
+				Queue: "b", MaxAttempts: 1, AvailableAt: base.Add(-time.Second),
+			})
 		}
 		if _, err := b.Store.Insert(ctx, base, js); err != nil {
 			t.Fatal(err)
@@ -984,6 +988,7 @@ func Run(t *testing.T, factory func(t *testing.T) Backend) {
 					Queue: "default", MaxAttempts: 1, AvailableAt: now, UniqueKey: "txk",
 				}})
 				if err != nil {
+					// #nosec G104 -- best-effort cleanup after insert error
 					tx.Rollback() //nolint:errcheck
 					t.Errorf("InsertTx: %v", err)
 					return
@@ -1011,8 +1016,10 @@ func Run(t *testing.T, factory func(t *testing.T) Backend) {
 		const jobsN, claimers = 60, 8
 		var js []jobs.Job
 		for range jobsN {
-			js = append(js, jobs.Job{Kind: "task", HandlerID: "task", Payload: []byte(`{}`),
-				Queue: "default", MaxAttempts: 1, AvailableAt: now.Add(-time.Second)})
+			js = append(js, jobs.Job{
+				Kind: "task", HandlerID: "task", Payload: []byte(`{}`),
+				Queue: "default", MaxAttempts: 1, AvailableAt: now.Add(-time.Second),
+			})
 		}
 		if _, err := b.Store.Insert(ctx, now, js); err != nil {
 			t.Fatal(err)

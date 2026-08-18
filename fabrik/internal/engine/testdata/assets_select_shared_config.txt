@@ -1,17 +1,17 @@
 The asset switch and an application consumer of
-*assetmapper.Options share one generated load.
+*assets.Options share one generated load.
 -- go.mod --
 module app
 
 go 1.27
 
 require (
-	github.com/gofabrik/fabrik/assetmapper v0.0.0
+	github.com/gofabrik/fabrik/assets v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
 )
 
 replace (
-	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+	github.com/gofabrik/fabrik/assets => ASSETSDIR
 	github.com/gofabrik/fabrik/config => CONFIGDIR
 )
 -- main.go --
@@ -28,7 +28,7 @@ import (
 	"embed"
 	"fmt"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 )
 
 //fabrik:assets
@@ -36,10 +36,10 @@ import (
 var Assets embed.FS
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.Options
+type AssetsConfig = assets.Options
 
 //fabrik:hook setup
-func AnnounceAssets(_ context.Context, c *assetmapper.Options) error {
+func AnnounceAssets(_ context.Context, c *assets.Options) error {
 	fmt.Println("assets:", c.Kind)
 	return nil
 }
@@ -63,7 +63,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
 
@@ -95,7 +95,7 @@ func run() int {
 			configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 		}
 		configOpts = append(configOpts, config.KnownSections("assets"))
-		assetmapperOptions, err := config.Load[assetmapper.Options](append(configOpts,
+		assetsOptions, err := config.Load[assets.Options](append(configOpts,
 			config.Section("assets"),
 		)...)
 		if err != nil {
@@ -103,24 +103,24 @@ func run() int {
 		}
 
 		// Wire hooks: config exists, providers do not
-		if err := web.AnnounceAssets(ctx, assetmapperOptions); err != nil {
+		if err := web.AnnounceAssets(ctx, assetsOptions); err != nil {
 			return err
 		}
 
 		// Providers
 		r := router.New()
-		assetKind, err := assetmapperOptions.Mode()
+		assetKind, err := assetsOptions.Mode()
 		if err != nil {
 			return err
 		}
-		var assetServer assetmapper.Server
+		var assetServer assets.Server
 		switch assetKind {
-		case assetmapper.KindSource:
-			assetServer, err = assetmapper.NewSource([]assetmapper.Root{
+		case assets.KindSource:
+			assetServer, err = assets.NewSource([]assets.Root{
 				{FS: os.DirFS("web/assets")},
 			}, nil)
-		case assetmapper.KindCompiled:
-			assetServer, err = assetmapper.Build([]assetmapper.Root{
+		case assets.KindCompiled:
+			assetServer, err = assets.Build([]assets.Root{
 				{FS: web.Assets, Dir: "assets"},
 			}, nil)
 		}

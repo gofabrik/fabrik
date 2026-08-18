@@ -11,7 +11,7 @@ makes new keys backwards-compatible additions.
 
 **`//fabrik:assets [dir=assets]`**
 
-Declared on an exported `embed.FS` variable: the sources compile in memory at startup - hash-addressed URLs, JS / CSS references rewritten to hashed names, importmap rendering - and serve under `/assets/`. Template sets gain the `asset` and `importmap` helpers automatically. `dir=` names the subdirectory inside the FS. Use `all:<dir>`: plain patterns silently drop `_`-prefixed and dot-prefixed files. Several packages may declare trees; they union into one namespace, and a path provided twice is an error. An `importmap.json` at the top of one tree maps bare module specifiers; edits to assets or the importmap never require a rewire. Every tree is compile-checked at generation time. Declaring `type AssetsConfig = assetmapper.Options` under `//fabrik:config assets` switches construction on the `assets.kind` value - `source` serves straight from the source trees (run from the module root), `compiled` embeds as before - and binds `assetmapper.Server` instead of `*assetmapper.Compiled`.
+Declared on an exported `embed.FS` variable: the sources compile in memory at startup - hash-addressed URLs, JS / CSS references rewritten to hashed names, importmap rendering - and serve under `/assets/`. Template sets gain the `asset` and `importmap` helpers automatically. `dir=` names the subdirectory inside the FS. Use `all:<dir>`: plain patterns silently drop `_`-prefixed and dot-prefixed files. Several packages may declare trees; they union into one namespace, and a path provided twice is an error. An `importmap.json` at the top of one tree maps bare module specifiers; edits to assets or the importmap never require a rewire. Every tree is compile-checked at generation time. Declaring `type AssetsConfig = assets.Options` under `//fabrik:config assets` switches construction on the `assets.kind` value - `source` serves straight from the source trees (run from the module root), `compiled` embeds as before - and binds `assets.Server` instead of `*assets.Compiled`.
 
 ```go
 //fabrik:assets
@@ -136,9 +136,9 @@ Options:
 
 ## fabrik:cli:middleware
 
-**`//fabrik:cli:middleware name=<token>`**
+**`//fabrik:cli:middleware name=<token> [requires=a,b]`**
 
-Declared on an exported `func(cli.Handler) cli.Handler`: registers the function under a name that `middleware=` chains on `//fabrik:cli:command`, `//fabrik:cli:group`, and `//fabrik:cli:root` reference. Chains attach in declaration order; the cli library applies root middleware outermost, then each ancestor, then the command's own. Unreferenced declarations warn.
+Declared on an exported `func(cli.Handler) cli.Handler`: registers the function under a name that `middleware=` chains on `//fabrik:cli:command`, `//fabrik:cli:group`, and `//fabrik:cli:root` reference. Chains attach in declaration order; the cli library applies root middleware outermost, then each ancestor, then the command's own. `requires=` lists middleware that must run earlier through the root, an ancestor group or command, or an earlier entry in the same `middleware=` list; unmet requirements fail wiring. Unreferenced declarations warn.
 
 ```go
 //fabrik:cli:middleware name=confirm
@@ -148,6 +148,7 @@ func Confirm(next cli.Handler) cli.Handler { ... }
 Options:
 
 - `name=`
+- `requires=`
 
 ## fabrik:cli:root
 

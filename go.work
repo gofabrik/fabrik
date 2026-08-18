@@ -3,8 +3,8 @@ go 1.27
 toolchain go1.27rc2
 
 use (
-	./assetmapper
-	./assetmapper/directive
+	./assets
+	./assets/directive
 	./cache
 	./cache/dbtest
 	./cli
@@ -42,8 +42,8 @@ use (
 )
 
 replace (
-	github.com/gofabrik/fabrik/assetmapper v0.1.0 => ./assetmapper
-	github.com/gofabrik/fabrik/assetmapper/directive v0.1.0 => ./assetmapper/directive
+	github.com/gofabrik/fabrik/assets v0.1.0 => ./assets
+	github.com/gofabrik/fabrik/assets/directive v0.1.0 => ./assets/directive
 	github.com/gofabrik/fabrik/cache v0.1.0 => ./cache
 	github.com/gofabrik/fabrik/cli v0.1.0 => ./cli
 	github.com/gofabrik/fabrik/cli/directive v0.1.0 => ./cli/directive

@@ -213,7 +213,7 @@ func (c *Command) Check(n any, t gen.Typed) diag.Diagnostics {
 		return ds
 	}
 	c.fam.cmdPaths[key] = nd.pos
-	c.fam.commands = append(c.fam.commands, cmdReg{path: nd.path, decl: nd.decl, fn: fn.Name(), aliases: nd.aliases, pos: nd.pos})
+	c.fam.commands = append(c.fam.commands, cmdReg{path: nd.path, decl: nd.decl, fn: fn.Name(), aliases: nd.aliases, middleware: nd.middleware, pos: nd.pos})
 
 	nd.help, nd.long = helpAndLong(nd.doc)
 	nd.fn = fn.Name()
@@ -360,6 +360,7 @@ func (c *Command) Emit(n any, g *gen.Gen) diag.Diagnostics {
 
 	use, mds := c.fam.resolveMiddleware(g, nd.pos, nd.middleware)
 	ds = append(ds, mds...)
+	ds = append(ds, c.fam.validateRequires(nd.pos, nd.middleware, c.fam.earlierNames(nd.path))...)
 	if ds.HasFatal() {
 		return ds
 	}
@@ -415,6 +416,7 @@ func (c *Command) Finish(g *gen.Gen) diag.Diagnostics {
 			ds.Error(e.pos, "//fabrik:cli:example requires //fabrik:cli:command on the same declaration", "")
 		}
 	}
+	ds = append(ds, c.fam.checkRequiresDecls()...)
 	for _, mw := range c.fam.mwOrder {
 		if !c.fam.mwReferenced[mw.name] {
 			ds.Warn(mw.pos, fmt.Sprintf("CLI middleware %q is declared but never referenced", mw.name),

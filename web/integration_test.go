@@ -45,7 +45,8 @@ func getWith(t *testing.T, url string, headers map[string]string) (*http.Respons
 		t.Fatal(err)
 	}
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	// #nosec G104 -- read-only response cleanup
+	resp.Body.Close() //nolint:errcheck
 	if err != nil {
 		t.Fatal(err)
 	}

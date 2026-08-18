@@ -58,7 +58,7 @@ func (g *Gen) validateFlowWith(ds *diag.Diagnostics, nodes []Node, fallbackFor f
 	}
 
 	defined := map[string]token.Position{}
-	var walkDefines func(ns []Node)
+	var walkDefines func(ns []Node) //nolint:staticcheck // recursive closure requires separate declaration
 	walkDefines = func(ns []Node) {
 		for _, n := range ns {
 			for _, d := range defines(n) {
@@ -72,7 +72,6 @@ func (g *Gen) validateFlowWith(ds *diag.Diagnostics, nodes []Node, fallbackFor f
 				}
 				defined[d] = nodePos(n)
 			}
-
 		}
 	}
 	walkDefines(nodes)

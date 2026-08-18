@@ -236,6 +236,7 @@ func TestGetOrLoadCancellationIsNotLoggedAsFault(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	// #nosec G104 -- cancelled context; verifying no log, not the error
 	c.GetOrLoad(ctx, "k", time.Minute, func(context.Context) (string, error) { return "", nil }) //nolint:errcheck
 	if logged.Len() != 0 {
 		t.Fatalf("cancellation logged as cache fault: %q", logged.String())

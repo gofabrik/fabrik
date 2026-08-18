@@ -65,7 +65,7 @@ func TestFile_BindsBesideScalarFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck // test cleanup
 	if _, err := rc.Seek(3, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}

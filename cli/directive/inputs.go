@@ -132,11 +132,12 @@ func newFamily() *family {
 }
 
 type cmdReg struct {
-	path    []string
-	decl    ast.Node
-	fn      string
-	aliases []string
-	pos     token.Position
+	path       []string
+	decl       ast.Node
+	fn         string
+	aliases    []string
+	middleware []string
+	pos        token.Position
 }
 
 func (f *family) commandFunctionCount(fn string) int {

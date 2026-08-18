@@ -199,7 +199,7 @@ func TestFlag_Slice(t *testing.T) {
 }
 
 func TestIntInputsUseNativeWidth(t *testing.T) {
-	max := strconv.FormatUint(uint64(^uint(0)>>1), 10)
+	maxInt := strconv.FormatUint(uint64(^uint(0)>>1), 10)
 	overflow := strconv.FormatUint(uint64(^uint(0)>>1)+1, 10)
 	cases := []struct {
 		name string
@@ -230,11 +230,11 @@ func TestIntInputsUseNativeWidth(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := tc.root().Parse(tc.args(max)); err != nil {
+			if _, err := tc.root().Parse(tc.args(maxInt)); err != nil {
 				t.Fatalf("native int max rejected: %v", err)
 			}
 			if _, err := tc.root().Parse(tc.args(overflow)); err == nil {
-				t.Fatalf("value above native int max %s accepted", max)
+				t.Fatalf("value above native int max %s accepted", maxInt)
 			}
 		})
 	}

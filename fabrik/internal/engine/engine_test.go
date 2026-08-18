@@ -130,7 +130,7 @@ var fixtureModules = []struct{ token, path, rel string }{
 	{"ROUTERDIR", "github.com/gofabrik/fabrik/router", "../../../router"},
 	{"CONFIGDIR", "github.com/gofabrik/fabrik/config", "../../../config"},
 	{"WEBDIR", "github.com/gofabrik/fabrik/web", "../../../web"},
-	{"ASSETSDIR", "github.com/gofabrik/fabrik/assetmapper", "../../../assetmapper"},
+	{"ASSETSDIR", "github.com/gofabrik/fabrik/assets", "../../../assets"},
 	{"MIGRATIONSDIR", "github.com/gofabrik/fabrik/migrations", "../../../migrations"},
 	{"JOBSDIR", "github.com/gofabrik/fabrik/jobs", "../../../jobs"},
 	{"CLIDIR", "github.com/gofabrik/fabrik/cli", "../../../cli"},
@@ -541,27 +541,27 @@ func TestWireOptionsFlagsStaleGeneratedFiles(t *testing.T) {
 	}
 	writeFixtureTree(t, dir, txtar.Parse(data))
 	leftover := filepath.Join(dir, "shared", "fabrik.gen.go")
-	if err := os.WriteFile(leftover, []byte("package shared\n"), 0o644); err != nil {
+	if err := os.WriteFile(leftover, []byte("package shared\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	// Detect leftovers excluded from package loading by a build tag.
 	tagged := filepath.Join(dir, "oldgen", "fabrik.gen.go")
-	if err := os.MkdirAll(filepath.Dir(tagged), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(tagged), 0o755); err != nil { // #nosec G301 -- test directory
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tagged, []byte("//go:build e2e\n\npackage oldgen\n"), 0o644); err != nil {
+	if err := os.WriteFile(tagged, []byte("//go:build e2e\n\npackage oldgen\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 
 	// Generated files owned by a nested module are not leftovers.
 	nested := filepath.Join(dir, "nested")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	if err := os.MkdirAll(nested, 0o755); err != nil { // #nosec G301 -- test directory
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module nested\n\ngo 1.27\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module nested\n\ngo 1.27\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "main.gen.go"), []byte("package main\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "main.gen.go"), []byte("package main\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 
@@ -595,7 +595,7 @@ func TestWireOptionsRejectsSymlinkEscapingDir(t *testing.T) {
 	dir := filepath.Join(base, "mod")
 	outside := filepath.Join(base, "outside")
 	for _, d := range []string{dir, outside} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o755); err != nil { // #nosec G301 -- test directory
 			t.Fatal(err)
 		}
 	}
@@ -624,11 +624,11 @@ func TestResolveDirFollowsInModuleSymlink(t *testing.T) {
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
-	real := filepath.Join(root, "real")
-	if err := os.MkdirAll(real, 0o755); err != nil {
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil { // #nosec G301 -- test directory
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(root, "link")); err != nil {
+	if err := os.Symlink(realDir, filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -636,8 +636,8 @@ func TestResolveDirFollowsInModuleSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDir: %v", err)
 	}
-	if !contained || resolved != filepath.Join(real, "app") {
-		t.Errorf("resolveDir = %q, contained %v; want %q inside the module", resolved, contained, filepath.Join(real, "app"))
+	if !contained || resolved != filepath.Join(realDir, "app") {
+		t.Errorf("resolveDir = %q, contained %v; want %q inside the module", resolved, contained, filepath.Join(realDir, "app"))
 	}
 }
 

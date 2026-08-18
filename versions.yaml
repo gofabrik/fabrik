@@ -2,8 +2,8 @@ module-sets:
   fabrik:
     version: v0.1.0
     modules:
-      - github.com/gofabrik/fabrik/assetmapper
-      - github.com/gofabrik/fabrik/assetmapper/directive
+      - github.com/gofabrik/fabrik/assets
+      - github.com/gofabrik/fabrik/assets/directive
       - github.com/gofabrik/fabrik/cache
       - github.com/gofabrik/fabrik/cli
       - github.com/gofabrik/fabrik/cli/directive

@@ -156,6 +156,31 @@ func Migrate(ctx cli.Context) error { return nil }
 	if hasLabel(items, "httponly") {
 		t.Fatalf("http middleware offered for a cli reference: %+v", items)
 	}
+
+	mwSrc := `package shared3
+
+import "github.com/gofabrik/fabrik/cli"
+
+//fabrik:cli:middleware name=retry requires=
+func Retry(next cli.Handler) cli.Handler { return next }
+`
+	write("shared3/mw.go", mwSrc)
+	mwURI := uriFromFile(filepath.Join(dir, "shared3", "mw.go"))
+	c.notifyServer("textDocument/didOpen", didOpenParams{
+		TextDocument: textDocumentItem{URI: mwURI, LanguageID: "go", Version: 1, Text: mwSrc},
+	})
+	items = completionResult(t, c.request(3, "textDocument/completion", completionParams{
+		TextDocument: struct {
+			URI string `json:"uri"`
+		}{mwURI},
+		Position: lspPosition{Line: 4, Character: len("//fabrik:cli:middleware name=retry requires=")},
+	}))
+	if !hasLabel(items, "confirm") {
+		t.Fatalf("requires= completions = %+v, want confirm", items)
+	}
+	if hasLabel(items, "*") || hasLabel(items, "httponly") {
+		t.Fatalf("requires= offered * or an HTTP name: %+v", items)
+	}
 }
 
 // Ordering attributes complete declared names; after= and before= also offer *.

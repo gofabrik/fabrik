@@ -276,7 +276,7 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 			directive = "cli:middleware"
 		}
 		items := s.middlewareCompletions(uri, partial, directive)
-		if (key == "after" || key == "before") && (partial == "" || strings.HasPrefix("*", partial)) {
+		if (key == "after" || key == "before") && (partial == "" || strings.HasPrefix("*", partial)) { //nolint:gocritic // deliberate: check if "*" starts with the typed partial
 			items = append(items, completionItem{Label: "*", Kind: 12, Detail: "all", InsertText: "*"})
 		}
 		return items

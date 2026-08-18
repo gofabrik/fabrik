@@ -36,7 +36,7 @@ func TestLocalListYieldsNonNotExistErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := os.Chmod(filepath.Join(dir, "sub"), 0o755); err != nil {
+		if err := os.Chmod(filepath.Join(dir, "sub"), 0o755); err != nil { // #nosec G302 -- restoring test directory permissions
 			t.Errorf("restore directory permissions: %v", err)
 		}
 	})

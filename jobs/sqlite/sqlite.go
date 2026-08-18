@@ -106,6 +106,7 @@ func (dialect) Schema() string         { return schema }
 func (dialect) InsertConflictClause() string {
 	return " ON CONFLICT DO NOTHING"
 }
+
 func (dialect) WorkerUpsertSQL() string {
 	return `INSERT INTO job_workers (id,hostname,queues,started_at,last_seen_at)
 VALUES (?,?,?,?,?)

@@ -122,9 +122,10 @@ together by the CLI:
 
 - [router](router/README.md) - routing and middleware on top of `net/http`.
 - [httpserver](httpserver/README.md) - serve an `http.Handler` with graceful shutdown.
+- [cli](cli/README.md) - opinionated, typed CLI library for Go.
 - [config](config/README.md) - typed YAML configuration with defaults and env overrides.
 - [web](web/README.md) - typed HTTP responses and request helpers.
-- [assetmapper](assetmapper/README.md) - import maps, vendored browser packages, and hashed assets.
+- [assets](assets/README.md) - import maps, vendored browser packages, and hashed assets.
 - [migrations](migrations/README.md) - forward-only SQL migrations for `database/sql`.
 - [query](query/README.md) - typed reads and struct-derived writes over `database/sql`.
 - [paging](paging/README.md) - offset page numbers for a store query and its controls.

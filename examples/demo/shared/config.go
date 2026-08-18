@@ -3,7 +3,7 @@ package shared
 import (
 	"errors"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/mail"
 )
@@ -36,7 +36,7 @@ type LogConfig struct {
 }
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.Options
+type AssetsConfig = assets.Options
 
 //fabrik:config session
 type SessionConfig struct {

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
 )
 
@@ -37,7 +37,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assetsDir, err := filepath.Abs("../assetmapper")
+	assetsDir, err := filepath.Abs("../assets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod = append(mod, []byte(fmt.Sprintf(
-		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assetmapper v0.0.0\n\tgithub.com/gofabrik/fabrik/cli v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/httpserver v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assetmapper => %s\n\tgithub.com/gofabrik/fabrik/cli => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/httpserver => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
+		"\nrequire (\n\tgithub.com/gofabrik/fabrik/assets v0.0.0\n\tgithub.com/gofabrik/fabrik/cli v0.0.0\n\tgithub.com/gofabrik/fabrik/config v0.0.0\n\tgithub.com/gofabrik/fabrik/httpserver v0.0.0\n\tgithub.com/gofabrik/fabrik/router v0.0.0\n\tgithub.com/gofabrik/fabrik/web v0.0.0\n)\n\nreplace (\n\tgithub.com/gofabrik/fabrik/assets => %s\n\tgithub.com/gofabrik/fabrik/cli => %s\n\tgithub.com/gofabrik/fabrik/config => %s\n\tgithub.com/gofabrik/fabrik/httpserver => %s\n\tgithub.com/gofabrik/fabrik/router => %s\n\tgithub.com/gofabrik/fabrik/web => %s\n)\n",
 		assetsDir, cliDir, configDir, httpserverDir, routerDir, webDir))...)
 	if err := os.WriteFile(gomod, mod, 0o600); err != nil { // #nosec G703 -- trusted test workspace path
 		t.Fatal(err)
@@ -150,9 +150,9 @@ func TestEndToEnd(t *testing.T) {
 
 func checkFabrikRun(t *testing.T, dir string) {
 	t.Helper()
-	if v, ok := os.LookupEnv("FABRIK_ENV"); ok {
-		defer os.Setenv("FABRIK_ENV", v) // #nosec G104 -- test env restore
-		os.Unsetenv("FABRIK_ENV")        // #nosec G104 -- test env setup
+	if _, ok := os.LookupEnv("FABRIK_ENV"); ok {
+		t.Setenv("FABRIK_ENV", "")
+		os.Unsetenv("FABRIK_ENV") //nolint:errcheck // t.Setenv restores at cleanup; unset is the test precondition
 	}
 
 	cmd, err := runCommand(filepath.Join(dir, "web"), []string{"run"})
@@ -222,13 +222,13 @@ func hashedAssetPattern(stem, ext string) *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf(
 		`/assets/%s-[0-9a-f]{%d}\.%s`,
 		regexp.QuoteMeta(stem),
-		assetmapper.HashLength,
+		assets.HashLength,
 		regexp.QuoteMeta(ext),
 	))
 }
 
 func TestHashedAssetPattern(t *testing.T) {
-	want := "/assets/style-" + strings.Repeat("a", assetmapper.HashLength) + ".css"
+	want := "/assets/style-" + strings.Repeat("a", assets.HashLength) + ".css"
 	page := `<link rel="stylesheet" href="` + want + `">`
 	if got := hashedAssetPattern("style", "css").FindString(page); got != want {
 		t.Fatalf("matched URL = %q, want %q", got, want)

@@ -1052,12 +1052,16 @@ type B struct{}
 				return "", ds
 			}
 			v := g.Var(base)
-			g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-				Var: v, Fn: g.Import("example.com/app") + ".New" + strings.ToUpper(base[:1]) + base[1:],
-				Args: []string{cv}, Err: ErrReturn, Type: tt})
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+				Var:  v, Fn: g.Import("example.com/app") + ".New" + strings.ToUpper(base[:1]) + base[1:],
+				Args: []string{cv}, Err: ErrReturn, Type: tt,
+			})
 			v2 := g.Var(base + "Twin")
-			g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-				Var: v2, Fn: g.Import("example.com/app") + ".Wrap", Args: []string{v}, Err: ErrNone, Type: tt})
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+				Var:  v2, Fn: g.Import("example.com/app") + ".Wrap", Args: []string{v}, Err: ErrNone, Type: tt,
+			})
 			return v, ds
 		})
 	}
@@ -1101,10 +1105,14 @@ type Store struct{}
 	g.SetDirective("provider")
 	g.BindLazy(store, "db", func() (string, diag.Diagnostics) {
 		v := g.Var("conn")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-			Var: v, Fn: g.Import("example.com/app") + ".NewStore", Err: ErrReturn, Type: store})
-		ping := &Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-			Fn: "app.Ping", Args: []string{v}, Err: ErrNone}
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Var:  v, Fn: g.Import("example.com/app") + ".NewStore", Err: ErrReturn, Type: store,
+		})
+		ping := &Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Fn:   "app.Ping", Args: []string{v}, Err: ErrNone,
+		}
 		g.Node(ping)
 		g.Node(ping)
 		return v, nil

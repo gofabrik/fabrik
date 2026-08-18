@@ -110,48 +110,238 @@ func TestClassifyTest(t *testing.T) {
 	}
 }
 
+func testKnownModules() map[string]bool {
+	known := map[string]bool{}
+	for _, m := range []string{
+		"forms", "cache", "cli", "cli/directive", "ratelimit", "mail",
+		"httpserver", "storage", "validation", "assetmapper",
+		"assetmapper/directive", "gen", "diag", "config/directive",
+		"jobs/directive", "migrations", "migrations/directive",
+		"router/directive", "templates", "templates/directive",
+		"web/directive",
+	} {
+		known["github.com/gofabrik/fabrik/"+m] = true
+	}
+	return known
+}
+
 func TestClassifyTidy(t *testing.T) {
+	known := testKnownModules()
 	const intraErr = "go: downloading github.com/gofabrik/fabrik/validation v0.1.0\n" +
 		"go: github.com/gofabrik/fabrik/forms imports\n" +
 		"\tgithub.com/gofabrik/fabrik/validation: reading github.com/gofabrik/fabrik/validation/go.mod at revision validation/v0.1.0: unknown revision validation/v0.1.0\n"
-	if got := ClassifyTidy(nil, nil, 0); got != StatusClean {
+	if got := ClassifyTidy(nil, nil, 0, known); got != StatusClean {
 		t.Errorf("exit 0 = %q, want clean", got)
 	}
-	if got := ClassifyTidy([]byte("--- a/go.mod\n+++ b/go.mod\n"), nil, 1); got != StatusFindings {
+	if got := ClassifyTidy([]byte("--- a/go.mod\n+++ b/go.mod\n"), nil, 1, known); got != StatusFindings {
 		t.Errorf("drift (diff, exit 1) = %q, want findings", got)
 	}
-	if got := ClassifyTidy(nil, []byte("go: some error\n"), 1); got != StatusError {
+	if got := ClassifyTidy(nil, []byte("go: some error\n"), 1, known); got != StatusError {
 		t.Errorf("error (no diff, exit 1) = %q, want error", got)
 	}
 	// The expected unpublished revision failure makes standalone tidy unchecked.
-	if got := ClassifyTidy(nil, []byte(intraErr), 1); got != StatusUnchecked {
+	if got := ClassifyTidy(nil, []byte(intraErr), 1, known); got != StatusUnchecked {
 		t.Errorf("intra-repo tidy failure = %q, want unchecked", got)
 	}
 	// Real drift outranks a trailing intra-repo resolution failure.
-	if got := ClassifyTidy([]byte("--- a/go.mod\n+++ b/go.mod\n"), []byte(intraErr), 1); got != StatusFindings {
+	if got := ClassifyTidy([]byte("--- a/go.mod\n+++ b/go.mod\n"), []byte(intraErr), 1, known); got != StatusFindings {
 		t.Errorf("drift plus intra-repo failure = %q, want findings", got)
 	}
 	// A wrong intra-repo version pin is a real error, not the expected v0.1.0 failure.
 	wrongVersion := strings.ReplaceAll(intraErr, "v0.1.0", "v0.2.0")
-	if got := ClassifyTidy(nil, []byte(wrongVersion), 1); got != StatusError {
+	if got := ClassifyTidy(nil, []byte(wrongVersion), 1, known); got != StatusError {
 		t.Errorf("wrong intra-repo version = %q, want error", got)
 	}
 	// An unrelated resolution failure alongside the intra-repo one is still an error,
 	// including one that carries no "unknown revision" phrase.
 	mixed := intraErr + "go: example.com/other@latest: no matching versions for query \"latest\"\n"
-	if got := ClassifyTidy(nil, []byte(mixed), 1); got != StatusError {
+	if got := ClassifyTidy(nil, []byte(mixed), 1, known); got != StatusError {
 		t.Errorf("mixed intra-repo and unrelated failure = %q, want error", got)
 	}
 	// Nested intra-repo modules produce multi-segment revisions and are still benign.
 	nested := "go: github.com/gofabrik/fabrik/fabrik imports\n" +
 		"\tgithub.com/gofabrik/fabrik/cli/directive: reading github.com/gofabrik/fabrik/cli/directive/go.mod at revision cli/directive/v0.1.0: unknown revision cli/directive/v0.1.0\n"
-	if got := ClassifyTidy(nil, []byte(nested), 1); got != StatusUnchecked {
+	if got := ClassifyTidy(nil, []byte(nested), 1, known); got != StatusUnchecked {
 		t.Errorf("nested intra-repo tidy failure = %q, want unchecked", got)
 	}
-	// A leaf line whose module components disagree is not a benign match.
-	mismatch := "\tgithub.com/gofabrik/fabrik/forms: reading github.com/gofabrik/fabrik/validation/go.mod at revision validation/v0.1.0: unknown revision validation/v0.1.0\n"
-	if got := ClassifyTidy(nil, []byte(mismatch), 1); got != StatusError {
-		t.Errorf("mismatched module components = %q, want error", got)
+	mismatch := "\tgithub.com/gofabrik/fabrik/forms: reading github.com/gofabrik/fabrik/forms/go.mod at revision validation/v0.1.0: unknown revision validation/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(mismatch), 1, known); got != StatusError {
+		t.Errorf("mismatched reason components = %q, want error", got)
+	}
+
+	siblingRequirer := "\tgithub.com/gofabrik/fabrik/forms: reading github.com/gofabrik/fabrik/validation/go.mod at revision validation/v0.1.0: unknown revision validation/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(siblingRequirer), 1, known); got != StatusUnchecked {
+		t.Errorf("sibling requirer with matching reason = %q, want unchecked", got)
+	}
+
+	cacheDbtest := "go: downloading github.com/gofabrik/fabrik/cache v0.1.0\n" +
+		"go: github.com/gofabrik/fabrik/cache/dbtest: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(cacheDbtest), 1, known); got != StatusUnchecked {
+		t.Errorf("cache/dbtest sibling = %q, want unchecked", got)
+	}
+
+	cliDirective := "go: downloading github.com/gofabrik/fabrik/cli v0.1.0\n" +
+		"go: github.com/gofabrik/fabrik/cli/directive: reading github.com/gofabrik/fabrik/cli/go.mod at revision cli/v0.1.0: unknown revision cli/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(cliDirective), 1, known); got != StatusUnchecked {
+		t.Errorf("cli/directive sibling = %q, want unchecked", got)
+	}
+
+	ratelimitDbtest := "go: downloading github.com/gofabrik/fabrik/ratelimit v0.1.0\n" +
+		"go: github.com/gofabrik/fabrik/ratelimit/dbtest: reading github.com/gofabrik/fabrik/ratelimit/go.mod at revision ratelimit/v0.1.0: unknown revision ratelimit/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(ratelimitDbtest), 1, known); got != StatusUnchecked {
+		t.Errorf("ratelimit/dbtest sibling = %q, want unchecked", got)
+	}
+
+	// Import and tested-by chains may end in intra-repo resolution errors.
+	examplesDemo := "go: downloading github.com/gofabrik/fabrik/cache v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/assetmapper v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/flash v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/forms v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/jobs v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/query v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/ratelimit v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/router v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/session v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/storage v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/templates v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/validation v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/web v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/cli v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/config v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/httpserver v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/migrations v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/mail v0.1.0\n" +
+		"go: downloading github.com/mattn/go-isatty v0.0.20\n" +
+		"go: downloading github.com/ncruces/go-strftime v1.0.0\n" +
+		"go: downloading golang.org/x/tools v0.47.0\n" +
+		"go: demo imports\n" +
+		"\tgithub.com/gofabrik/fabrik/cli: reading github.com/gofabrik/fabrik/cli/go.mod at revision cli/v0.1.0: unknown revision cli/v0.1.0\n" +
+		"go: demo imports\n" +
+		"\tgithub.com/gofabrik/fabrik/httpserver: reading github.com/gofabrik/fabrik/httpserver/go.mod at revision httpserver/v0.1.0: unknown revision httpserver/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tgithub.com/gofabrik/fabrik/cache: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tgithub.com/gofabrik/fabrik/mail: reading github.com/gofabrik/fabrik/mail/go.mod at revision mail/v0.1.0: unknown revision mail/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tgithub.com/gofabrik/fabrik/mail/templates: reading github.com/gofabrik/fabrik/mail/go.mod at revision mail/v0.1.0: unknown revision mail/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tgithub.com/gofabrik/fabrik/ratelimit: reading github.com/gofabrik/fabrik/ratelimit/go.mod at revision ratelimit/v0.1.0: unknown revision ratelimit/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tgithub.com/gofabrik/fabrik/storage: reading github.com/gofabrik/fabrik/storage/go.mod at revision storage/v0.1.0: unknown revision storage/v0.1.0\n" +
+		"go: demo/web imports\n" +
+		"\tgithub.com/gofabrik/fabrik/forms: reading github.com/gofabrik/fabrik/forms/go.mod at revision forms/v0.1.0: unknown revision forms/v0.1.0\n" +
+		"go: demo/web imports\n" +
+		"\tgithub.com/gofabrik/fabrik/validation: reading github.com/gofabrik/fabrik/validation/go.mod at revision validation/v0.1.0: unknown revision validation/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tmodernc.org/sqlite tested by\n" +
+		"\tmodernc.org/sqlite.test imports\n" +
+		"\tgithub.com/google/pprof/profile: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tmodernc.org/sqlite tested by\n" +
+		"\tmodernc.org/sqlite.test imports\n" +
+		"\tmodernc.org/fileutil/ccgo: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo imports\n" +
+		"\tgithub.com/gofabrik/fabrik/config imports\n" +
+		"\tgopkg.in/yaml.v3 tested by\n" +
+		"\tgopkg.in/yaml.v3.test imports\n" +
+		"\tgopkg.in/check.v1: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tmodernc.org/sqlite imports\n" +
+		"\tmodernc.org/libc tested by\n" +
+		"\tmodernc.org/libc.test imports\n" +
+		"\tmodernc.org/cc/v4: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tmodernc.org/sqlite imports\n" +
+		"\tmodernc.org/libc tested by\n" +
+		"\tmodernc.org/libc.test imports\n" +
+		"\tmodernc.org/ccgo/v4/lib: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tmodernc.org/sqlite imports\n" +
+		"\tmodernc.org/libc tested by\n" +
+		"\tmodernc.org/libc.test imports\n" +
+		"\tmodernc.org/goabi0: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tmodernc.org/sqlite imports\n" +
+		"\tmodernc.org/libc tested by\n" +
+		"\tmodernc.org/libc.test imports\n" +
+		"\tgolang.org/x/tools/go/packages imports\n" +
+		"\tgolang.org/x/sync/errgroup: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n" +
+		"go: demo/shared imports\n" +
+		"\tmodernc.org/sqlite imports\n" +
+		"\tmodernc.org/libc tested by\n" +
+		"\tmodernc.org/libc.test imports\n" +
+		"\tgolang.org/x/tools/go/packages imports\n" +
+		"\tgolang.org/x/tools/internal/gocommand imports\n" +
+		"\tgolang.org/x/mod/semver: github.com/gofabrik/fabrik/cache@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(examplesDemo), 1, known); got != StatusUnchecked {
+		t.Errorf("examples/demo transitive chains = %q, want unchecked", got)
+	}
+
+	fabrikStderr := "go: downloading github.com/gofabrik/fabrik/diag v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/config/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/assetmapper/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/gen v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/cli/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/assetmapper v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/jobs/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/migrations/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/migrations v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/router/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/templates/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/web/directive v0.1.0\n" +
+		"go: downloading github.com/gofabrik/fabrik/templates v0.1.0\n" +
+		"go: github.com/gofabrik/fabrik/fabrik/internal/engine imports\n" +
+		"\tgithub.com/gofabrik/fabrik/cli/directive: reading github.com/gofabrik/fabrik/cli/directive/go.mod at revision cli/directive/v0.1.0: unknown revision cli/directive/v0.1.0\n" +
+		"go: github.com/gofabrik/fabrik/fabrik/internal/genconfig imports\n" +
+		"\tgopkg.in/yaml.v3 tested by\n" +
+		"\tgopkg.in/yaml.v3.test imports\n" +
+		"\tgopkg.in/check.v1: github.com/gofabrik/fabrik/cli/directive@v0.1.0: reading github.com/gofabrik/fabrik/cli/directive/go.mod at revision cli/directive/v0.1.0: unknown revision cli/directive/v0.1.0\n" +
+		"go: github.com/gofabrik/fabrik/fabrik/internal/load imports\n" +
+		"\tgolang.org/x/tools/go/packages tested by\n" +
+		"\tgolang.org/x/tools/go/packages.test imports\n" +
+		"\tgithub.com/google/go-cmp/cmp: github.com/gofabrik/fabrik/cli/directive@v0.1.0: reading github.com/gofabrik/fabrik/cli/directive/go.mod at revision cli/directive/v0.1.0: unknown revision cli/directive/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(fabrikStderr), 1, known); got != StatusUnchecked {
+		t.Errorf("fabrik module transitive = %q, want unchecked", got)
+	}
+
+	mixedForeign := cacheDbtest +
+		"go: example.com/other@latest: no matching versions for query \"latest\"\n"
+	if got := ClassifyTidy(nil, []byte(mixedForeign), 1, known); got != StatusError {
+		t.Errorf("mixed benign + foreign failure = %q, want error", got)
+	}
+
+	// Progress lines alone do not make a failed tidy benign.
+	progressOnly := "go: downloading github.com/gofabrik/fabrik/cache v0.1.0\n" +
+		"go: finding github.com/gofabrik/fabrik/cache v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(progressOnly), 1, known); got != StatusError {
+		t.Errorf("progress-only with exit 1 and no terminal = %q, want error", got)
+	}
+
+	terminal := "go: github.com/gofabrik/fabrik/cache/dbtest: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n"
+	// Progress lines may accompany a benign terminal.
+	for _, progress := range []string{
+		"go: downloading github.com/gofabrik/fabrik/cache v0.1.0\n",
+		"go: finding github.com/gofabrik/fabrik/cache v0.1.0\n",
+	} {
+		if got := ClassifyTidy(nil, []byte(progress+terminal), 1, known); got != StatusUnchecked {
+			t.Errorf("progress form %q beside a benign terminal = %q, want unchecked", strings.Fields(progress)[1], got)
+		}
+	}
+
+	// Resolution text embedded in an unrelated error is not benign.
+	forged := "panic: unexpected state: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n"
+	// Unknown workspace modules are not benign.
+	stale := "go: app: reading github.com/gofabrik/fabrik/ghostmod/go.mod at revision ghostmod/v0.1.0: unknown revision ghostmod/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(stale), 1, known); got != StatusError {
+		t.Errorf("unknown-module reason = %q, want error", got)
+	}
+
+	if got := ClassifyTidy(nil, []byte(forged+terminal), 1, known); got != StatusError {
+		t.Errorf("forged prefix before a valid tail = %q, want error", got)
+	}
+	hopMismatch := "go: pkg: github.com/gofabrik/fabrik/mail@v0.1.0: reading github.com/gofabrik/fabrik/cache/go.mod at revision cache/v0.1.0: unknown revision cache/v0.1.0\n"
+	if got := ClassifyTidy(nil, []byte(hopMismatch), 1, known); got != StatusError {
+		t.Errorf("module hop disagreeing with the reason = %q, want error", got)
 	}
 }
 
@@ -244,9 +434,9 @@ func TestTestOutput(t *testing.T) {
 
 func TestSlug(t *testing.T) {
 	for in, want := range map[string]string{
-		"./diag":                  "diag",
-		"./assetmapper/directive": "assetmapper-directive",
-		"./internal/tools":        "internal-tools",
+		"./diag":             "diag",
+		"./assets/directive": "assets-directive",
+		"./internal/tools":   "internal-tools",
 	} {
 		if got := Slug(in); got != want {
 			t.Errorf("Slug(%q) = %q, want %q", in, got, want)

@@ -133,15 +133,15 @@ func writeExclusive(dir string, data []byte) (string, error) {
 	}
 	name := filepath.Base(f.Name())
 	if err := f.Chmod(0o644); err != nil { // #nosec G302 -- generated source and its manifest are intentionally readable
-		f.Close()
+		_ = f.Close()
 		return "", err
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
+		_ = f.Close()
 		return "", err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
+		_ = f.Close()
 		return "", err
 	}
 	if err := f.Close(); err != nil {
@@ -155,7 +155,7 @@ func syncDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	defer d.Close() //nolint:errcheck // read-only directory handle; Sync is the meaningful operation
 	if err := d.Sync(); err != nil && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EINVAL) {
 		return err
 	}

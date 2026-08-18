@@ -1,17 +1,17 @@
-Switch mode cannot bind *assetmapper.Compiled because source mode only
-satisfies assetmapper.Server.
+Switch mode cannot bind *assets.Compiled because source mode only
+satisfies assets.Server.
 -- go.mod --
 module app
 
 go 1.27
 
 require (
-	github.com/gofabrik/fabrik/assetmapper v0.0.0
+	github.com/gofabrik/fabrik/assets v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
 )
 
 replace (
-	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+	github.com/gofabrik/fabrik/assets => ASSETSDIR
 	github.com/gofabrik/fabrik/config => CONFIGDIR
 )
 -- main.go --
@@ -26,7 +26,7 @@ package web
 import (
 	"embed"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 )
 
 //fabrik:assets
@@ -34,7 +34,7 @@ import (
 var Assets embed.FS
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.Options
+type AssetsConfig = assets.Options
 -- web/assets/app.css --
 body {}
 -- web/web.go --
@@ -43,15 +43,15 @@ package web
 import (
 	"net/http"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 )
 
 type Handlers struct {
-	Assets *assetmapper.Compiled
+	Assets *assets.Compiled
 }
 
 //fabrik:http GET /{$}
 func (h *Handlers) Home(w http.ResponseWriter, r *http.Request) {}
 -- want/diags --
-error: web/web.go:10:2: no provider for *assetmapper.Compiled (field Assets of web.Handlers)
-  help: with a source/compiled asset switch only assetmapper.Server is injectable; take assetmapper.Server
+error: web/web.go:10:2: no provider for *assets.Compiled (field Assets of web.Handlers)
+  help: with a source/compiled asset switch only assets.Server is injectable; take assets.Server

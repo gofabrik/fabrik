@@ -157,10 +157,8 @@ func (s *testServer) serve(t *testing.T) {
 				if !writeResponse(conn, "235 ok\r\n") {
 					return
 				}
-			} else {
-				if !writeResponse(conn, "535 bad credentials\r\n") {
-					return
-				}
+			} else if !writeResponse(conn, "535 bad credentials\r\n") {
+				return
 			}
 		case strings.HasPrefix(cmd, "MAIL"), strings.HasPrefix(cmd, "RCPT"):
 			if !writeResponse(conn, "250 ok\r\n") {

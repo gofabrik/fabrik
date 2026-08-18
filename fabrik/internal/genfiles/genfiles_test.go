@@ -9,7 +9,7 @@ import (
 
 func read(t *testing.T, path string) string {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- test reads its own temp file
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
@@ -51,7 +51,7 @@ func TestWriteSetPrunesOwnedFilesOnly(t *testing.T) {
 	}
 	// Pruning preserves a manually changed fragment.
 	drifted := filepath.Join(dir, "fragments_builddb.gen.go")
-	if err := os.WriteFile(drifted, []byte("package main // edited\n"), 0o644); err != nil {
+	if err := os.WriteFile(drifted, []byte("package main // edited\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	second := map[string][]byte{"main.gen.go": []byte("package main\n")}
@@ -128,7 +128,7 @@ func TestCheckReportsMissingStaleAndOrphans(t *testing.T) {
 	if problems, _, err := Check(dir, files, true); err != nil || len(problems) != 0 {
 		t.Fatalf("clean check = %v, %v", problems, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "main.gen.go"), []byte("package main // stale\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main.gen.go"), []byte("package main // stale\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(dir, "fragments_builddb.gen.go")); err != nil {
@@ -193,7 +193,7 @@ func TestRollForwardReportsDriftedPruneCandidate(t *testing.T) {
 	if err := stagePrune(dir, map[string][]byte{"main.gen.go": both["main.gen.go"]}, prune, true); err != nil {
 		t.Fatalf("stagePrune: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "fragments_builddb.gen.go"), []byte("package main // edited\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "fragments_builddb.gen.go"), []byte("package main // edited\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	kept, err := RollForward(dir)
@@ -263,7 +263,7 @@ func TestCheckReportsDriftedOrphansAsKept(t *testing.T) {
 	if _, _, _, err := WriteSet(dir, files, true); err != nil {
 		t.Fatalf("WriteSet: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "fragments_builddb.gen.go"), []byte("package main // edited\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "fragments_builddb.gen.go"), []byte("package main // edited\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	smaller := map[string][]byte{"main.gen.go": files["main.gen.go"]}
@@ -291,7 +291,7 @@ func TestRollForwardAbandonsUnrecoverableJournal(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("readJournal: %v, %v", ok, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, j.Temps["main.gen.go"]), []byte("tampered"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, j.Temps["main.gen.go"]), []byte("tampered"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	if _, err := RollForward(dir); err != nil {

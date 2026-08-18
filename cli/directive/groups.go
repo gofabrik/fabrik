@@ -168,6 +168,7 @@ func (gr *Group) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	ds = append(ds, ids...)
 	use, mds := gr.fam.resolveMiddleware(g, nd.pos, nd.middleware)
 	ds = append(ds, mds...)
+	ds = append(ds, gr.fam.validateRequires(nd.pos, nd.middleware, gr.fam.earlierNames(nd.path))...)
 	if ds.HasFatal() {
 		return ds
 	}
@@ -267,6 +268,7 @@ func (r *Root) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	ds = append(ds, ids...)
 	use, mds := r.fam.resolveMiddleware(g, nd.pos, nd.middleware)
 	ds = append(ds, mds...)
+	ds = append(ds, r.fam.validateRequires(nd.pos, nd.middleware, nil)...)
 	if ds.HasFatal() {
 		return ds
 	}

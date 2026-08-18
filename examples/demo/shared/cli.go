@@ -65,7 +65,7 @@ func Serve(ctx cli.Context, server *httpserver.Server) error {
 // Database maintenance commands.
 //
 //fabrik:cli:group name=database
-var _database struct{}
+var _database struct{} //nolint:unused // group directive sentinel; the generator validates the carrier
 
 // Apply pending database migrations.
 //

@@ -138,14 +138,12 @@ func ClassifyTest(data []byte, testExit int) Status {
 	return StatusClean
 }
 
-// intraRepoLeaf matches the leaf error line go mod tidy prints when it cannot
-// resolve an intra-repo module at its unpublished v0.1.0 revision. The three
-// captured module names must agree (RE2 has no backreferences), which the caller
-// checks, so a malformed line with differing modules is not treated as benign.
-var intraRepoLeaf = regexp.MustCompile(`^github\.com/gofabrik/fabrik/([^ :]+): reading github\.com/gofabrik/fabrik/([^ ]+)/go\.mod at revision ([^ ]+)/v0\.1\.0: unknown revision [^ ]+/v0\.1\.0$`)
+// intraRepoTerminal captures module paths from a complete unpublished v0.1.0
+// resolution error; the caller verifies that they agree.
+var intraRepoTerminal = regexp.MustCompile(`^[^ :]+: (?:github\.com/gofabrik/fabrik/([^ @]+)@v0\.1\.0: )?reading github\.com/gofabrik/fabrik/([^ ]+)/go\.mod at revision ([^ ]+)/v0\.1\.0: unknown revision ([^ ]+)/v0\.1\.0$`)
 
-// ClassifyTidy classifies `go mod tidy -diff` output as clean, drift, unchecked, or an error.
-func ClassifyTidy(diff, stderr []byte, tidyExit int) Status {
+// ClassifyTidy classifies `go mod tidy -diff` output, using known workspace modules to reject stale paths.
+func ClassifyTidy(diff, stderr []byte, tidyExit int, known map[string]bool) Status {
 	if tidyExit == 0 {
 		return StatusClean
 	}
@@ -159,7 +157,7 @@ func ClassifyTidy(diff, stderr []byte, tidyExit int) Status {
 	// unchecked, not a false error, but only when every resolution error is exactly
 	// that expected v0.1.0 failure, so a wrong-version pin or any unrelated failure
 	// still surfaces as an error.
-	if tidyErrorsAllIntraRepo(stderr) {
+	if tidyErrorsAllIntraRepo(stderr, known) {
 		return StatusUnchecked
 	}
 	return StatusError
@@ -167,18 +165,20 @@ func ClassifyTidy(diff, stderr []byte, tidyExit int) Status {
 
 // tidyErrorsAllIntraRepo reports whether go mod tidy's failure is exactly one or
 // more intra-repo v0.1.0 resolution errors and nothing else.
-func tidyErrorsAllIntraRepo(stderr []byte) bool {
+func tidyErrorsAllIntraRepo(stderr []byte, known map[string]bool) bool {
 	found := false
 	for raw := range bytes.SplitSeq(stderr, []byte("\n")) {
 		line := strings.TrimSpace(string(raw))
 		if line == "" ||
 			strings.HasPrefix(line, "go: downloading ") ||
 			strings.HasPrefix(line, "go: finding ") ||
-			strings.HasSuffix(line, " imports") {
+			strings.HasSuffix(line, " imports") ||
+			strings.HasSuffix(line, " tested by") {
 			continue
 		}
-		m := intraRepoLeaf.FindStringSubmatch(strings.TrimPrefix(line, "go: "))
-		if m == nil || m[1] != m[2] || m[2] != m[3] {
+		m := intraRepoTerminal.FindStringSubmatch(strings.TrimPrefix(line, "go: "))
+		if m == nil || m[2] != m[3] || m[3] != m[4] || (m[1] != "" && m[1] != m[2]) ||
+			!known["github.com/gofabrik/fabrik/"+m[2]] {
 			return false
 		}
 		found = true

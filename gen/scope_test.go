@@ -332,8 +332,10 @@ func TestRawCheckRendersContextTail(t *testing.T) {
 }
 
 func TestNodesHaveCheckRecursesSelectChildren(t *testing.T) {
-	sel := &Select{Var: "v", Iface: "I", KeyExpr: "k", FmtPkg: "fmt",
-		Cases: []Case{{Value: "x", Body: []Node{&Raw{Lines: []string{"err = f()"}, Check: true}}}}}
+	sel := &Select{
+		Var: "v", Iface: "I", KeyExpr: "k", FmtPkg: "fmt",
+		Cases: []Case{{Value: "x", Body: []Node{&Raw{Lines: []string{"err = f()"}, Check: true}}}},
+	}
 	if !nodesHaveCheck([]Node{sel}) {
 		t.Fatal("Raw.Check inside a Select body must trigger err declaration")
 	}
@@ -803,22 +805,28 @@ func TestScopeUnwindFollowsEmissionOrder(t *testing.T) {
 	// Layout emits Y before X despite insertion order.
 	g.BindLazy(xT, "", func() (string, diag.Diagnostics) {
 		v := g.Var("x")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 30}}},
-			Var: v, Fn: g.Import("example.com/ind") + ".NewX", Err: ErrReturn, Cleanup: g.Var(v + "Close")})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 30}}},
+			Var:  v, Fn: g.Import("example.com/ind") + ".NewX", Err: ErrReturn, Cleanup: g.Var(v + "Close"),
+		})
 		return v, nil
 	})
 	g.BindLazy(yT, "", func() (string, diag.Diagnostics) {
 		v := g.Var("y")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 10}}},
-			Var: v, Fn: g.Import("example.com/ind") + ".NewY", Err: ErrReturn, Cleanup: g.Var(v + "Close")})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 10}}},
+			Var:  v, Fn: g.Import("example.com/ind") + ".NewY", Err: ErrReturn, Cleanup: g.Var(v + "Close"),
+		})
 		return v, nil
 	})
 	g.BindLazy(cT, "", func() (string, diag.Diagnostics) {
 		xv, _, _ := g.Instance(xT, "")
 		yv, _, _ := g.Instance(yT, "")
 		v := g.Var("c")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 40}}},
-			Var: v, Fn: g.Import("example.com/ind") + ".NewC", Args: []string{xv, yv}, Err: ErrReturn})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "ind.go", Line: 40}}},
+			Var:  v, Fn: g.Import("example.com/ind") + ".NewC", Args: []string{xv, yv}, Err: ErrReturn,
+		})
 		return v, nil
 	})
 	c1 := g.AddScope("buildC", token.Position{}, ScopeRoot{Type: cT})
@@ -877,8 +885,10 @@ func TestCleanupWithoutErrorSitesOmitsUnwind(t *testing.T) {
 func TestRenderRejectsNestedCleanup(t *testing.T) {
 	g := New()
 	g.SetDirective("provider:select")
-	g.Node(&Select{Var: "v", Iface: "web.I", KeyExpr: "k", FmtPkg: "fmt",
-		Cases: []Case{{Value: "x", Result: Call{Var: "vx", Fn: "mk", Err: ErrReturn, Cleanup: "vxClose"}}}})
+	g.Node(&Select{
+		Var: "v", Iface: "web.I", KeyExpr: "k", FmtPkg: "fmt",
+		Cases: []Case{{Value: "x", Result: Call{Var: "vx", Fn: "mk", Err: ErrReturn, Cleanup: "vxClose"}}},
+	})
 	if _, err := g.Render(); err == nil || !strings.Contains(err.Error(), "cleanup") {
 		t.Fatalf("Render error = %v, want nested-cleanup rejection", err)
 	}
