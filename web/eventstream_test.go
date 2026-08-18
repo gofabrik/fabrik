@@ -59,7 +59,7 @@ func (s *streamWriter) Write(b []byte) (int, error) {
 func (s *streamWriter) body() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.ResponseRecorder.Body.String()
+	return s.Body.String()
 }
 
 func (s *streamWriter) counts() (deadlines, flushes int) {
@@ -299,10 +299,7 @@ func TestEventStreamHeartbeat(t *testing.T) {
 	}()
 
 	deadline := time.After(2 * time.Second)
-	for {
-		if strings.Count(w.body(), ":\n\n") >= 2 {
-			break
-		}
+	for strings.Count(w.body(), ":\n\n") < 2 {
 		select {
 		case <-deadline:
 			t.Fatalf("want at least two heartbeats, got %q", w.body())

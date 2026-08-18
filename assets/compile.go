@@ -187,7 +187,7 @@ func writeSyncedFile(path string, content []byte, perm os.FileMode) error {
 
 // streamHashWrite writes a source file to dst while hashing it.
 func streamHashWrite(srcFS fs.FS, srcPath, dst string) (hash string, err error) {
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) // #nosec G304 -- validated staging path
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) // #nosec G302,G304 -- compiled assets are intentionally readable; validated staging path
 	if err != nil {
 		return "", err
 	}

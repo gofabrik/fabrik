@@ -15,7 +15,7 @@ var _ assets.Server = (*assets.Compiled)(nil)
 
 func writeAsset(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 }
@@ -83,7 +83,7 @@ func TestNewSource_RejectsUnreadableRoot(t *testing.T) {
 	if err := os.Mkdir(locked, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) }) // #nosec G302 -- restoring test directory permissions
 	if _, err := os.ReadDir(locked); err == nil {
 		t.Skip("directory is readable despite 0o000 (running as root)")
 	}

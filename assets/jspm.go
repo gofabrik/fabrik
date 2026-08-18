@@ -286,7 +286,7 @@ func (j *JSPMResolver) secureClient() (*http.Client, error) {
 			transport.Proxy = nil
 			transport.DialContext = publicDialContext
 			transport.DialTLSContext = nil
-			transport.DialTLS = nil
+			transport.DialTLS = nil //nolint:staticcheck // a caller-set legacy hook would bypass publicDialContext
 			client.Transport = transport
 		}
 		j.securedClient = &client

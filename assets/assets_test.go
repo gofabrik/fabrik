@@ -389,7 +389,7 @@ func TestAsset_ProdModeReadsManifest(t *testing.T) {
 		"app.js": "app-deadbeef.js",
 	}}
 	m := mustMapper(t, assets.Config{
-		Roots:    []assets.Root{{FS: fstest.MapFS{}}}, // empty in prod, manifest is authoritative
+		Roots:    []assets.Root{{FS: fstest.MapFS{}}}, // manifest is authoritative in production
 		Manifest: manifest,
 	})
 	url, err := m.Asset("app.js")

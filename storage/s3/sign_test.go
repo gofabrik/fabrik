@@ -102,7 +102,7 @@ func TestSignS3EscapedPathVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	creds := credentials{
+	creds := credentials{ // #nosec G101 -- AWS documentation example credentials, not real
 		accessKey: "AKIAIOSFODNN7EXAMPLE",
 		secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 		region:    "us-east-1",

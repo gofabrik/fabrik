@@ -72,11 +72,11 @@ func (f File) Open() (io.ReadSeekCloser, error) {
 // ReadAll retains ownership of the descriptor. The caller never holds it, so
 // it cannot keep a spooled temporary file open across whatever it does with
 // the bytes afterwards.
-func (f File) ReadAll(max int64) ([]byte, error) {
+func (f File) ReadAll(maxSize int64) ([]byte, error) {
 	if !f.Present() {
 		return nil, ErrNoFile
 	}
-	if f.Size() > max {
+	if f.Size() > maxSize {
 		return nil, ErrFileTooLarge
 	}
 
@@ -88,7 +88,7 @@ func (f File) ReadAll(max int64) ([]byte, error) {
 
 	// One byte past the limit is enough to know the file exceeds it; at
 	// MaxInt64 nothing can exceed it, and the increment must not overflow.
-	limit := max
+	limit := maxSize
 	if limit < math.MaxInt64 {
 		limit++
 	}
@@ -96,7 +96,7 @@ func (f File) ReadAll(max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > max {
+	if int64(len(data)) > maxSize {
 		return nil, ErrFileTooLarge
 	}
 	return data, nil

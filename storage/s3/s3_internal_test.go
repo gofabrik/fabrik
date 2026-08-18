@@ -585,7 +585,8 @@ func TestOpenErrorDrainClassification(t *testing.T) {
 	newStalled := func() *Store {
 		return testS3Opts(t, Options{OperationTimeout: testBudget}, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			io.WriteString(w, "<Error><Code>Internal")
+			// #nosec G104 -- test handler; write errors are expected
+			io.WriteString(w, "<Error><Code>Internal") //nolint:errcheck
 			w.(http.Flusher).Flush()
 			stall(r)
 		})
@@ -662,7 +663,8 @@ func TestDrainReadsExactlyTheCap(t *testing.T) {
 			var read atomic.Int64
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
-				io.WriteString(w, tc.body)
+				// #nosec G104 -- test handler
+				io.WriteString(w, tc.body) //nolint:errcheck
 			}))
 			t.Cleanup(srv.Close)
 			client := srv.Client()
@@ -709,7 +711,8 @@ func listPageXML(entries []string, truncated bool, next string) string {
 func listServer(t *testing.T, opts Options, page func(token string) string) *Store {
 	t.Helper()
 	return testS3Opts(t, opts, func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, page(r.URL.Query().Get("continuation-token")))
+		// #nosec G104 -- test handler; client may disconnect mid-page
+		io.WriteString(w, page(r.URL.Query().Get("continuation-token"))) //nolint:errcheck
 	})
 }
 

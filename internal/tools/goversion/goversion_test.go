@@ -664,7 +664,8 @@ func TestCheckTemplateUnreadableIsAnError(t *testing.T) {
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(path, 0o600)
+	// #nosec G104 -- restore permissions after test
+	t.Cleanup(func() { os.Chmod(path, 0o600) }) //nolint:errcheck
 	if _, err := Check(cfg); err == nil {
 		t.Fatal("want an error for a genuinely unreadable template, not a finding")
 	}
@@ -680,7 +681,8 @@ func TestCheckFixtureUnreadableIsAnError(t *testing.T) {
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(path, 0o600)
+	// #nosec G104 -- restore permissions after test
+	t.Cleanup(func() { os.Chmod(path, 0o600) }) //nolint:errcheck
 	if _, err := Check(cfg); err == nil {
 		t.Fatal("want an error for a genuinely unreadable fixture, not a finding")
 	}

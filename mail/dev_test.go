@@ -85,7 +85,8 @@ func TestDev_NilOutputWritesToStdout(t *testing.T) {
 	if err := (&mail.Dev{Logger: discardLogger()}).Send(context.Background(), &m); err != nil {
 		t.Fatal(err)
 	}
-	w.Close()
+	// #nosec G104 -- test pipe cleanup; the read side captures the output
+	w.Close() //nolint:errcheck
 	os.Stdout = prev
 	out, err := io.ReadAll(r)
 	if err != nil {

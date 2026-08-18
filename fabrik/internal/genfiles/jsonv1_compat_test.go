@@ -22,7 +22,7 @@ func TestManifestAndJournalKeepV1Bytes(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("readJournal: %v %v", ok, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, journalName))
+	raw, err := os.ReadFile(filepath.Join(dir, journalName)) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestManifestAndJournalKeepV1Bytes(t *testing.T) {
 	if _, _, err := commit(dir, j); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	rawM, err := os.ReadFile(filepath.Join(dir, ManifestName))
+	rawM, err := os.ReadFile(filepath.Join(dir, ManifestName)) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}

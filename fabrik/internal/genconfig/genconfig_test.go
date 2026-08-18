@@ -223,6 +223,7 @@ func TestResolveEmbeddedRequiresDir(t *testing.T) {
 		t.Fatalf("diags = %v, want dir requirement", diags)
 	}
 }
+
 func TestResolveSplitFragmentResolves(t *testing.T) {
 	dir := writeModule(t, "generate:\n  split: fragment\n")
 	opts, diags := Resolve(dir, Overrides{})

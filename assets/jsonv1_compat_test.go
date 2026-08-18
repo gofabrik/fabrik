@@ -19,7 +19,7 @@ func TestManifestSaveKeepsV1Bytes(t *testing.T) {
 	if err := m.Save(dir); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json")) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestVendorLockSaveKeepsV1Bytes(t *testing.T) {
 	if err := l.Save(path); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- test reads its own temp file
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestVendorLockDecodeContract(t *testing.T) {
 	}
 	write := func(data []byte) string {
 		path := filepath.Join(t.TempDir(), "vendor.lock.json")
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 			t.Fatal(err)
 		}
 		return path
@@ -208,11 +208,11 @@ func TestVendorTransactionDecodeContract(t *testing.T) {
 		t.Helper()
 		dir := t.TempDir()
 		v := &Vendor{VendorDir: filepath.Join(dir, "vendor"), Importmap: NewImportmap()}
-		if err := os.MkdirAll(v.VendorDir, 0o755); err != nil {
+		if err := os.MkdirAll(v.VendorDir, 0o755); err != nil { // #nosec G301 -- test fixture directory
 			t.Fatal(err)
 		}
 		// The empty-content hash lets recovery verify an empty vendored file.
-		if err := os.WriteFile(filepath.Join(v.VendorDir, "alpha.js"), nil, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(v.VendorDir, "alpha.js"), nil, 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 			t.Fatal(err)
 		}
 		tx := vendorTransaction{Version: 1, Lock: validCompatLock(), Entries: map[string]ImportmapEntry{"alpha": {Version: "1.0.0"}}}
@@ -224,7 +224,7 @@ func TestVendorTransactionDecodeContract(t *testing.T) {
 	}
 	write := func(t *testing.T, v *Vendor, data []byte) {
 		t.Helper()
-		if err := os.WriteFile(v.transactionPath(), data, 0o644); err != nil {
+		if err := os.WriteFile(v.transactionPath(), data, 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 			t.Fatal(err)
 		}
 	}

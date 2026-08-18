@@ -69,7 +69,7 @@ func (h *devHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	_, _ = w.Write(c.content)
+	_, _ = w.Write(c.content) // #nosec G705 -- app-authored compiled bytes with library-set content types
 }
 
 // stripHashSegment maps a hashed URL path back to its logical asset path.

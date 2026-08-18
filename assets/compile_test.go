@@ -365,7 +365,7 @@ func TestCompile_StreamingPathHashesLargeNonJSCSSFile(t *testing.T) {
 
 func TestCompile_RemovesStaleTempFilesFromPriorCrashedRun(t *testing.T) {
 	// Simulate a previous crashed compile by pre-seeding a stale
-	// .assets-tmp-*.tmp in publicDir. Next Compile should GC it
+	// .assets-tmp-*.tmp in publicDir. Compile removes it
 	// even though it never interferes with the current run's correctness.
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -412,7 +412,7 @@ func TestCompile_PublishFailureKeepsPreviousManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldManifestBytes, err := os.ReadFile(filepath.Join(dir, assets.ManifestFilename))
+	oldManifestBytes, err := os.ReadFile(filepath.Join(dir, assets.ManifestFilename)) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestCompile_PublishFailureKeepsPreviousManifest(t *testing.T) {
 	if _, err := assets.Compile([]assets.Root{{FS: newSource}}, dir); err == nil {
 		t.Fatal("Compile succeeded despite an invalid destination")
 	}
-	gotManifestBytes, err := os.ReadFile(filepath.Join(dir, assets.ManifestFilename))
+	gotManifestBytes, err := os.ReadFile(filepath.Join(dir, assets.ManifestFilename)) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func TestCompile_PublishFailureKeepsPreviousManifest(t *testing.T) {
 		t.Fatal("failed Compile replaced the previous manifest")
 	}
 	oldOutput := filepath.Join(dir, filepath.FromSlash(oldManifest.Entries["app.js"]))
-	if got, err := os.ReadFile(oldOutput); err != nil || string(got) != "old" {
+	if got, err := os.ReadFile(oldOutput); err != nil || string(got) != "old" { // #nosec G304 -- test reads its own temp directory
 		t.Fatalf("previous compiled asset = %q, %v", got, err)
 	}
 }

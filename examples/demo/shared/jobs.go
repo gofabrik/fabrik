@@ -19,7 +19,7 @@ type GreetingEmail struct {
 
 //fabrik:job
 func SendGreetingNotification(ctx context.Context, mailer Mailer, cfg *MailerConfig, emailTemplates *mailtemplates.Renderer, n GreetingNotification) error {
-	content, err := emailTemplates.Render("greeting", GreetingEmail{Name: n.Name})
+	content, err := emailTemplates.Render("greeting", GreetingEmail(n))
 	if err != nil {
 		return err
 	}

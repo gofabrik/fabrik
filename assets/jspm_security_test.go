@@ -3,6 +3,7 @@ package assets
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -187,4 +188,33 @@ func TestJSPMResolver_BoundsGenerateResponseAndPackageCount(t *testing.T) {
 			t.Fatalf("Resolve package count error = %v", err)
 		}
 	})
+}
+
+func TestJSPMResolver_ClearsCallerDialHooks(t *testing.T) {
+	transport := &http.Transport{
+		DialTLSContext: func(context.Context, string, string) (net.Conn, error) {
+			t.Fatal("caller DialTLSContext survived securing")
+			return nil, nil
+		},
+		DialTLS: func(string, string) (net.Conn, error) { //nolint:staticcheck // the legacy hook is exactly what must be cleared
+			t.Fatal("caller DialTLS survived securing")
+			return nil, nil
+		},
+	}
+	resolver := NewJSPMResolver(&http.Client{Transport: transport})
+
+	client, err := resolver.secureClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secured, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("secured transport is %T, want *http.Transport", client.Transport)
+	}
+	if secured.DialTLSContext != nil || secured.DialTLS != nil { //nolint:staticcheck // asserting the legacy hook is gone
+		t.Fatal("secured transport kept a caller TLS dial hook; private-network protection is bypassable")
+	}
+	if secured.DialContext == nil {
+		t.Fatal("secured transport lost the public dial guard")
+	}
 }

@@ -1,14 +1,13 @@
 package engine
 
 import (
+	"fmt"
 	"go/token"
 	"go/types"
-
-	"github.com/gofabrik/fabrik/diag"
-
-	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/gofabrik/fabrik/diag"
 
 	assetsdir "github.com/gofabrik/fabrik/assets/directive"
 	clidir "github.com/gofabrik/fabrik/cli/directive"

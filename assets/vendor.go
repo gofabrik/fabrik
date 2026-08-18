@@ -669,13 +669,15 @@ dispatch:
 			}
 			size := int64(len(fetched.Content))
 			mu.Lock()
-			if size > limits.MaxPackageBytes && firstErr == nil {
+			switch {
+			case firstErr != nil:
+			case size > limits.MaxPackageBytes:
 				firstErr = fmt.Errorf("assets.Vendor: fetch %s: package exceeds %d-byte limit", p.URL, limits.MaxPackageBytes)
 				cancel()
-			} else if size > limits.MaxResolutionBytes-totalSourceBytes && firstErr == nil {
+			case size > limits.MaxResolutionBytes-totalSourceBytes:
 				firstErr = fmt.Errorf("assets.Vendor: downloaded resolution exceeds %d-byte limit", limits.MaxResolutionBytes)
 				cancel()
-			} else if firstErr == nil {
+			default:
 				totalSourceBytes += size
 			}
 			fetchErr := firstErr
@@ -700,13 +702,15 @@ dispatch:
 				}
 			}
 			mu.Lock()
-			if publishedSize > limits.MaxPackageBytes && firstErr == nil {
+			switch {
+			case firstErr != nil:
+			case publishedSize > limits.MaxPackageBytes:
 				firstErr = fmt.Errorf("assets.Vendor: published package %s exceeds %d-byte limit", p.Specifier, limits.MaxPackageBytes)
 				cancel()
-			} else if publishedSize > limits.MaxResolutionBytes-totalPublishedBytes && firstErr == nil {
+			case publishedSize > limits.MaxResolutionBytes-totalPublishedBytes:
 				firstErr = fmt.Errorf("assets.Vendor: published resolution exceeds %d-byte limit", limits.MaxResolutionBytes)
 				cancel()
-			} else if firstErr == nil {
+			default:
 				totalPublishedBytes += publishedSize
 			}
 			publishErr := firstErr

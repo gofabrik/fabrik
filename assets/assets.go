@@ -101,7 +101,6 @@ type Mapper struct {
 	roots     []Root
 	urlPrefix string
 	manifest  *Manifest // nil = dev mode
-
 }
 
 type devAsset struct {

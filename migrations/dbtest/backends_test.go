@@ -80,6 +80,7 @@ func openSQLite(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// #nosec G104 -- test cleanup
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck
 	return db
 }
@@ -106,10 +107,13 @@ func openPGFactory(dsn string) func(*testing.T) *sql.DB {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
+			// #nosec G104 -- test cleanup
 			db.Close() //nolint:errcheck
 			// #nosec G202 -- generated test schema identifier, not user input
+			// #nosec G104 -- best-effort test teardown
 			_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE") //nolint:errcheck
-			admin.Close()                                           //nolint:errcheck
+			// #nosec G104 -- test cleanup
+			admin.Close() //nolint:errcheck
 		})
 		return db
 	}
@@ -138,10 +142,13 @@ func openMySQLFactory(dsn string) func(*testing.T) *sql.DB {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
+			// #nosec G104 -- test cleanup
 			db.Close() //nolint:errcheck
 			// #nosec G202 -- generated test database identifier, not user input
+			// #nosec G104 -- best-effort test teardown
 			_, _ = admin.Exec("DROP DATABASE " + name) //nolint:errcheck
-			admin.Close()                              //nolint:errcheck
+			// #nosec G104 -- test cleanup
+			admin.Close() //nolint:errcheck
 		})
 		return db
 	}

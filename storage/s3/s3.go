@@ -494,7 +494,7 @@ func (s *Store) listPage(body io.Reader) (entries []storage.Info, truncated bool
 				return entries, truncated, next, fmt.Errorf("empty list response")
 			}
 			if depth != 0 {
-				return entries, truncated, next, fmt.Errorf("response ended with %q unclosed", open[depth-1].Local)
+				return entries, truncated, next, fmt.Errorf("response ended with %q unclosed", open[depth-1].Local) // #nosec G602 -- depth != 0 guard above
 			}
 			return entries, truncated, next, nil
 		}
@@ -538,7 +538,7 @@ func (s *Store) listPage(body io.Reader) (entries []storage.Info, truncated bool
 				text.Write(t)
 			}
 		case xml.EndElement:
-			if depth == 0 || open[depth-1] != t.Name {
+			if depth == 0 || open[depth-1] != t.Name { // #nosec G602 -- short-circuit: depth==0 prevents the index
 				return entries, truncated, next, fmt.Errorf("unexpected closing element %q", t.Name.Local)
 			}
 			switch {

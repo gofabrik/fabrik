@@ -24,10 +24,6 @@ func mw(name string, global bool, file string, line int, opt ...func(*mwNode)) *
 	return nd
 }
 
-func ref(nd *mwNode, name string) mwRef {
-	return mwRef{name: name, pos: nd.pos}
-}
-
 func requires(names ...string) func(*mwNode) {
 	return func(nd *mwNode) {
 		for _, n := range names {

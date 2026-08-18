@@ -160,10 +160,14 @@ func TestRenderRejectsEmptyExpressionField(t *testing.T) {
 func TestRenderRejectsNestedSelectBadExpression(t *testing.T) {
 	g := New()
 	g.SetDirective("web")
-	inner := &Select{Var: "iv", Iface: "web.I", KeyExpr: "k", FmtPkg: "fmt",
-		Cases: []Case{{Value: "x", Result: Call{Var: "ix", Fn: "mk", Args: []string{""}}}}}
-	g.Node(&Select{Var: "ov", Iface: "web.O", KeyExpr: "k2", FmtPkg: "fmt",
-		Cases: []Case{{Value: "y", Body: []Node{inner}, Result: Call{Var: "oy", Fn: "wrap"}}}})
+	inner := &Select{
+		Var: "iv", Iface: "web.I", KeyExpr: "k", FmtPkg: "fmt",
+		Cases: []Case{{Value: "x", Result: Call{Var: "ix", Fn: "mk", Args: []string{""}}}},
+	}
+	g.Node(&Select{
+		Var: "ov", Iface: "web.O", KeyExpr: "k2", FmtPkg: "fmt",
+		Cases: []Case{{Value: "y", Body: []Node{inner}, Result: Call{Var: "oy", Fn: "wrap"}}},
+	})
 	if _, err := g.Render(); err == nil || !strings.Contains(err.Error(), "web") {
 		t.Fatalf("Render error = %v, want attributed error from nested Select child", err)
 	}

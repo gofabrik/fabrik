@@ -287,7 +287,7 @@ func TestVendor_PruneRejectsMalformedVendoredPathBeforeDeleting(t *testing.T) {
 			if _, err := vendor.Prune(); err == nil {
 				t.Fatal("Prune accepted malformed vendored path")
 			}
-			if got, err := os.ReadFile(keep); err != nil || string(got) != "keep" {
+			if got, err := os.ReadFile(keep); err != nil || string(got) != "keep" { // #nosec G304 -- test reads its own temp file
 				t.Fatalf("Prune touched keep.js: %q, %v", got, err)
 			}
 		})
@@ -1351,7 +1351,7 @@ func TestVendor_PruneCleansUpEmptyDirs(t *testing.T) {
 }
 
 func TestVendor_PruneValidatesConfig(t *testing.T) {
-	v := &assets.Vendor{} // nothing set
+	v := &assets.Vendor{}
 	if _, err := v.Prune(); err == nil {
 		t.Fatal("expected error for unconfigured Vendor")
 	}

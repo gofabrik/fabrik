@@ -699,7 +699,8 @@ func (e *Engine) retryOnce(ctx context.Context, jobID string, now time.Time) (bo
 	if err != nil {
 		if uniqueKey != "" {
 			// Classify outside an aborted or stale transaction snapshot.
-			tx.Rollback() //nolint:errcheck // the transaction is already dead; the duplicate lookup replaces it
+			// #nosec G104 -- the transaction is already dead; the duplicate lookup replaces it
+			tx.Rollback() //nolint:errcheck
 			var holder string
 			if e := e.db.QueryRowContext(ctx, liveOther, kind, handler, e.uniqueKeyArg(uniqueKey), jobID).Scan(&holder); e == nil {
 				return false, &jobs.DuplicateError{ExistingID: holder, Kind: kind, HandlerID: handler, UniqueKey: uniqueKey}
@@ -1000,5 +1001,7 @@ func placeholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
-var _ jobs.Store = (*Engine)(nil)
-var _ jobs.TxEnqueuer = (*Engine)(nil)
+var (
+	_ jobs.Store      = (*Engine)(nil)
+	_ jobs.TxEnqueuer = (*Engine)(nil)
+)

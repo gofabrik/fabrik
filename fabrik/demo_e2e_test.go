@@ -531,9 +531,9 @@ func developmentFlow(t *testing.T, src, bin, tmp string) {
 
 func fabrikRunFlow(t *testing.T, src, tmp string) {
 	t.Helper()
-	if v, ok := os.LookupEnv("FABRIK_ENV"); ok {
-		defer os.Setenv("FABRIK_ENV", v) // #nosec G104 -- test env restore
-		os.Unsetenv("FABRIK_ENV")        // #nosec G104 -- test env setup
+	if _, ok := os.LookupEnv("FABRIK_ENV"); ok {
+		t.Setenv("FABRIK_ENV", "")
+		os.Unsetenv("FABRIK_ENV") //nolint:errcheck // t.Setenv restores at cleanup; unset is the test precondition
 	}
 	port := freePort(t)
 	cmd, err := runCommand(filepath.Join(src, "web"), []string{"run"})

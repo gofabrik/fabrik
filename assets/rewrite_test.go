@@ -535,7 +535,7 @@ func TestCompile_SupportsImportCycle(t *testing.T) {
 		if got := manifest.Dependencies[logical]; len(got) != 1 || got[0] != dependency {
 			t.Errorf("persisted %s dependencies = %v, want [%s]", logical, got, dependency)
 		}
-		content, err := os.ReadFile(filepath.Join(dir, manifest.Entries[logical]))
+		content, err := os.ReadFile(filepath.Join(dir, manifest.Entries[logical])) // #nosec G304 -- test reads its own temp directory
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -624,7 +624,7 @@ func TestCompile_CycleDigestIncludesURLPrefix(t *testing.T) {
 			t.Errorf("%s digest did not include the rewritten URL prefix", logical)
 		}
 	}
-	content, err := os.ReadFile(filepath.Join(customDir, customManifest.Entries["a.js"]))
+	content, err := os.ReadFile(filepath.Join(customDir, customManifest.Entries["a.js"])) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +657,7 @@ func TestCompile_SupportsStylesheetCycle(t *testing.T) {
 		t.Fatalf("stylesheet cycle members do not share a digest: %v", manifest.Entries)
 	}
 	for logical, dependency := range map[string]string{"a.css": "b.css", "b.css": "a.css"} {
-		content, err := os.ReadFile(filepath.Join(dir, manifest.Entries[logical]))
+		content, err := os.ReadFile(filepath.Join(dir, manifest.Entries[logical])) // #nosec G304 -- test reads its own temp directory
 		if err != nil {
 			t.Fatal(err)
 		}
