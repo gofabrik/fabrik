@@ -122,6 +122,7 @@ together by the CLI:
 
 - [router](router/README.md) - routing and middleware on top of `net/http`.
 - [httpserver](httpserver/README.md) - serve an `http.Handler` with graceful shutdown.
+- [cli](cli/README.md) - opinionated, typed CLI library for Go.
 - [config](config/README.md) - typed YAML configuration with defaults and env overrides.
 - [web](web/README.md) - typed HTTP responses and request helpers.
 - [assets](assets/README.md) - import maps, vendored browser packages, and hashed assets.
