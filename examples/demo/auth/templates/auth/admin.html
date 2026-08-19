@@ -1,0 +1,7 @@
+{{ define "title" }}Admin{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Admin</h1>
+  <p>Welcome, {{ .Subject }}. You have admin access.</p>
+{{ end }}

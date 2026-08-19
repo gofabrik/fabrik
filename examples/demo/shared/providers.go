@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofabrik/fabrik/authn"
 	"github.com/gofabrik/fabrik/cache"
 	sqlitecache "github.com/gofabrik/fabrik/cache/sqlite"
 	"github.com/gofabrik/fabrik/flash"
@@ -225,7 +226,7 @@ func humanizeAge(t time.Time) string {
 }
 
 // NewTemplateRequestFuncs declares the request-scoped values templates may
-// read: the typed session and the pending flash messages.
+// read: the typed session, the pending flash messages, and the auth claims.
 //
 //fabrik:provider
 func NewTemplateRequestFuncs(sessions *session.Manager, fl *flash.Flash) web.RequestFuncs {
@@ -247,6 +248,15 @@ func NewTemplateRequestFuncs(sessions *session.Manager, fl *flash.Flash) web.Req
 					taken, consumed = msgs, true
 				}
 				return taken, nil
+			}
+		},
+		"auth": func(r *http.Request) any {
+			return func() *authn.ClaimSet {
+				c, _ := authn.Claims(r.Context())
+				if c == nil {
+					return &authn.ClaimSet{}
+				}
+				return c
 			}
 		},
 	}

@@ -6,6 +6,8 @@ toolchain go1.27rc2
 
 require (
 	github.com/gofabrik/fabrik/assets v0.1.0
+	github.com/gofabrik/fabrik/authn v0.1.0
+	github.com/gofabrik/fabrik/authn/session v0.1.0
 	github.com/gofabrik/fabrik/cache v0.1.0
 	github.com/gofabrik/fabrik/cli v0.1.0
 	github.com/gofabrik/fabrik/config v0.1.0
