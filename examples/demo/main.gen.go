@@ -320,10 +320,15 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+	authLoginIPLimiter, err := auth.NewLoginIPLimiter(sharedRatelimitMemoryStore)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	authHandlers := &auth.Handlers{
-		Auth:     authSessionAuth,
-		Verifier: authPasswordVerifier,
-		Limiter:  authRatelimitLimiter,
+		Auth:      authSessionAuth,
+		Verifier:  authPasswordVerifier,
+		Limiter:   authRatelimitLimiter,
+		IPLimiter: authLoginIPLimiter,
 	}
 	assetKind, err := assetsOptions.Mode()
 	if err != nil {
@@ -346,13 +351,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 	sharedWebFuncMap := shared.NewTemplateFuncs()
+
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-
 	sharedWebRequestFuncs := shared.NewTemplateRequestFuncs(sharedSessionManager, sharedFlash)
 	requestFuncs := web.MergeRequestFuncs(web.DefaultRequestFuncs(), sharedWebRequestFuncs)
 	appTemplates, err := web.LoadTemplateSources([]web.TemplateSource{
@@ -387,8 +390,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedJobsConfig := shared.NewJobsConfig()
 
+	sharedJobsConfig := shared.NewJobsConfig()
 	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -440,6 +443,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Cache:   webCache,
 	}
 
+	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
 	r := router.New()
 
 	webDocs := &web2.Docs{
@@ -467,10 +472,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Middleware
-	loginlimitMW, err := auth.LoginRateLimited(sharedRatelimitMemoryStore)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
 	authenticatedMW := auth.Authenticated(adapter)
 	adminMW := auth.Admin(adapter)
 	// before=*
@@ -484,8 +485,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	sessionMW := shared.SessionMiddleware(sharedSessionManager)
 	// before sessionauth
 	r.Use(sessionMW)
-
 	sessionauthMW := auth.SessionAuthMiddleware(authSessionAuth)
+
 	// requires=session
 	r.Use(sessionauthMW)
 	greetlimitMW, err := web2.GreetRateLimited(sharedRatelimitMemoryStore)
@@ -495,7 +496,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 
 	// Register
 	r.Method("GET", "/login", adapter.Wrap(authHandlers.ShowLogin), shared.NoStore)
-	r.Method("POST", "/login", adapter.Wrap(authHandlers.Login), shared.NoStore, loginlimitMW)
+	r.Method("POST", "/login", adapter.Wrap(authHandlers.Login), shared.NoStore)
 	r.Method("POST", "/logout", adapter.Wrap(authHandlers.Logout))
 	r.Method("GET", "/private", adapter.Wrap(authHandlers.Private), shared.NoStore, authenticatedMW)
 	r.Method("GET", "/admin", adapter.Wrap(authHandlers.Admin), shared.NoStore, authenticatedMW, adminMW)

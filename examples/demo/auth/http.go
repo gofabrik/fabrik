@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/gofabrik/fabrik/authn"
 	"github.com/gofabrik/fabrik/authn/password"
@@ -40,9 +42,10 @@ type LoginForm struct {
 }
 
 type Handlers struct {
-	Auth     *session.Auth
-	Verifier *password.Verifier
-	Limiter  *ratelimit.Limiter
+	Auth      *session.Auth
+	Verifier  *password.Verifier
+	Limiter   *ratelimit.Limiter
+	IPLimiter *LoginIPLimiter
 }
 
 //fabrik:web GET /login middleware=nocache
@@ -50,8 +53,30 @@ func (h *Handlers) ShowLogin(req *web.Request) (web.Response, error) {
 	return web.Template("auth/login", LoginForm{Form: forms.Empty[LoginInput]()}), nil
 }
 
-//fabrik:web POST /login middleware=nocache,loginlimit
+//fabrik:web POST /login middleware=nocache
 func (h *Handlers) Login(req *web.Request) (web.Response, error) {
+	// An unkeyable request or a limiter failure degrades to 503, the
+	// fail-closed behavior the ratelimit middleware defines.
+	ip := ratelimit.KeyByIP(req.HTTP())
+	if ip == "" {
+		return web.Template("auth/login", LoginForm{Form: forms.Empty[LoginInput](), Error: "temporarily unavailable"}).Status(http.StatusServiceUnavailable), nil
+	}
+	ipResult, err := h.IPLimiter.Allow(req.Context(), ip)
+	if err != nil {
+		return web.Template("auth/login", LoginForm{Form: forms.Empty[LoginInput](), Error: "temporarily unavailable"}).Status(http.StatusServiceUnavailable), nil
+	}
+	// Quota headers ride every rendered response and the login
+	// redirect; error returns render through the adapter, which
+	// drops request-recorded headers, so 500s carry none. Clients
+	// pace on the 429 and success responses, which always do.
+	req.SetHeader("RateLimit-Limit", strconv.Itoa(ipResult.Limit))
+	req.SetHeader("RateLimit-Remaining", strconv.Itoa(ipResult.Remaining))
+	req.SetHeader("RateLimit-Reset", strconv.Itoa(int(math.Ceil(ipResult.ResetAfter.Seconds()))))
+	if !ipResult.Allowed {
+		req.SetHeader("Retry-After", strconv.Itoa(int(math.Ceil(ipResult.RetryAfter.Seconds()))))
+		return web.Template("auth/login", LoginForm{Form: forms.Empty[LoginInput](), Error: "too many requests"}).Status(http.StatusTooManyRequests), nil
+	}
+
 	form, err := forms.Bind[LoginInput](req.HTTP())
 	if err != nil {
 		return nil, err

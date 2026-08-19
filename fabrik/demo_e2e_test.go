@@ -1022,18 +1022,31 @@ func loginFlow(t *testing.T, port string) {
 	tripped := false
 	for i := range maxAttempts {
 		email := "nouser" + strconv.Itoa(i) + "@example.com"
-		code, body := postLogin(noFollow, email, "wrong")
-		if code == http.StatusUnprocessableEntity && strings.Contains(body, "invalid credentials") {
+		resp, err := noFollow.PostForm(base+"/login", url.Values{"email": {email}, "password": {"wrong"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(readResponse(t, resp))
+		if resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(body, "invalid credentials") {
 			continue
 		}
-		if code == http.StatusTooManyRequests && !strings.Contains(body, "too many attempts") && strings.Contains(body, "rate limit exceeded") {
+		if resp.StatusCode == http.StatusTooManyRequests && !strings.Contains(body, "too many attempts") && strings.Contains(body, "too many requests") {
+			if !strings.Contains(body, `name="email"`) {
+				t.Fatalf("IP 429 is not the rendered login form:\n%s", body)
+			}
+			// The denial itself carries the quota headers.
+			for _, hdr := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"} {
+				if resp.Header.Get(hdr) == "" {
+					t.Fatalf("IP 429 missing %s header", hdr)
+				}
+			}
 			tripped = true
 			break
 		}
-		t.Fatalf("exhaust attempt %d: got %d:\n%s", i, code, body)
+		t.Fatalf("exhaust attempt %d: got %d:\n%s", i, resp.StatusCode, body)
 	}
 	if !tripped {
-		t.Fatalf("per-IP limiter never returned the plain 429 within %d attempts", maxAttempts)
+		t.Fatalf("per-IP limiter never returned 429 with 'too many requests' within %d attempts", maxAttempts)
 	}
 }
 

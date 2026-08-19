@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"time"
+
 	"github.com/gofabrik/fabrik/authn"
 	"github.com/gofabrik/fabrik/authn/password"
 	sessionauth "github.com/gofabrik/fabrik/authn/session"
@@ -42,4 +44,16 @@ func NewPasswordVerifier() (*password.Verifier, error) {
 //fabrik:provider
 func NewLoginLimiter(store *ratelimit.MemoryStore) (*ratelimit.Limiter, error) {
 	return ratelimit.New(ratelimit.PerMinute(5), store, ratelimit.WithNamespace("login"))
+}
+
+// LoginIPLimiter is the per-IP login rate limiter.
+type LoginIPLimiter struct{ *ratelimit.Limiter }
+
+//fabrik:provider
+func NewLoginIPLimiter(store *ratelimit.MemoryStore) (*LoginIPLimiter, error) {
+	l, err := ratelimit.New(ratelimit.Limit{Rate: 30, Period: time.Minute, Burst: 20}, store, ratelimit.WithNamespace("login-ip"))
+	if err != nil {
+		return nil, err
+	}
+	return &LoginIPLimiter{l}, nil
 }
