@@ -1,3 +1,3 @@
 <nav>
-  <a href="/">home</a> | <a href="/about">about</a> | <a href="/overview">overview</a> | <a href="/greetings">greetings</a> | <a href="/live">live</a> | <a href="/uptime">uptime</a> | <a href="/routes">routes</a>
+  <a href="/">home</a> | <a href="/about">about</a> | <a href="/overview">overview</a> | <a href="/greetings">greetings</a> | <a href="/live">live</a> | <a href="/uptime">uptime</a> | <a href="/routes">routes</a> | <a href="/private">private</a> | <a href="/admin">admin</a> | {{ if auth.Subject }}<form method="post" action="/logout"><button type="submit">logout ({{ auth.Subject }})</button></form>{{ else }}<a href="/login">login</a>{{ end }}
 </nav>
