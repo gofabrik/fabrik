@@ -106,7 +106,8 @@ func (h *Handle[T]) Save(ctx context.Context, v T) error {
 
 // Update applies fn under optimistic CAS and writes immediately.
 //
-// fn may re-run after a conflict and must be self-contained.
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (h *Handle[T]) Update(ctx context.Context, fn func(*T) error) error {
 	return h.m.cellUpdate(ctx, h.key, h.rawFn(fn))
 }
@@ -127,6 +128,9 @@ func (h *Handle[T]) GetSID(ctx context.Context, sid string) (T, error) {
 }
 
 // UpdateSID updates the cell by SID without creating a session.
+//
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (h *Handle[T]) UpdateSID(ctx context.Context, sid string, fn func(*T) error) error {
 	return h.m.updateCellSID(ctx, sid, h.key, h.rawFn(fn))
 }

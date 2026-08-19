@@ -11,7 +11,7 @@ type Session struct {
 }
 
 sessions, err := session.New(session.Config{
-	Store:          session.NewMemoryStore(),
+	Store:          session.NewMemoryStore(session.MemoryOptions{}),
 	Token:          session.Cookie{Name: "session", HttpOnly: true, SameSite: http.SameSiteLaxMode},
 	AbsoluteExpiry: 24 * time.Hour,
 	IdleExpiry:     time.Hour,
@@ -39,7 +39,9 @@ One value carries everything:
 - **Writes stage, then commit once.** `Save` and `Clear` mark the
   request dirty; middleware commits at response start. `Update` is
   the immediate CAS read-modify-write path for durable mid-request
-  writes.
+  writes. The callback passed to `Update` or `UpdateSID` may run more
+  than once, even if the update fails, and must have no side effects
+  beyond mutating its argument.
 - **Your struct persists through `encoding/json`.** Exported,
   JSON-marshalable fields round-trip; unexported fields silently do
   not persist; a value that fails to encode or decode errors at
@@ -109,6 +111,20 @@ payload bytes under CAS versioning, with optional capabilities
 (`TTLBumper`, `UserIndexer`, `Scanner`, `Sweeper`). `MemoryStore` is
 process-local and zero config. Database-backed stores live in leaf
 packages, all four capabilities fully implemented.
+
+`Config.Now` and the store must use the same clock. Pass the same
+function to `Config.Now` and `MemoryOptions.Now` (or `Options.Now` for
+SQL stores):
+
+```go
+now := func() time.Time { return frozen }
+store := session.NewMemoryStore(session.MemoryOptions{Now: now})
+mgr, _ := session.New(session.Config{Store: store, Now: now, ...})
+```
+
+`Promote` and `Renew` rotate the SID. Failure to revoke the old SID is
+logged through `Config.Logger` and does not fail rotation; the old SID
+remains valid until expiry.
 
 ### Database-backed stores
 

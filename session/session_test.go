@@ -144,7 +144,7 @@ func TestFreshSessionZeroValueAndStagedView(t *testing.T) {
 }
 
 func TestReadsNeverMint(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 
@@ -164,7 +164,7 @@ func TestReadsNeverMint(t *testing.T) {
 }
 
 func TestUntouchedRequestWithDeadCookieClearsNothing(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 
 	rr := serve(t, m, "dead-sid", func(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +221,7 @@ func TestStaleTokenSetSupersedesClear(t *testing.T) {
 }
 
 func TestSingleCommitForMultipleDirtyHandles(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	ha := appH(m)
 	hb, _ := Use[otherShape](m, "other")
@@ -242,7 +242,7 @@ func TestSingleCommitForMultipleDirtyHandles(t *testing.T) {
 }
 
 func TestSaveThenUpdateFoldsAndConsumes(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 
@@ -300,7 +300,7 @@ func TestUpdateClosureErrorAbortsCleanly(t *testing.T) {
 }
 
 func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 
@@ -415,7 +415,7 @@ func TestCommitDeletedRecordStaysGone(t *testing.T) {
 }
 
 func TestCommitConflictExhaustionSurfaces(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = 1 })
 	h := appH(m)
@@ -526,7 +526,7 @@ func TestSIDCollisionRemintsBounded(t *testing.T) {
 }
 
 func TestEmptyNewSIDIsGeneratorFailure(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) {
 		c.Store = store
 		c.NewSID = func() (string, error) { return "", nil }
@@ -547,7 +547,7 @@ func TestEmptyNewSIDIsGeneratorFailure(t *testing.T) {
 }
 
 func TestCanonicalEmptyPayload(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 
@@ -572,7 +572,7 @@ func TestCanonicalEmptyPayload(t *testing.T) {
 }
 
 func TestClearAbsentStagesNothing(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 

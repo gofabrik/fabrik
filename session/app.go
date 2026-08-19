@@ -43,6 +43,9 @@ func (m *Manager) Save[T any](ctx context.Context, v T) error {
 }
 
 // Update applies fn to app data and persists it immediately with optimistic concurrency.
+//
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (m *Manager) Update[T any](ctx context.Context, fn func(*T) error) error {
 	if err := pinApp[T](m); err != nil {
 		return err
@@ -60,6 +63,9 @@ func (m *Manager) GetSID[T any](ctx context.Context, sid string) (T, error) {
 }
 
 // UpdateSID updates existing app data for SID without creating a session.
+//
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (m *Manager) UpdateSID[T any](ctx context.Context, sid string, fn func(*T) error) error {
 	if err := pinApp[T](m); err != nil {
 		return err

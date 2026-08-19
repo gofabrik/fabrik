@@ -15,7 +15,7 @@ type box[T any] struct{ V T }
 
 func testConfig() Config {
 	return Config{
-		Store:          NewMemoryStore(),
+		Store:          NewMemoryStore(MemoryOptions{}),
 		Token:          Cookie{},
 		AbsoluteExpiry: time.Hour,
 		IdleExpiry:     30 * time.Minute,

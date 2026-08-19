@@ -37,7 +37,7 @@ func (c *countingStore) saveCount() int {
 
 func harness(t *testing.T) (*session.Manager, *Flash, *countingStore) {
 	t.Helper()
-	store := &countingStore{Store: session.NewMemoryStore()}
+	store := &countingStore{Store: session.NewMemoryStore(session.MemoryOptions{})}
 	m, err := session.New(session.Config{
 		Store:          store,
 		Token:          session.Cookie{},
@@ -58,7 +58,7 @@ func harness(t *testing.T) (*session.Manager, *Flash, *countingStore) {
 func managerWithRetries(t *testing.T, retries int) (*session.Manager, *Flash) {
 	t.Helper()
 	m, err := session.New(session.Config{
-		Store:          session.NewMemoryStore(),
+		Store:          session.NewMemoryStore(session.MemoryOptions{}),
 		Token:          session.Cookie{},
 		AbsoluteExpiry: time.Hour,
 		IdleExpiry:     30 * time.Minute,

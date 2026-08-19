@@ -99,7 +99,9 @@ func (m *Manager) rotateAtCommit(ctx context.Context, st *state) error {
 		return err
 	}
 	// Best-effort delete; a stale record expires on its own.
-	_ = m.cfg.Store.Delete(ctx, oldSID)
+	if err := m.cfg.Store.Delete(ctx, oldSID); err != nil {
+		m.cfg.Logger.WarnContext(ctx, "session rotation: old SID delete failed", "error", err)
+	}
 	st.record = stored
 	if cells != nil {
 		st.cells = cells

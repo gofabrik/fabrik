@@ -13,7 +13,7 @@ import (
 
 // App data uses the reserved app cell beside library cells.
 func TestAppTierReservedCellAndCoexistence(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	lib, err := Use[otherShape](m, "github.com/example/lib")
 	if err != nil {
@@ -60,7 +60,7 @@ func TestAppTierReservedCellAndCoexistence(t *testing.T) {
 
 // The app facade exposes the same lifecycle engine.
 func TestAppTierLifecycleDelegation(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {

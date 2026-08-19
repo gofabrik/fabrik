@@ -246,6 +246,8 @@ func (m *Manager) UserID(ctx context.Context) (string, error) {
 }
 
 // Renew stages a SID rotation without extending absolute expiry.
+// Failure to revoke the old SID is logged through [Config.Logger] and does
+// not fail rotation; the old SID remains valid until expiry.
 func (m *Manager) Renew(ctx context.Context) error {
 	st, err := m.stateFromCtx(ctx, "Renew")
 	if err != nil {
@@ -267,6 +269,8 @@ func (m *Manager) Renew(ctx context.Context) error {
 }
 
 // Promote stages login and rotates the SID, even for the same userID.
+// Failure to revoke the old SID is logged through [Config.Logger] and does
+// not fail rotation; the old SID remains valid until expiry.
 func (m *Manager) Promote(ctx context.Context, userID string) error {
 	st, err := m.stateFromCtx(ctx, "Promote")
 	if err != nil {

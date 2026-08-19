@@ -5,7 +5,7 @@
 //	}
 //
 //	sessions, err := session.New(session.Config{
-//		Store:          session.NewMemoryStore(),
+//		Store:          session.NewMemoryStore(session.MemoryOptions{}),
 //		Token:          session.Cookie{Name: "session", HttpOnly: true},
 //		AbsoluteExpiry: 24 * time.Hour,
 //		IdleExpiry:     time.Hour,

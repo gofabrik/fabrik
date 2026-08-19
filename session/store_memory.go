@@ -9,6 +9,12 @@ import (
 	"github.com/gofabrik/fabrik/session/internal/sessionutil"
 )
 
+// MemoryOptions configures a [MemoryStore].
+type MemoryOptions struct {
+	// Now overrides the store's clock. nil means time.Now.
+	Now func() time.Time
+}
+
 // MemoryStore is a process-local [Store] backed by a map.
 //
 // It implements every optional store capability. It is safe for
@@ -18,15 +24,19 @@ type MemoryStore struct {
 	records   map[string]Record
 	userIndex map[string]map[string]struct{}
 
-	now func() time.Time // injectable for tests
+	now func() time.Time
 }
 
 // NewMemoryStore returns a ready-to-use in-memory store.
-func NewMemoryStore() *MemoryStore {
+func NewMemoryStore(opts MemoryOptions) *MemoryStore {
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &MemoryStore{
 		records:   make(map[string]Record),
 		userIndex: make(map[string]map[string]struct{}),
-		now:       time.Now,
+		now:       now,
 	}
 }
 

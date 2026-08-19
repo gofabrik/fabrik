@@ -8,5 +8,5 @@ import (
 )
 
 func TestMemoryStoreConformance(t *testing.T) {
-	storetest.Run(t, func(t *testing.T) session.Store { return session.NewMemoryStore() })
+	storetest.Run(t, func(t *testing.T) session.Store { return session.NewMemoryStore(session.MemoryOptions{}) })
 }
