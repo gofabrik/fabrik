@@ -5,6 +5,7 @@ module-sets:
       - github.com/gofabrik/fabrik/assets
       - github.com/gofabrik/fabrik/assets/directive
       - github.com/gofabrik/fabrik/authn
+      - github.com/gofabrik/fabrik/authn/session
       - github.com/gofabrik/fabrik/cache
       - github.com/gofabrik/fabrik/cli
       - github.com/gofabrik/fabrik/cli/directive

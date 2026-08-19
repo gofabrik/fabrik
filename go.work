@@ -6,6 +6,7 @@ use (
 	./assets
 	./assets/directive
 	./authn
+	./authn/session
 	./cache
 	./cache/dbtest
 	./cli
@@ -46,6 +47,7 @@ replace (
 	github.com/gofabrik/fabrik/assets v0.1.0 => ./assets
 	github.com/gofabrik/fabrik/assets/directive v0.1.0 => ./assets/directive
 	github.com/gofabrik/fabrik/authn v0.1.0 => ./authn
+	github.com/gofabrik/fabrik/authn/session v0.1.0 => ./authn/session
 	github.com/gofabrik/fabrik/cache v0.1.0 => ./cache
 	github.com/gofabrik/fabrik/cli v0.1.0 => ./cli
 	github.com/gofabrik/fabrik/cli/directive v0.1.0 => ./cli/directive
