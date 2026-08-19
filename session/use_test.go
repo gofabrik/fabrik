@@ -15,7 +15,7 @@ type box[T any] struct{ V T }
 
 func testConfig() Config {
 	return Config{
-		Store:          NewMemoryStore(),
+		Store:          NewMemoryStore(MemoryOptions{}),
 		Token:          Cookie{},
 		AbsoluteExpiry: time.Hour,
 		IdleExpiry:     30 * time.Minute,
@@ -35,18 +35,16 @@ func newTestManager(t *testing.T, mutate ...func(*Config)) *Manager {
 	return m
 }
 
-func TestNewKeyPanics(t *testing.T) {
-	mustPanic := func(name string, fn func()) {
-		t.Helper()
-		defer func() {
-			if recover() == nil {
-				t.Errorf("%s did not panic", name)
-			}
-		}()
-		fn()
+func TestUseRejectsInvalidName(t *testing.T) {
+	m := newTestManager(t)
+	_, err := Use[appSession](m, "")
+	if err == nil || !strings.Contains(err.Error(), "name is empty") {
+		t.Errorf("empty name: want name-based diagnostic, got %v", err)
 	}
-	mustPanic("empty name", func() { NewKey[appSession]("") })
-	mustPanic("reserved name", func() { NewKey[appSession]("app") })
+	_, err = Use[appSession](m, "app")
+	if err == nil || !strings.Contains(err.Error(), `"app" is reserved`) {
+		t.Errorf("reserved name: want reserved-name diagnostic, got %v", err)
+	}
 }
 
 func TestTypedAccessRejectsNonStruct(t *testing.T) {
@@ -62,57 +60,57 @@ func TestTypedAccessRejectsNonStruct(t *testing.T) {
 
 func TestUseTypeChecks(t *testing.T) {
 	m := newTestManager(t)
-	if _, err := Use(m, Key[map[string]any]{name: "m"}); err == nil {
+	if _, err := Use[map[string]any](m, "m"); err == nil {
 		t.Error("map accepted as cell type")
 	}
-	if _, err := Use(m, Key[appSession]{}); err == nil {
-		t.Error("zero Key accepted")
+	if _, err := Use[appSession](m, ""); err == nil {
+		t.Error("empty name accepted")
 	}
-	// Keys provide identity; types provide shape.
-	if _, err := Use(m, NewKey[box[int]]("boxed")); err != nil {
+	if _, err := Use[box[int]](m, "boxed"); err != nil {
 		t.Errorf("generic instantiation rejected: %v", err)
 	}
-	if _, err := Use(m, NewKey[struct{ N int }]("anon")); err != nil {
+	if _, err := Use[struct{ N int }](m, "anon"); err != nil {
 		t.Errorf("anonymous struct rejected: %v", err)
 	}
 }
 
-func TestKeyRegistryMatrix(t *testing.T) {
+func TestUseRegistryMatrix(t *testing.T) {
 	m := newTestManager(t)
 
-	// The same Key value is idempotent.
-	key := NewKey[otherShape]("github.com/example/lib")
-	h1, err := Use(m, key)
+	// The same name and type is idempotent.
+	h1, err := Use[otherShape](m, "github.com/example/lib")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h2, err := Use(m, key)
+	h2, err := Use[otherShape](m, "github.com/example/lib")
 	if err != nil {
 		t.Fatalf("idempotent re-registration: %v", err)
 	}
-	if h1.Key() != h2.Key() {
-		t.Fatalf("same key, different cells: %q vs %q", h1.Key(), h2.Key())
+	if h1.Name() != h2.Name() {
+		t.Fatalf("same name, different cells: %q vs %q", h1.Name(), h2.Name())
 	}
 
 	// The same name from a different type is a registration error.
-	if _, err := Use(m, NewKey[appSession]("github.com/example/lib")); err == nil {
+	if _, err := Use[appSession](m, "github.com/example/lib"); err == nil {
 		t.Error("same name accepted for a different type")
+	} else if !strings.Contains(err.Error(), "cell name") {
+		t.Errorf("conflict diagnostic does not name the cell name: %v", err)
 	}
 
 	// Different names are distinct cells regardless of type.
-	a, err := Use(m, NewKey[otherShape]("draft"))
+	a, err := Use[otherShape](m, "draft")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Key() == h1.Key() {
+	if a.Name() == h1.Name() {
 		t.Fatal("distinct names collapsed")
 	}
 
-	if _, err := Use(m, Key[otherShape]{name: "app"}); err == nil {
-		t.Error("library key collided with the app cell silently")
+	if _, err := Use[otherShape](m, "app"); err == nil {
+		t.Error("library cell collided with the app cell silently")
 	}
-	if _, err := Use(m, Key[appSession]{name: "app"}); err == nil {
-		t.Error("forged same-type app key accepted")
+	if _, err := Use[appSession](m, "app"); err == nil {
+		t.Error("same-type app name accepted")
 	}
 }
 
@@ -126,14 +124,13 @@ func TestManagerSatisfiesRegistry(t *testing.T) {
 
 func TestConcurrentFirstRegistration(t *testing.T) {
 	m := newTestManager(t)
-	key := NewKey[otherShape]("github.com/example/concurrent")
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
 	for i := range errs {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = Use(m, key)
+			_, errs[i] = Use[otherShape](m, "github.com/example/concurrent")
 		}(i)
 	}
 	wg.Wait()
@@ -204,12 +201,11 @@ func TestMaxRetriesSemantics(t *testing.T) {
 }
 
 func TestUseRejectsNilRegistry(t *testing.T) {
-	key := NewKey[otherShape]("github.com/example/nilcheck")
-	if _, err := Use(nil, key); err == nil {
+	if _, err := Use[otherShape](nil, "github.com/example/nilcheck"); err == nil {
 		t.Error("nil Registry accepted")
 	}
-	var m *Manager // A typed nil still implements Registry.
-	if _, err := Use(m, key); err == nil {
+	var m *Manager
+	if _, err := Use[otherShape](m, "github.com/example/nilcheck"); err == nil {
 		t.Error("typed-nil manager accepted")
 	}
 }

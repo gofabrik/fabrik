@@ -5,7 +5,7 @@
 //	}
 //
 //	sessions, err := session.New(session.Config{
-//		Store:          session.NewMemoryStore(),
+//		Store:          session.NewMemoryStore(session.MemoryOptions{}),
 //		Token:          session.Cookie{Name: "session", HttpOnly: true},
 //		AbsoluteExpiry: 24 * time.Hour,
 //		IdleExpiry:     time.Hour,
@@ -30,8 +30,8 @@
 //
 // # For libraries
 //
-// A reusable library that needs private session data declares a typed
-// [Key] and registers it with [Use] against [Registry].
+// A reusable library that needs private session data calls [Use] with its
+// cell name and payload type against the [Registry].
 //
 // The library is standalone: net/http and any mux, no framework
 // required.
@@ -107,7 +107,7 @@ type TTLBumper interface {
 
 // UserIndexer is implemented by stores that maintain a secondary
 // index from user ID to session IDs. Required for
-// [Manager.ListForUser] and [Manager.RevokeAllForUser].
+// [Manager.ListByUser] and [Manager.RevokeByUser].
 //
 // Implementations keep the index current on Save and Delete.
 // ListByUser returns only live sessions; RevokeByUser deletes every

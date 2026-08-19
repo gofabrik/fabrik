@@ -77,7 +77,7 @@ func (m *Manager) register(key string, t reflect.Type) error {
 	defer m.regMu.Unlock()
 	if prev, ok := m.cells[key]; ok {
 		if prev != t {
-			return fmt.Errorf("session: cell key %q is already registered with type %s (this registration: %s)",
+			return fmt.Errorf("session: cell name %q is already registered with type %s (this registration: %s)",
 				key, typeLabel(prev), typeLabel(t))
 		}
 		return nil
@@ -246,6 +246,8 @@ func (m *Manager) UserID(ctx context.Context) (string, error) {
 }
 
 // Renew stages a SID rotation without extending absolute expiry.
+// Failure to revoke the old SID is logged through [Config.Logger] and does
+// not fail rotation; the old SID remains valid until expiry.
 func (m *Manager) Renew(ctx context.Context) error {
 	st, err := m.stateFromCtx(ctx, "Renew")
 	if err != nil {
@@ -267,6 +269,8 @@ func (m *Manager) Renew(ctx context.Context) error {
 }
 
 // Promote stages login and rotates the SID, even for the same userID.
+// Failure to revoke the old SID is logged through [Config.Logger] and does
+// not fail rotation; the old SID remains valid until expiry.
 func (m *Manager) Promote(ctx context.Context, userID string) error {
 	st, err := m.stateFromCtx(ctx, "Promote")
 	if err != nil {
@@ -329,22 +333,22 @@ func (m *Manager) DestroySID(ctx context.Context, sid string) error {
 	return m.cfg.Store.Delete(ctx, sid)
 }
 
-// ListForUser returns the SIDs of every live session belonging to
+// ListByUser returns the SIDs of every live session belonging to
 // userID. Requires a store with the [UserIndexer] capability.
-func (m *Manager) ListForUser(ctx context.Context, userID string) ([]string, error) {
+func (m *Manager) ListByUser(ctx context.Context, userID string) ([]string, error) {
 	idx, ok := m.cfg.Store.(UserIndexer)
 	if !ok {
-		return nil, fmt.Errorf("session.ListForUser: %w", ErrCapabilityMissing)
+		return nil, fmt.Errorf("session.ListByUser: %w", ErrCapabilityMissing)
 	}
 	return idx.ListByUser(ctx, userID)
 }
 
-// RevokeAllForUser deletes every live session for userID except the
+// RevokeByUser deletes every live session for userID except the
 // optional SIDs.
-func (m *Manager) RevokeAllForUser(ctx context.Context, userID string, except ...string) (int, error) {
+func (m *Manager) RevokeByUser(ctx context.Context, userID string, except ...string) (int, error) {
 	idx, ok := m.cfg.Store.(UserIndexer)
 	if !ok {
-		return 0, fmt.Errorf("session.RevokeAllForUser: %w", ErrCapabilityMissing)
+		return 0, fmt.Errorf("session.RevokeByUser: %w", ErrCapabilityMissing)
 	}
 	return idx.RevokeByUser(ctx, userID, except...)
 }

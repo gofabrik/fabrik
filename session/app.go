@@ -43,6 +43,9 @@ func (m *Manager) Save[T any](ctx context.Context, v T) error {
 }
 
 // Update applies fn to app data and persists it immediately with optimistic concurrency.
+//
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (m *Manager) Update[T any](ctx context.Context, fn func(*T) error) error {
 	if err := pinApp[T](m); err != nil {
 		return err
@@ -50,16 +53,19 @@ func (m *Manager) Update[T any](ctx context.Context, fn func(*T) error) error {
 	return appHandle[T](m).Update(ctx, fn)
 }
 
-// Load returns app data for SID without request middleware.
-func (m *Manager) Load[T any](ctx context.Context, sid string) (T, error) {
+// GetSID returns app data for SID without request middleware.
+func (m *Manager) GetSID[T any](ctx context.Context, sid string) (T, error) {
 	if err := pinApp[T](m); err != nil {
 		var zero T
 		return zero, err
 	}
-	return appHandle[T](m).Load(ctx, sid)
+	return appHandle[T](m).GetSID(ctx, sid)
 }
 
 // UpdateSID updates existing app data for SID without creating a session.
+//
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (m *Manager) UpdateSID[T any](ctx context.Context, sid string, fn func(*T) error) error {
 	if err := pinApp[T](m); err != nil {
 		return err

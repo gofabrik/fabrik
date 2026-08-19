@@ -137,14 +137,14 @@ func TestFreshSessionZeroValueAndStagedView(t *testing.T) {
 	if !ok || sid == "" {
 		t.Fatal("staged save did not mint a session cookie")
 	}
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "bob" {
 		t.Fatalf("stored value = %+v, %v", got, err)
 	}
 }
 
 func TestReadsNeverMint(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 
@@ -164,7 +164,7 @@ func TestReadsNeverMint(t *testing.T) {
 }
 
 func TestUntouchedRequestWithDeadCookieClearsNothing(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 
 	rr := serve(t, m, "dead-sid", func(w http.ResponseWriter, r *http.Request) {
@@ -221,10 +221,10 @@ func TestStaleTokenSetSupersedesClear(t *testing.T) {
 }
 
 func TestSingleCommitForMultipleDirtyHandles(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	ha := appH(m)
-	hb, _ := Use(m, NewKey[otherShape]("other"))
+	hb, _ := Use[otherShape](m, "other")
 
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = ha.Save(r.Context(), appSession{Name: "a"})
@@ -242,7 +242,7 @@ func TestSingleCommitForMultipleDirtyHandles(t *testing.T) {
 }
 
 func TestSaveThenUpdateFoldsAndConsumes(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 
@@ -293,14 +293,14 @@ func TestUpdateClosureErrorAbortsCleanly(t *testing.T) {
 		}
 	})
 	sid, _ := sessionCookie(t, rr)
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "staged" {
 		t.Fatalf("committed value = %+v, %v", got, err)
 	}
 }
 
 func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 
@@ -326,7 +326,7 @@ func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
 	if !ok || sid == "" {
 		t.Fatal("minting Update left its token behind")
 	}
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "minted" {
 		t.Fatalf("minted value = %+v, %v", got, err)
 	}
@@ -335,7 +335,7 @@ func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
 func TestCommitReMergePreservesOtherCells(t *testing.T) {
 	m := newTestManager(t)
 	ha := appH(m)
-	hb, _ := Use(m, NewKey[otherShape]("other"))
+	hb, _ := Use[otherShape](m, "other")
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = ha.Save(r.Context(), appSession{Name: "v1"})
@@ -357,11 +357,11 @@ func TestCommitReMergePreservesOtherCells(t *testing.T) {
 	})
 
 	// Re-merge preserves the out-of-band cell and lands the staged one.
-	a, err := ha.Load(context.Background(), sid)
+	a, err := ha.GetSID(context.Background(), sid)
 	if err != nil || a.Name != "out-of-band" {
 		t.Fatalf("cell a = %+v, %v (re-merge clobbered an untouched cell)", a, err)
 	}
-	b, err := hb.Load(context.Background(), sid)
+	b, err := hb.GetSID(context.Background(), sid)
 	if err != nil || b.Count != 42 {
 		t.Fatalf("cell b = %+v, %v", b, err)
 	}
@@ -385,7 +385,7 @@ func TestCommitSameCellStagedSaveWins(t *testing.T) {
 		})
 	})
 
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "staged-wins" {
 		t.Fatalf("same-cell conflict resolved to %q, want the staged save", got.Name)
 	}
@@ -409,13 +409,13 @@ func TestCommitDeletedRecordStaysGone(t *testing.T) {
 	if rr2.Code != http.StatusInternalServerError {
 		t.Fatalf("commit against a revoked session = %d, want 500", rr2.Code)
 	}
-	if _, err := h.Load(context.Background(), sid); !errors.Is(err, ErrNotFound) {
+	if _, err := h.GetSID(context.Background(), sid); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("revoked session resurrected: %v", err)
 	}
 }
 
 func TestCommitConflictExhaustionSurfaces(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = 1 })
 	h := appH(m)
@@ -526,7 +526,7 @@ func TestSIDCollisionRemintsBounded(t *testing.T) {
 }
 
 func TestEmptyNewSIDIsGeneratorFailure(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) {
 		c.Store = store
 		c.NewSID = func() (string, error) { return "", nil }
@@ -547,7 +547,7 @@ func TestEmptyNewSIDIsGeneratorFailure(t *testing.T) {
 }
 
 func TestCanonicalEmptyPayload(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 
@@ -572,7 +572,7 @@ func TestCanonicalEmptyPayload(t *testing.T) {
 }
 
 func TestClearAbsentStagesNothing(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
 
@@ -679,7 +679,7 @@ func TestUpdateSnapshotRaceDirtyFlagRule(t *testing.T) {
 		<-done
 	})
 
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "late-save-wins" {
 		t.Fatalf("final value = %q, want the late save (deterministic last-writer-wins)", got.Name)
 	}

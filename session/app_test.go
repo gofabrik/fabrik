@@ -13,9 +13,9 @@ import (
 
 // App data uses the reserved app cell beside library cells.
 func TestAppTierReservedCellAndCoexistence(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	lib, err := Use(m, NewKey[otherShape]("github.com/example/lib"))
+	lib, err := Use[otherShape](m, "github.com/example/lib")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,17 +50,17 @@ func TestAppTierReservedCellAndCoexistence(t *testing.T) {
 	}
 
 	// Each tier reads its own data back.
-	if got, err := m.Load[appSession](context.Background(), sid); err != nil || got.Name != "alice" {
-		t.Fatalf("app Load = %+v, %v", got, err)
+	if got, err := m.GetSID[appSession](context.Background(), sid); err != nil || got.Name != "alice" {
+		t.Fatalf("app GetSID = %+v, %v", got, err)
 	}
-	if got, err := lib.Load(context.Background(), sid); err != nil || got.Count != 7 {
-		t.Fatalf("library Load = %+v, %v", got, err)
+	if got, err := lib.GetSID(context.Background(), sid); err != nil || got.Count != 7 {
+		t.Fatalf("library GetSID = %+v, %v", got, err)
 	}
 }
 
 // The app facade exposes the same lifecycle engine.
 func TestAppTierLifecycleDelegation(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +82,7 @@ func TestAppTierLifecycleDelegation(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if _, err := m.Load[appSession](context.Background(), sid); err == nil {
+	if _, err := m.GetSID[appSession](context.Background(), sid); err == nil {
 		t.Fatal("Destroy through the facade left the record")
 	}
 }
@@ -119,8 +119,8 @@ func TestPinErrorPrecedesNoSession(t *testing.T) {
 	checkConflict("Get", err)
 	checkConflict("Save", m.Save(ctx, otherShape{Count: 1}))
 	checkConflict("Update", m.Update(ctx, func(*otherShape) error { return nil }))
-	_, err = m.Load[otherShape](ctx, "sid")
-	checkConflict("Load", err)
+	_, err = m.GetSID[otherShape](ctx, "sid")
+	checkConflict("GetSID", err)
 	checkConflict("UpdateSID", m.UpdateSID(ctx, "sid", func(*otherShape) error { return nil }))
 }
 

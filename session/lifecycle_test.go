@@ -32,7 +32,7 @@ func establish(t *testing.T, m *Manager, h *Handle[appSession], name string) str
 }
 
 func TestRenewRotatesAndPreservesAbsoluteExpiry(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 	sid := establish(t, m, h, "alice")
@@ -63,7 +63,7 @@ func TestRenewRotatesAndPreservesAbsoluteExpiry(t *testing.T) {
 	if !after.AbsoluteExpiry.Equal(before.AbsoluteExpiry) {
 		t.Fatalf("rotation moved the hard deadline: %v -> %v", before.AbsoluteExpiry, after.AbsoluteExpiry)
 	}
-	got, _ := h.Load(context.Background(), newSID)
+	got, _ := h.GetSID(context.Background(), newSID)
 	if got.Name != "renewed" {
 		t.Fatalf("staged cell lost in rotation: %+v", got)
 	}
@@ -85,7 +85,7 @@ func TestRenewSessionlessIsNotFound(t *testing.T) {
 }
 
 func TestPromoteEstablishedRotatesWithIdentity(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 	sid := establish(t, m, h, "cart")
@@ -107,14 +107,14 @@ func TestPromoteEstablishedRotatesWithIdentity(t *testing.T) {
 	if err != nil || rec.UserID != "u1" {
 		t.Fatalf("promoted record = %+v, %v", rec, err)
 	}
-	got, _ := h.Load(context.Background(), newSID)
+	got, _ := h.GetSID(context.Background(), newSID)
 	if got.Name != "cart" {
 		t.Fatalf("login lost the cart: %+v", got)
 	}
 }
 
 func TestPromoteOnlyLoginMintsAuthenticated(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
@@ -137,11 +137,11 @@ func TestPromoteOnlyLoginMintsAuthenticated(t *testing.T) {
 }
 
 func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
-	other, _ := Use(m, NewKey[otherShape]("other"))
+	other, _ := Use[otherShape](m, "other")
 
 	// Use an aged absolute expiry to prove rotation preserves it.
 	var sid string
@@ -192,10 +192,10 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 	if !rec.AbsoluteExpiry.After(oldRec.AbsoluteExpiry) {
 		t.Fatal("fresh session inherited the old hard deadline")
 	}
-	if _, ok, _ := m.loadCell(context.Background(), newSID, other.Key()); ok {
+	if _, ok, _ := m.loadCell(context.Background(), newSID, other.Name()); ok {
 		t.Fatal("pre-Destroy cell leaked into the fresh session")
 	}
-	got, _ := h.Load(context.Background(), newSID)
+	got, _ := h.GetSID(context.Background(), newSID)
 	if got.Name != "flash" {
 		t.Fatalf("post-Destroy stage = %+v", got)
 	}
@@ -216,7 +216,7 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 }
 
 func TestDestroyFailedDeleteFailsCommit(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
@@ -238,7 +238,7 @@ func TestDestroyFailedDeleteFailsCommit(t *testing.T) {
 }
 
 func TestDestroyStaleAndCleanLogout(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 
@@ -294,7 +294,7 @@ func TestPostCommitMutatorMatrix(t *testing.T) {
 			t.Errorf("post-commit established Update = %v", err)
 		}
 	})
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "streamed" {
 		t.Fatalf("post-commit Update value = %+v", got)
 	}
@@ -354,17 +354,17 @@ func TestWriterAdvertisesOnlySupportedInterfaces(t *testing.T) {
 }
 
 func TestCorruptCellOperationMatrix(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
-	other, _ := Use(m, NewKey[otherShape]("other"))
+	other, _ := Use[otherShape](m, "other")
 	sid := establish(t, m, h, "fine")
 
 	// Corrupt one cell's value directly in the store.
 	rec, _ := mem.Load(context.Background(), sid)
-	rec.Payload = []byte(`{"` + h.Key() + `": not-json, "other": {"Count": 3}}`)
+	rec.Payload = []byte(`{"` + h.Name() + `": not-json, "other": {"Count": 3}}`)
 	// Build a valid envelope with one corrupt cell value.
-	rec.Payload = []byte(`{"` + h.Key() + `": "not-an-object", "other": {"Count": 3}}`)
+	rec.Payload = []byte(`{"` + h.Name() + `": "not-an-object", "other": {"Count": 3}}`)
 	if _, err := mem.Save(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
@@ -391,14 +391,14 @@ func TestCorruptCellOperationMatrix(t *testing.T) {
 			t.Errorf("Save on corrupt cell = %v", err)
 		}
 	})
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "recovered" {
 		t.Fatalf("recovery = %+v, %v", got, err)
 	}
 }
 
 func TestMalformedEnvelopeMatrix(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 	sid := establish(t, m, h, "fine")
@@ -451,7 +451,7 @@ func TestMalformedEnvelopeMatrix(t *testing.T) {
 }
 
 func TestDestroyNeverDecodesEnvelope(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 	sid := establish(t, m, h, "fine")
@@ -477,16 +477,16 @@ func TestDestroyNeverDecodesEnvelope(t *testing.T) {
 
 func TestOutOfBandTrioAndAbsence(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		mem := NewMemoryStore()
+		mem := NewMemoryStore(MemoryOptions{})
 		m := newTestManager(t, func(c *Config) { c.Store = mem })
 		h := appH(m)
-		other, _ := Use(m, NewKey[otherShape]("other"))
+		other, _ := Use[otherShape](m, "other")
 		sid := establish(t, m, h, "alice")
 		ctx := context.Background()
 
 		// Out-of-band operations do not create missing sessions.
-		if _, err := h.Load(ctx, "missing"); !errors.Is(err, ErrNotFound) {
-			t.Errorf("Load missing = %v", err)
+		if _, err := h.GetSID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("GetSID missing = %v", err)
 		}
 		if err := h.UpdateSID(ctx, "missing", func(*appSession) error { return nil }); !errors.Is(err, ErrNotFound) {
 			t.Errorf("UpdateSID missing = %v", err)
@@ -499,8 +499,8 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 		}
 
 		// Absent cells read as zero values.
-		if v, err := other.Load(ctx, sid); err != nil || v.Count != 0 {
-			t.Errorf("Load absent cell = %+v, %v", v, err)
+		if v, err := other.GetSID(ctx, sid); err != nil || v.Count != 0 {
+			t.Errorf("GetSID absent cell = %+v, %v", v, err)
 		}
 		if err := other.UpdateSID(ctx, sid, func(s *otherShape) error {
 			if s.Count != 0 {
@@ -514,7 +514,7 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 		if err := other.ClearSID(ctx, sid); err != nil {
 			t.Fatal(err)
 		}
-		if ok, _ := hasOutOfBand(m, sid, other.Key()); ok {
+		if ok, _ := hasOutOfBand(m, sid, other.Name()); ok {
 			t.Error("ClearSID left the cell")
 		}
 
@@ -546,20 +546,19 @@ func hasOutOfBand(m *Manager, sid, key string) (bool, error) {
 }
 
 func TestCapabilityMissing(t *testing.T) {
-	m := newTestManager(t, func(c *Config) { c.Store = plainStore{inner: NewMemoryStore()} })
-	if _, err := m.ListForUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
-		t.Errorf("ListForUser = %v", err)
+	m := newTestManager(t, func(c *Config) { c.Store = plainStore{inner: NewMemoryStore(MemoryOptions{})} })
+	if _, err := m.ListByUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
+		t.Errorf("ListByUser = %v", err)
 	}
-	if _, err := m.RevokeAllForUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
-		t.Errorf("RevokeAllForUser = %v", err)
+	if _, err := m.RevokeByUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
+		t.Errorf("RevokeByUser = %v", err)
 	}
 }
 
 func TestReadOnlyBumpTokenRules(t *testing.T) {
 	clock := time.Now()
 	now := func() time.Time { return clock }
-	mem := NewMemoryStore()
-	mem.now = now
+	mem := NewMemoryStore(MemoryOptions{Now: now})
 	m := newTestManager(t, func(c *Config) {
 		c.Store = mem
 		c.Now = now
@@ -593,7 +592,7 @@ func TestReadOnlyBumpTokenRules(t *testing.T) {
 
 	// Stores without TTLBumper skip read-time sliding.
 	plain := newTestManager(t, func(c *Config) {
-		c.Store = plainStore{inner: NewMemoryStore()}
+		c.Store = plainStore{inner: NewMemoryStore(MemoryOptions{})}
 		c.Now = now
 		c.IdleExpiry = 10 * time.Minute
 		c.IdleBumpInterval = time.Minute
@@ -648,7 +647,7 @@ func TestTokenExpiryMinRule(t *testing.T) {
 }
 
 func TestPostCommitUpdateMovesServerSideOnly(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 	sid := establish(t, m, h, "v")
@@ -675,17 +674,17 @@ func TestPostCommitUpdateMovesServerSideOnly(t *testing.T) {
 			t.Fatalf("post-commit Update refreshed the client token: %v", c)
 		}
 	}
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "mid-stream" {
 		t.Fatalf("post-commit Update value = %+v", got)
 	}
 }
 
 func TestUpdateThenStagedSaveVersionCoherence(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = -1 })
 	ha := appH(m)
-	hb, _ := Use(m, NewKey[otherShape]("other"))
+	hb, _ := Use[otherShape](m, "other")
 	sid := establish(t, m, ha, "v")
 
 	// Immediate Update refreshes the request state's CAS version.
@@ -702,15 +701,15 @@ func TestUpdateThenStagedSaveVersionCoherence(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("version coherence: commit = %d, body %q", rr.Code, rr.Body.String())
 	}
-	a, _ := ha.Load(context.Background(), sid)
-	b, _ := hb.Load(context.Background(), sid)
+	a, _ := ha.GetSID(context.Background(), sid)
+	b, _ := hb.GetSID(context.Background(), sid)
 	if a.Name != "updated" || b.Count != 5 {
 		t.Fatalf("cross-cell convergence: %+v, %+v", a, b)
 	}
 }
 
 func TestDestroyThenPromoteVisibility(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 	sid := establish(t, m, h, "v")
@@ -730,7 +729,7 @@ func TestDestroyThenPromoteVisibility(t *testing.T) {
 }
 
 func TestCommitFailureDiscardsHandlerBody(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	store := &hookStore{inner: mem}
 	var logs bytes.Buffer
 	m := newTestManager(t, func(c *Config) {
@@ -770,7 +769,7 @@ func TestCommitFailureDiscardsHandlerBody(t *testing.T) {
 
 func TestPostCommitSaveOutranksEncodeError(t *testing.T) {
 	m := newTestManager(t)
-	h, _ := Use(m, NewKey[struct{ Ch chan int }]("unencodable"))
+	h, _ := Use[struct{ Ch chan int }](m, "unencodable")
 
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -868,7 +867,7 @@ func TestUpdatePanicIsRecoverable(t *testing.T) {
 
 // Request cancellation does not cancel staged store operations.
 func TestCommitSurvivesCanceledRequestContext(t *testing.T) {
-	mem := NewMemoryStore()
+	mem := NewMemoryStore(MemoryOptions{})
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
 	sid := establish(t, m, h, "v")
@@ -939,7 +938,7 @@ func TestHijackAfterWriteIsAllowed(t *testing.T) {
 
 // A failed commit makes the connection non-hijackable.
 func TestHijackRefusedAfterFailedCommit(t *testing.T) {
-	store := &hookStore{inner: NewMemoryStore()}
+	store := &hookStore{inner: NewMemoryStore(MemoryOptions{})}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = -1 })
 	h := appH(m)
 
@@ -954,5 +953,64 @@ func TestHijackRefusedAfterFailedCommit(t *testing.T) {
 	})).ServeHTTP(hr, req)
 	if hr.hijacked {
 		t.Fatal("connection handed over despite the shipped 500")
+	}
+}
+
+func TestSharedClockCommitAndLoad(t *testing.T) {
+	clock := time.Now().Add(-2 * time.Hour)
+	now := func() time.Time { return clock }
+
+	mem := NewMemoryStore(MemoryOptions{Now: now})
+	m := newTestManager(t, func(c *Config) {
+		c.Store = mem
+		c.Now = now
+		c.IdleExpiry = time.Hour
+	})
+	h := appH(m)
+	sid := establish(t, m, h, "v")
+
+	if _, err := h.GetSID(context.Background(), sid); err != nil {
+		t.Fatalf("load after commit on shared clock: %v", err)
+	}
+}
+
+func TestRotationDeleteFailureIsLogged(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	mem := NewMemoryStore(MemoryOptions{})
+	store := &hookStore{inner: mem}
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.Logger = logger
+	})
+	h := appH(m)
+	originalSID := establish(t, m, h, "v")
+
+	injectErr := errors.New("injected: delete failure")
+	store.mu.Lock()
+	store.beforeDelete = func(sid string) error {
+		if sid == originalSID {
+			return injectErr
+		}
+		return nil
+	}
+	store.mu.Unlock()
+
+	rr := serve(t, m, originalSID, func(w http.ResponseWriter, r *http.Request) {
+		if err := m.Renew(r.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	newSID, _ := sessionCookie(t, rr)
+	if newSID == originalSID || newSID == "" {
+		t.Fatalf("rotation did not issue a new SID: %q", newSID)
+	}
+	if _, err := mem.Load(context.Background(), originalSID); err != nil {
+		t.Errorf("old SID gone after failed delete: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "session rotation: old SID delete failed") {
+		t.Errorf("delete failure not logged; got: %q", logBuf.String())
 	}
 }
