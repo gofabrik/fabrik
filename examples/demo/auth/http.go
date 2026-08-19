@@ -41,11 +41,12 @@ type LoginForm struct {
 	Error string
 }
 
+//fabrik:inject IPLimiter name=loginip
 type Handlers struct {
 	Auth      *session.Auth
 	Verifier  *password.Verifier
 	Limiter   *ratelimit.Limiter
-	IPLimiter *LoginIPLimiter
+	IPLimiter *ratelimit.Limiter
 }
 
 //fabrik:web GET /login middleware=nocache

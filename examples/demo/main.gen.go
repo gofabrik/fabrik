@@ -320,7 +320,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	authLoginIPLimiter, err := auth.NewLoginIPLimiter(sharedRatelimitMemoryStore)
+	authRatelimitLimiterLoginip, err := auth.NewLoginIPLimiter(sharedRatelimitMemoryStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -328,7 +328,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Auth:      authSessionAuth,
 		Verifier:  authPasswordVerifier,
 		Limiter:   authRatelimitLimiter,
-		IPLimiter: authLoginIPLimiter,
+		IPLimiter: authRatelimitLimiterLoginip,
 	}
 	assetKind, err := assetsOptions.Mode()
 	if err != nil {
