@@ -63,7 +63,7 @@ func TestRenewRotatesAndPreservesAbsoluteExpiry(t *testing.T) {
 	if !after.AbsoluteExpiry.Equal(before.AbsoluteExpiry) {
 		t.Fatalf("rotation moved the hard deadline: %v -> %v", before.AbsoluteExpiry, after.AbsoluteExpiry)
 	}
-	got, _ := h.Load(context.Background(), newSID)
+	got, _ := h.GetSID(context.Background(), newSID)
 	if got.Name != "renewed" {
 		t.Fatalf("staged cell lost in rotation: %+v", got)
 	}
@@ -107,7 +107,7 @@ func TestPromoteEstablishedRotatesWithIdentity(t *testing.T) {
 	if err != nil || rec.UserID != "u1" {
 		t.Fatalf("promoted record = %+v, %v", rec, err)
 	}
-	got, _ := h.Load(context.Background(), newSID)
+	got, _ := h.GetSID(context.Background(), newSID)
 	if got.Name != "cart" {
 		t.Fatalf("login lost the cart: %+v", got)
 	}
@@ -195,7 +195,7 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 	if _, ok, _ := m.loadCell(context.Background(), newSID, other.Name()); ok {
 		t.Fatal("pre-Destroy cell leaked into the fresh session")
 	}
-	got, _ := h.Load(context.Background(), newSID)
+	got, _ := h.GetSID(context.Background(), newSID)
 	if got.Name != "flash" {
 		t.Fatalf("post-Destroy stage = %+v", got)
 	}
@@ -294,7 +294,7 @@ func TestPostCommitMutatorMatrix(t *testing.T) {
 			t.Errorf("post-commit established Update = %v", err)
 		}
 	})
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "streamed" {
 		t.Fatalf("post-commit Update value = %+v", got)
 	}
@@ -391,7 +391,7 @@ func TestCorruptCellOperationMatrix(t *testing.T) {
 			t.Errorf("Save on corrupt cell = %v", err)
 		}
 	})
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "recovered" {
 		t.Fatalf("recovery = %+v, %v", got, err)
 	}
@@ -485,8 +485,8 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 		ctx := context.Background()
 
 		// Out-of-band operations do not create missing sessions.
-		if _, err := h.Load(ctx, "missing"); !errors.Is(err, ErrNotFound) {
-			t.Errorf("Load missing = %v", err)
+		if _, err := h.GetSID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("GetSID missing = %v", err)
 		}
 		if err := h.UpdateSID(ctx, "missing", func(*appSession) error { return nil }); !errors.Is(err, ErrNotFound) {
 			t.Errorf("UpdateSID missing = %v", err)
@@ -499,8 +499,8 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 		}
 
 		// Absent cells read as zero values.
-		if v, err := other.Load(ctx, sid); err != nil || v.Count != 0 {
-			t.Errorf("Load absent cell = %+v, %v", v, err)
+		if v, err := other.GetSID(ctx, sid); err != nil || v.Count != 0 {
+			t.Errorf("GetSID absent cell = %+v, %v", v, err)
 		}
 		if err := other.UpdateSID(ctx, sid, func(s *otherShape) error {
 			if s.Count != 0 {
@@ -547,11 +547,11 @@ func hasOutOfBand(m *Manager, sid, key string) (bool, error) {
 
 func TestCapabilityMissing(t *testing.T) {
 	m := newTestManager(t, func(c *Config) { c.Store = plainStore{inner: NewMemoryStore()} })
-	if _, err := m.ListForUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
-		t.Errorf("ListForUser = %v", err)
+	if _, err := m.ListByUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
+		t.Errorf("ListByUser = %v", err)
 	}
-	if _, err := m.RevokeAllForUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
-		t.Errorf("RevokeAllForUser = %v", err)
+	if _, err := m.RevokeByUser(context.Background(), "u"); !errors.Is(err, ErrCapabilityMissing) {
+		t.Errorf("RevokeByUser = %v", err)
 	}
 }
 
@@ -675,7 +675,7 @@ func TestPostCommitUpdateMovesServerSideOnly(t *testing.T) {
 			t.Fatalf("post-commit Update refreshed the client token: %v", c)
 		}
 	}
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "mid-stream" {
 		t.Fatalf("post-commit Update value = %+v", got)
 	}
@@ -702,8 +702,8 @@ func TestUpdateThenStagedSaveVersionCoherence(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("version coherence: commit = %d, body %q", rr.Code, rr.Body.String())
 	}
-	a, _ := ha.Load(context.Background(), sid)
-	b, _ := hb.Load(context.Background(), sid)
+	a, _ := ha.GetSID(context.Background(), sid)
+	b, _ := hb.GetSID(context.Background(), sid)
 	if a.Name != "updated" || b.Count != 5 {
 		t.Fatalf("cross-cell convergence: %+v, %+v", a, b)
 	}

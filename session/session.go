@@ -107,7 +107,7 @@ type TTLBumper interface {
 
 // UserIndexer is implemented by stores that maintain a secondary
 // index from user ID to session IDs. Required for
-// [Manager.ListForUser] and [Manager.RevokeAllForUser].
+// [Manager.ListByUser] and [Manager.RevokeByUser].
 //
 // Implementations keep the index current on Save and Delete.
 // ListByUser returns only live sessions; RevokeByUser deletes every

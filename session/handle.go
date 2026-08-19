@@ -116,8 +116,8 @@ func (h *Handle[T]) Clear(ctx context.Context) error {
 	return h.m.cellClear(ctx, h.key)
 }
 
-// Load reads the cell by SID without request middleware.
-func (h *Handle[T]) Load(ctx context.Context, sid string) (T, error) {
+// GetSID reads the cell by SID without request middleware.
+func (h *Handle[T]) GetSID(ctx context.Context, sid string) (T, error) {
 	var zero T
 	raw, ok, err := h.m.loadCell(ctx, sid, h.key)
 	if err != nil || !ok {

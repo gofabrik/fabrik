@@ -137,7 +137,7 @@ func TestFreshSessionZeroValueAndStagedView(t *testing.T) {
 	if !ok || sid == "" {
 		t.Fatal("staged save did not mint a session cookie")
 	}
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "bob" {
 		t.Fatalf("stored value = %+v, %v", got, err)
 	}
@@ -293,7 +293,7 @@ func TestUpdateClosureErrorAbortsCleanly(t *testing.T) {
 		}
 	})
 	sid, _ := sessionCookie(t, rr)
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "staged" {
 		t.Fatalf("committed value = %+v, %v", got, err)
 	}
@@ -326,7 +326,7 @@ func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
 	if !ok || sid == "" {
 		t.Fatal("minting Update left its token behind")
 	}
-	got, err := h.Load(context.Background(), sid)
+	got, err := h.GetSID(context.Background(), sid)
 	if err != nil || got.Name != "minted" {
 		t.Fatalf("minted value = %+v, %v", got, err)
 	}
@@ -357,11 +357,11 @@ func TestCommitReMergePreservesOtherCells(t *testing.T) {
 	})
 
 	// Re-merge preserves the out-of-band cell and lands the staged one.
-	a, err := ha.Load(context.Background(), sid)
+	a, err := ha.GetSID(context.Background(), sid)
 	if err != nil || a.Name != "out-of-band" {
 		t.Fatalf("cell a = %+v, %v (re-merge clobbered an untouched cell)", a, err)
 	}
-	b, err := hb.Load(context.Background(), sid)
+	b, err := hb.GetSID(context.Background(), sid)
 	if err != nil || b.Count != 42 {
 		t.Fatalf("cell b = %+v, %v", b, err)
 	}
@@ -385,7 +385,7 @@ func TestCommitSameCellStagedSaveWins(t *testing.T) {
 		})
 	})
 
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "staged-wins" {
 		t.Fatalf("same-cell conflict resolved to %q, want the staged save", got.Name)
 	}
@@ -409,7 +409,7 @@ func TestCommitDeletedRecordStaysGone(t *testing.T) {
 	if rr2.Code != http.StatusInternalServerError {
 		t.Fatalf("commit against a revoked session = %d, want 500", rr2.Code)
 	}
-	if _, err := h.Load(context.Background(), sid); !errors.Is(err, ErrNotFound) {
+	if _, err := h.GetSID(context.Background(), sid); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("revoked session resurrected: %v", err)
 	}
 }
@@ -679,7 +679,7 @@ func TestUpdateSnapshotRaceDirtyFlagRule(t *testing.T) {
 		<-done
 	})
 
-	got, _ := h.Load(context.Background(), sid)
+	got, _ := h.GetSID(context.Background(), sid)
 	if got.Name != "late-save-wins" {
 		t.Fatalf("final value = %q, want the late save (deterministic last-writer-wins)", got.Name)
 	}
