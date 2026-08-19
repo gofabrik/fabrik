@@ -55,8 +55,7 @@ func (h *Handlers) ShowLogin(req *web.Request) (web.Response, error) {
 
 //fabrik:web POST /login middleware=nocache
 func (h *Handlers) Login(req *web.Request) (web.Response, error) {
-	// An unkeyable request or a limiter failure degrades to 503, the
-	// fail-closed behavior the ratelimit middleware defines.
+	// Missing IP keys and limiter failures fail closed with 503.
 	ip := ratelimit.KeyByIP(req.HTTP())
 	if ip == "" {
 		return web.Template("auth/login", LoginForm{Form: forms.Empty[LoginInput](), Error: "temporarily unavailable"}).Status(http.StatusServiceUnavailable), nil
@@ -65,10 +64,8 @@ func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 	if err != nil {
 		return web.Template("auth/login", LoginForm{Form: forms.Empty[LoginInput](), Error: "temporarily unavailable"}).Status(http.StatusServiceUnavailable), nil
 	}
-	// Quota headers ride every rendered response and the login
-	// redirect; error returns render through the adapter, which
-	// drops request-recorded headers, so 500s carry none. Clients
-	// pace on the 429 and success responses, which always do.
+	// Handler responses, including redirects, carry quota headers.
+	// Adapter-rendered errors do not preserve request headers.
 	req.SetHeader("RateLimit-Limit", strconv.Itoa(ipResult.Limit))
 	req.SetHeader("RateLimit-Remaining", strconv.Itoa(ipResult.Remaining))
 	req.SetHeader("RateLimit-Reset", strconv.Itoa(int(math.Ceil(ipResult.ResetAfter.Seconds()))))
