@@ -15,7 +15,7 @@ import (
 func TestAppTierReservedCellAndCoexistence(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
-	lib, err := Use(m, NewKey[otherShape]("github.com/example/lib"))
+	lib, err := Use[otherShape](m, "github.com/example/lib")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -77,7 +77,7 @@ func (m *Manager) register(key string, t reflect.Type) error {
 	defer m.regMu.Unlock()
 	if prev, ok := m.cells[key]; ok {
 		if prev != t {
-			return fmt.Errorf("session: cell key %q is already registered with type %s (this registration: %s)",
+			return fmt.Errorf("session: cell name %q is already registered with type %s (this registration: %s)",
 				key, typeLabel(prev), typeLabel(t))
 		}
 		return nil

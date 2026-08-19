@@ -30,7 +30,7 @@ type data struct {
 	Messages []Message
 }
 
-var key = session.NewKey[data]("github.com/gofabrik/fabrik/flash")
+const cellName = "github.com/gofabrik/fabrik/flash"
 
 // Flash stores one-shot messages.
 type Flash struct {
@@ -39,7 +39,7 @@ type Flash struct {
 
 // New registers flash's private state cell.
 func New(m session.Registry) (*Flash, error) {
-	h, err := session.Use(m, key)
+	h, err := session.Use[data](m, cellName)
 	if err != nil {
 		return nil, err
 	}

@@ -30,8 +30,8 @@
 //
 // # For libraries
 //
-// A reusable library that needs private session data declares a typed
-// [Key] and registers it with [Use] against [Registry].
+// A reusable library that needs private session data calls [Use] with its
+// cell name and payload type against the [Registry].
 //
 // The library is standalone: net/http and any mux, no framework
 // required.

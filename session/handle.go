@@ -11,24 +11,26 @@ import (
 // Registry is the sealed library-facing view of a session [Manager].
 //
 //	func New(m session.Registry) (*CSRF, error) {
-//		h, err := session.Use(m, key)
+//		h, err := session.Use[data](m, cellName)
 //		...
 //	}
 type Registry interface {
 	registry() *Manager
 }
 
-// Use registers a typed library cell and returns its handle.
+// Use registers a typed library cell by name and returns its handle.
 //
-// The same [Key] value is idempotent; the same name with a different
+// The same name and type is idempotent; the same name with a different
 // type is an error. Cell values persist through encoding/json.
 //
+// Exporting both the name constant and payload type deliberately shares the cell.
+//
 // Use is concurrency-safe and intended at wiring time.
-func Use[T any](m Registry, key Key[T]) (*Handle[T], error) {
-	if key.name == "" {
-		return nil, fmt.Errorf("session.Use: zero Key (declare one with session.NewKey)")
+func Use[T any](m Registry, name string) (*Handle[T], error) {
+	if name == "" {
+		return nil, fmt.Errorf("session.Use: name is empty")
 	}
-	if key.name == appKey {
+	if name == appKey {
 		return nil, fmt.Errorf("session.Use: the cell name %q is reserved for the app session (use the Manager's typed accessors)", appKey)
 	}
 	t := reflect.TypeFor[T]()
@@ -42,10 +44,10 @@ func Use[T any](m Registry, key Key[T]) (*Handle[T], error) {
 	if c == nil {
 		return nil, fmt.Errorf("session.Use: Registry carries no session manager (typed nil?)")
 	}
-	if err := c.register(key.name, t); err != nil {
+	if err := c.register(name, t); err != nil {
 		return nil, err
 	}
-	return &Handle[T]{m: c, key: key.name}, nil
+	return &Handle[T]{m: c, key: name}, nil
 }
 
 // Handle is typed access to one session cell.
@@ -54,8 +56,25 @@ type Handle[T any] struct {
 	key string
 }
 
-// Key returns the handle's resolved cell key.
-func (h *Handle[T]) Key() string { return h.key }
+// Name returns the cell name.
+func (h *Handle[T]) Name() string { return h.key }
+
+// appKey is reserved for the app's own session data.
+const appKey = "app"
+
+func checkCellType(t reflect.Type, fn string) error {
+	if t.Kind() != reflect.Struct {
+		return fmt.Errorf("session.%s: cell type %s is not a struct", fn, typeLabel(t))
+	}
+	return nil
+}
+
+func typeLabel(t reflect.Type) string {
+	if t.Name() != "" && t.PkgPath() != "" {
+		return t.PkgPath() + "." + t.Name()
+	}
+	return t.String()
+}
 
 // Get returns the cell's request-current value. Absence reads as T's
 // zero value.

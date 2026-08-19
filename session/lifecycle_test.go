@@ -141,7 +141,7 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 	store := &hookStore{inner: mem}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	h := appH(m)
-	other, _ := Use(m, NewKey[otherShape]("other"))
+	other, _ := Use[otherShape](m, "other")
 
 	// Use an aged absolute expiry to prove rotation preserves it.
 	var sid string
@@ -192,7 +192,7 @@ func TestDestroyThenSaveMintsFreshEveryField(t *testing.T) {
 	if !rec.AbsoluteExpiry.After(oldRec.AbsoluteExpiry) {
 		t.Fatal("fresh session inherited the old hard deadline")
 	}
-	if _, ok, _ := m.loadCell(context.Background(), newSID, other.Key()); ok {
+	if _, ok, _ := m.loadCell(context.Background(), newSID, other.Name()); ok {
 		t.Fatal("pre-Destroy cell leaked into the fresh session")
 	}
 	got, _ := h.Load(context.Background(), newSID)
@@ -357,14 +357,14 @@ func TestCorruptCellOperationMatrix(t *testing.T) {
 	mem := NewMemoryStore()
 	m := newTestManager(t, func(c *Config) { c.Store = mem })
 	h := appH(m)
-	other, _ := Use(m, NewKey[otherShape]("other"))
+	other, _ := Use[otherShape](m, "other")
 	sid := establish(t, m, h, "fine")
 
 	// Corrupt one cell's value directly in the store.
 	rec, _ := mem.Load(context.Background(), sid)
-	rec.Payload = []byte(`{"` + h.Key() + `": not-json, "other": {"Count": 3}}`)
+	rec.Payload = []byte(`{"` + h.Name() + `": not-json, "other": {"Count": 3}}`)
 	// Build a valid envelope with one corrupt cell value.
-	rec.Payload = []byte(`{"` + h.Key() + `": "not-an-object", "other": {"Count": 3}}`)
+	rec.Payload = []byte(`{"` + h.Name() + `": "not-an-object", "other": {"Count": 3}}`)
 	if _, err := mem.Save(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 		mem := NewMemoryStore()
 		m := newTestManager(t, func(c *Config) { c.Store = mem })
 		h := appH(m)
-		other, _ := Use(m, NewKey[otherShape]("other"))
+		other, _ := Use[otherShape](m, "other")
 		sid := establish(t, m, h, "alice")
 		ctx := context.Background()
 
@@ -514,7 +514,7 @@ func TestOutOfBandTrioAndAbsence(t *testing.T) {
 		if err := other.ClearSID(ctx, sid); err != nil {
 			t.Fatal(err)
 		}
-		if ok, _ := hasOutOfBand(m, sid, other.Key()); ok {
+		if ok, _ := hasOutOfBand(m, sid, other.Name()); ok {
 			t.Error("ClearSID left the cell")
 		}
 
@@ -685,7 +685,7 @@ func TestUpdateThenStagedSaveVersionCoherence(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store; c.MaxRetries = -1 })
 	ha := appH(m)
-	hb, _ := Use(m, NewKey[otherShape]("other"))
+	hb, _ := Use[otherShape](m, "other")
 	sid := establish(t, m, ha, "v")
 
 	// Immediate Update refreshes the request state's CAS version.
@@ -770,7 +770,7 @@ func TestCommitFailureDiscardsHandlerBody(t *testing.T) {
 
 func TestPostCommitSaveOutranksEncodeError(t *testing.T) {
 	m := newTestManager(t)
-	h, _ := Use(m, NewKey[struct{ Ch chan int }]("unencodable"))
+	h, _ := Use[struct{ Ch chan int }](m, "unencodable")
 
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

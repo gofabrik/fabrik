@@ -224,7 +224,7 @@ func TestSingleCommitForMultipleDirtyHandles(t *testing.T) {
 	store := &hookStore{inner: NewMemoryStore()}
 	m := newTestManager(t, func(c *Config) { c.Store = store })
 	ha := appH(m)
-	hb, _ := Use(m, NewKey[otherShape]("other"))
+	hb, _ := Use[otherShape](m, "other")
 
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = ha.Save(r.Context(), appSession{Name: "a"})
@@ -335,7 +335,7 @@ func TestUpdateMintsImmediatelyPreCommit(t *testing.T) {
 func TestCommitReMergePreservesOtherCells(t *testing.T) {
 	m := newTestManager(t)
 	ha := appH(m)
-	hb, _ := Use(m, NewKey[otherShape]("other"))
+	hb, _ := Use[otherShape](m, "other")
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		_ = ha.Save(r.Context(), appSession{Name: "v1"})

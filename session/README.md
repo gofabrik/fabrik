@@ -189,20 +189,20 @@ func TestMyStore(t *testing.T) {
 ## For libraries (advanced)
 
 A reusable library that needs private session data never learns the
-app's type. It declares a typed key once and registers it against
-the sealed `Registry` view of the same manager the app holds:
+app's type. It calls `session.Use` with its own cell name and payload
+type against the sealed `Registry` view of the same manager the app holds:
 
 ```go
 package csrf
 
 type data struct{ Token string }
 
-var key = session.NewKey[data]("github.com/you/csrf")
+const cellName = "github.com/you/csrf"
 
 type CSRF struct{ cell *session.Handle[data] }
 
 func New(m session.Registry) (*CSRF, error) {
-	h, err := session.Use(m, key)
+	h, err := session.Use[data](m, cellName)
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +211,9 @@ func New(m session.Registry) (*CSRF, error) {
 ```
 
 The library's data coexists with the app's in one session record and
-commits in the same write. An unexported key keeps the cell private.
+commits in the same write. An unexported payload type keeps the cell
+private because only its package can register the matching name and
+type. Exporting both the name constant and payload type deliberately
+shares the cell.
 `Handle` mirrors the manager's data and out-of-band operations for
 its own cell. App code needs none of this section.

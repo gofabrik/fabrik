@@ -255,8 +255,8 @@ func TestCoexistsWithAppData(t *testing.T) {
 			t.Fatalf("flash lost beside app data: %+v", msgs)
 		}
 	})
-	if !strings.HasPrefix(key.Name(), "github.com/gofabrik/fabrik/flash") {
-		t.Fatalf("cell key = %q", key.Name())
+	if !strings.HasPrefix(cellName, "github.com/gofabrik/fabrik/flash") {
+		t.Fatalf("cell name = %q", cellName)
 	}
 }
 
