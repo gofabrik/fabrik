@@ -212,3 +212,38 @@ func TestScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestClaimSetClone(t *testing.T) {
+	if (*ClaimSet)(nil).Clone() != nil {
+		t.Fatal("nil Clone != nil")
+	}
+	orig := &ClaimSet{
+		Subject:      "alice",
+		Audience:     Audience{"api"},
+		Expiry:       NewNumericDate(time.Unix(1900000000, 0)),
+		NotBefore:    NewNumericDate(time.Unix(1800000000, 0)),
+		IssuedAt:     NewNumericDate(time.Unix(1700000000, 0)),
+		Roles:        []string{"admin"},
+		Groups:       []string{"staff"},
+		Entitlements: []string{"billing"},
+	}
+	c := orig.Clone()
+	if !reflect.DeepEqual(orig, c) {
+		t.Fatalf("clone differs:\n orig=%+v\nclone=%+v", orig, c)
+	}
+	c.Audience[0] = "evil"
+	c.Roles[0] = "evil"
+	c.Groups[0] = "evil"
+	c.Entitlements[0] = "evil"
+	*c.Expiry = NumericDate(1)
+	*c.NotBefore = NumericDate(1)
+	*c.IssuedAt = NumericDate(1)
+	if orig.Audience[0] != "api" || orig.Roles[0] != "admin" ||
+		orig.Groups[0] != "staff" || orig.Entitlements[0] != "billing" {
+		t.Fatal("mutating the clone's slices reached the original")
+	}
+	if orig.Expiry.Time().Unix() != 1900000000 || orig.NotBefore.Time().Unix() != 1800000000 ||
+		orig.IssuedAt.Time().Unix() != 1700000000 {
+		t.Fatal("mutating the clone's dates reached the original")
+	}
+}
