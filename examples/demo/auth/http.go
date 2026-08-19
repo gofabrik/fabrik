@@ -1,11 +1,16 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"net/http"
 
 	"github.com/gofabrik/fabrik/authn"
+	"github.com/gofabrik/fabrik/authn/password"
 	"github.com/gofabrik/fabrik/authn/session"
 	"github.com/gofabrik/fabrik/forms"
+	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/validation"
 	"github.com/gofabrik/fabrik/web"
 )
@@ -17,13 +22,13 @@ type ErrorPage struct {
 
 // LoginInput is the login form.
 type LoginInput struct {
-	Username string
+	Email    string
 	Password string
 }
 
 func (in LoginInput) Validate() validation.Errors {
 	return validation.Check(
-		validation.Field("username", in.Username, validation.Required()),
+		validation.Field("email", in.Email, validation.Required(), validation.Email(), validation.MaxLen(254)),
 		validation.Field("password", in.Password, validation.Required()),
 	)
 }
@@ -35,7 +40,9 @@ type LoginForm struct {
 }
 
 type Handlers struct {
-	Auth *session.Auth
+	Auth     *session.Auth
+	Verifier *password.Verifier
+	Limiter  *ratelimit.Limiter
 }
 
 //fabrik:web GET /login middleware=nocache
@@ -43,7 +50,7 @@ func (h *Handlers) ShowLogin(req *web.Request) (web.Response, error) {
 	return web.Template("auth/login", LoginForm{Form: forms.Empty[LoginInput]()}), nil
 }
 
-//fabrik:web POST /login middleware=nocache
+//fabrik:web POST /login middleware=nocache,loginlimit
 func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 	form, err := forms.Bind[LoginInput](req.HTTP())
 	if err != nil {
@@ -53,20 +60,24 @@ func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 		return web.Template("auth/login", LoginForm{Form: form}).Status(http.StatusUnprocessableEntity), nil
 	}
 
-	var claims *authn.ClaimSet
-	switch form.Data.Username {
-	case "admin":
-		if form.Data.Password == "admin" {
-			claims = &authn.ClaimSet{Subject: "admin", Roles: []string{"admin"}}
-		}
-	case "viewer":
-		if form.Data.Password == "viewer" {
-			claims = &authn.ClaimSet{Subject: "viewer", Roles: []string{"viewer"}}
-		}
+	email := password.NormalizeEmail(form.Data.Email)
+	sum := sha256.Sum256([]byte(email))
+	key := hex.EncodeToString(sum[:])
+
+	result, err := h.Limiter.Allow(req.Context(), key)
+	if err != nil {
+		return nil, err
+	}
+	if !result.Allowed {
+		return web.Template("auth/login", LoginForm{Form: form, Error: "too many attempts"}).Status(http.StatusTooManyRequests), nil
 	}
 
-	if claims == nil {
-		return web.Template("auth/login", LoginForm{Form: form, Error: "invalid credentials"}).Status(http.StatusUnprocessableEntity), nil
+	claims, err := h.Verifier.Authenticate(req.Context(), email, form.Data.Password)
+	if err != nil {
+		if errors.Is(err, password.ErrInvalidCredentials) {
+			return web.Template("auth/login", LoginForm{Form: form, Error: "invalid credentials"}).Status(http.StatusUnprocessableEntity), nil
+		}
+		return nil, err
 	}
 
 	if err := h.Auth.Login(req.Context(), claims); err != nil {
