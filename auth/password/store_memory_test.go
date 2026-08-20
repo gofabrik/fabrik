@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/gofabrik/fabrik/authn"
+	"github.com/gofabrik/fabrik/auth"
 )
 
 func TestMemoryStoreNormalization(t *testing.T) {
 	s := NewMemoryStore()
-	s.Put("  Alice@Example.COM ", Credential{Hash: "h", Claims: authn.ClaimSet{Subject: "alice"}})
+	s.Put("  Alice@Example.COM ", Credential{Hash: "h", Claims: auth.ClaimSet{Subject: "alice"}})
 	variants := []string{"alice@example.com", "ALICE@EXAMPLE.COM", " alice@example.com\t"}
 	for _, email := range variants {
 		if _, err := s.Lookup(context.Background(), email); err != nil {
@@ -57,7 +57,7 @@ func TestMemoryStoreUpdateHashCAS(t *testing.T) {
 
 func TestMemoryStoreClonesAtBothSeams(t *testing.T) {
 	s := NewMemoryStore()
-	in := Credential{Hash: "h", Claims: authn.ClaimSet{Subject: "a", Roles: []string{"admin"}}}
+	in := Credential{Hash: "h", Claims: auth.ClaimSet{Subject: "a", Roles: []string{"admin"}}}
 	s.Put("a@example.com", in)
 	in.Claims.Roles[0] = "evil-after-put"
 	got, err := s.Lookup(context.Background(), "a@example.com")

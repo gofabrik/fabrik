@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/gofabrik/fabrik/authn"
+	"github.com/gofabrik/fabrik/auth"
 )
 
 var (
@@ -35,7 +35,7 @@ func NormalizeEmail(email string) string {
 // Credential contains an account's password hash and login claims.
 type Credential struct {
 	Hash   string
-	Claims authn.ClaimSet
+	Claims auth.ClaimSet
 }
 
 // Store looks up credentials by email. The store owns email
@@ -118,7 +118,7 @@ func New(cfg Config) (*Verifier, error) {
 // Authenticate verifies email and password and returns cloned claims. Invalid
 // input and credentials return ErrInvalidCredentials. Store, hash, and context
 // errors remain distinct. Rehash failures are best-effort and do not fail login.
-func (v *Verifier) Authenticate(ctx context.Context, email, password string) (*authn.ClaimSet, error) {
+func (v *Verifier) Authenticate(ctx context.Context, email, password string) (*auth.ClaimSet, error) {
 	if email == "" || len(email) > MaxEmailLen || password == "" || len(password) > MaxPasswordLen {
 		return nil, ErrInvalidCredentials
 	}

@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofabrik/fabrik/authn"
+	"github.com/gofabrik/fabrik/auth"
 	"github.com/gofabrik/fabrik/session"
 )
 
 var (
-	_ Manager             = (*session.Manager)(nil)
-	_ authn.Authenticator = (*Auth)(nil)
+	_ Manager            = (*session.Manager)(nil)
+	_ auth.Authenticator = (*Auth)(nil)
 )
 
 func newManager(t *testing.T, store session.Store, logger *slog.Logger) *session.Manager {
@@ -72,11 +72,11 @@ func TestLoginAuthenticateRoundTrip(t *testing.T) {
 	m := newManager(t, nil, nil)
 	a := newAuth(t, m, Options{})
 
-	claims := &authn.ClaimSet{
+	claims := &auth.ClaimSet{
 		Subject:      "alice",
 		Issuer:       "test",
-		Audience:     authn.Audience{"web", "api"},
-		IssuedAt:     authn.NewNumericDate(time.Unix(1700000000, 0)),
+		Audience:     auth.Audience{"web", "api"},
+		IssuedAt:     auth.NewNumericDate(time.Unix(1700000000, 0)),
 		ID:           "jti-1",
 		Scope:        "read write",
 		ClientID:     "client-1",
@@ -109,11 +109,11 @@ func TestLoginStripsValidityWindow(t *testing.T) {
 	m := newManager(t, nil, nil)
 	a := newAuth(t, m, Options{})
 
-	claims := &authn.ClaimSet{
+	claims := &auth.ClaimSet{
 		Subject:   "alice",
-		Expiry:    authn.NewNumericDate(time.Now().Add(time.Minute)),
-		NotBefore: authn.NewNumericDate(time.Now()),
-		IssuedAt:  authn.NewNumericDate(time.Unix(1700000000, 0)),
+		Expiry:    auth.NewNumericDate(time.Now().Add(time.Minute)),
+		NotBefore: auth.NewNumericDate(time.Now()),
+		IssuedAt:  auth.NewNumericDate(time.Unix(1700000000, 0)),
 	}
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
 		if err := a.Login(r.Context(), claims); err != nil {
@@ -152,7 +152,7 @@ func TestLoginRotatesSID(t *testing.T) {
 	}
 
 	rr = serve(t, m, pre, func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"}); err != nil {
+		if err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -166,7 +166,7 @@ func TestLoginRequiresSubject(t *testing.T) {
 	m := newManager(t, nil, nil)
 	a := newAuth(t, m, Options{})
 	serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{}); err == nil {
+		if err := a.Login(r.Context(), &auth.ClaimSet{}); err == nil {
 			t.Error("subjectless login accepted")
 		}
 		if err := a.Login(r.Context(), nil); err == nil {
@@ -181,7 +181,7 @@ func TestLogoutDestroysSession(t *testing.T) {
 	a := newAuth(t, m, Options{})
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"}); err != nil {
+		if err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -249,7 +249,7 @@ func TestReadFailureStaysAnError(t *testing.T) {
 	a := newAuth(t, m, Options{Logger: logger})
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"}); err != nil {
+		if err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -268,7 +268,7 @@ func TestReadFailureStaysAnError(t *testing.T) {
 		var reached bool
 		a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r2 *http.Request) {
 			reached = true
-			if _, ok := authn.Claims(r2.Context()); ok {
+			if _, ok := auth.Claims(r2.Context()); ok {
 				t.Error("claims attached despite store failure")
 			}
 		})).ServeHTTP(w, r)
@@ -287,7 +287,7 @@ func TestMiddlewareAttachesAndDefers(t *testing.T) {
 	a := newAuth(t, m, Options{})
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"}); err != nil {
+		if err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -295,17 +295,17 @@ func TestMiddlewareAttachesAndDefers(t *testing.T) {
 
 	serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
 		a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r2 *http.Request) {
-			c, ok := authn.Claims(r2.Context())
+			c, ok := auth.Claims(r2.Context())
 			if !ok || c.Subject != "alice" {
 				t.Fatalf("middleware attached %v, %v", c, ok)
 			}
 		})).ServeHTTP(w, r)
 
 		// Existing claims take precedence over session claims.
-		prior := &authn.ClaimSet{Subject: "token-user"}
-		r2 := r.WithContext(authn.WithClaims(r.Context(), prior))
+		prior := &auth.ClaimSet{Subject: "token-user"}
+		r2 := r.WithContext(auth.WithClaims(r.Context(), prior))
 		a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r3 *http.Request) {
-			if c, _ := authn.Claims(r3.Context()); c != prior {
+			if c, _ := auth.Claims(r3.Context()); c != prior {
 				t.Fatalf("session claims overrode existing claims: %v", c)
 			}
 		})).ServeHTTP(w, r2)
@@ -323,7 +323,7 @@ func TestMiddlewareDefaultLoggerLogsReadFailure(t *testing.T) {
 	a := newAuth(t, m, Options{})
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"}); err != nil {
+		if err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -361,7 +361,7 @@ func TestAuthenticateRejectsIdentityMismatch(t *testing.T) {
 	a := newAuth(t, m, Options{})
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"}); err != nil {
+		if err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -397,7 +397,7 @@ func TestLoginFailingPromoteStagesNothing(t *testing.T) {
 	a := newAuth(t, promoteFailManager{m}, Options{})
 
 	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"}); !errors.Is(err, errPromote) {
+		if err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"}); !errors.Is(err, errPromote) {
 			t.Fatalf("Login = %v, want the promote error", err)
 		}
 	})
@@ -435,7 +435,7 @@ func TestLoginSaveFailureDestroysSession(t *testing.T) {
 	cs.corrupt = true
 
 	serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
-		err := a.Login(r.Context(), &authn.ClaimSet{Subject: "alice"})
+		err := a.Login(r.Context(), &auth.ClaimSet{Subject: "alice"})
 		if err == nil {
 			t.Fatal("login succeeded on a corrupt cell envelope")
 		}

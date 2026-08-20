@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofabrik/fabrik/authn"
+	"github.com/gofabrik/fabrik/auth"
 	"github.com/gofabrik/fabrik/cache"
 	sqlitecache "github.com/gofabrik/fabrik/cache/sqlite"
 	"github.com/gofabrik/fabrik/flash"
@@ -251,10 +251,10 @@ func NewTemplateRequestFuncs(sessions *session.Manager, fl *flash.Flash) web.Req
 			}
 		},
 		"auth": func(r *http.Request) any {
-			return func() *authn.ClaimSet {
-				c, _ := authn.Claims(r.Context())
+			return func() *auth.ClaimSet {
+				c, _ := auth.Claims(r.Context())
 				if c == nil {
-					return &authn.ClaimSet{}
+					return &auth.ClaimSet{}
 				}
 				return c
 			}

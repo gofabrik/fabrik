@@ -6,7 +6,7 @@ default_change_logs:
 components:
   - fabrik
   - assets
-  - authn
+  - auth
   - cache
   - config
   - diag

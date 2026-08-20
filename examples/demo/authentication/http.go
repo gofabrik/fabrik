@@ -1,4 +1,4 @@
-package auth
+package authentication
 
 import (
 	"crypto/sha256"
@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gofabrik/fabrik/authn"
-	"github.com/gofabrik/fabrik/authn/password"
-	"github.com/gofabrik/fabrik/authn/session"
+	"github.com/gofabrik/fabrik/auth"
+	"github.com/gofabrik/fabrik/auth/password"
+	"github.com/gofabrik/fabrik/auth/session"
 	"github.com/gofabrik/fabrik/forms"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/validation"
@@ -119,12 +119,12 @@ func (h *Handlers) Logout(req *web.Request) (web.Response, error) {
 
 //fabrik:web GET /private middleware=nocache,authenticated
 func (h *Handlers) Private(req *web.Request) (web.Response, error) {
-	c, _ := authn.Claims(req.Context())
+	c, _ := auth.Claims(req.Context())
 	return web.Template("auth/private", c), nil
 }
 
 //fabrik:web GET /admin middleware=nocache,authenticated,admin
 func (h *Handlers) Admin(req *web.Request) (web.Response, error) {
-	c, _ := authn.Claims(req.Context())
+	c, _ := auth.Claims(req.Context())
 	return web.Template("auth/admin", c), nil
 }

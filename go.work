@@ -3,9 +3,9 @@ go 1.27
 use (
 	./assets
 	./assets/directive
-	./authn
-	./authn/password
-	./authn/session
+	./auth
+	./auth/password
+	./auth/session
 	./cache
 	./cache/mysql/dbtest
 	./cache/postgres/dbtest
@@ -53,9 +53,9 @@ use (
 replace (
 	github.com/gofabrik/fabrik/assets v0.1.0 => ./assets
 	github.com/gofabrik/fabrik/assets/directive v0.1.0 => ./assets/directive
-	github.com/gofabrik/fabrik/authn v0.1.0 => ./authn
-	github.com/gofabrik/fabrik/authn/password v0.1.0 => ./authn/password
-	github.com/gofabrik/fabrik/authn/session v0.1.0 => ./authn/session
+	github.com/gofabrik/fabrik/auth v0.1.0 => ./auth
+	github.com/gofabrik/fabrik/auth/password v0.1.0 => ./auth/password
+	github.com/gofabrik/fabrik/auth/session v0.1.0 => ./auth/session
 	github.com/gofabrik/fabrik/cache v0.1.0 => ./cache
 	github.com/gofabrik/fabrik/cli v0.1.0 => ./cli
 	github.com/gofabrik/fabrik/cli/directive v0.1.0 => ./cli/directive

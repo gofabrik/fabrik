@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofabrik/fabrik/authn"
+	"github.com/gofabrik/fabrik/auth"
 )
 
 type countingHasher struct {
@@ -71,7 +71,7 @@ func seeded(t *testing.T, h Hasher) *MemoryStore {
 	}
 	store.Put("alice@example.com", Credential{
 		Hash:   encoded,
-		Claims: authn.ClaimSet{Subject: "alice", Roles: []string{"admin"}},
+		Claims: auth.ClaimSet{Subject: "alice", Roles: []string{"admin"}},
 	})
 	return store
 }
@@ -215,7 +215,7 @@ func TestStoreErrorsSurface(t *testing.T) {
 func TestMalformedStoredHashSurfaces(t *testing.T) {
 	h := newCountingHasher()
 	store := NewMemoryStore()
-	store.Put("bob@example.com", Credential{Hash: "corrupt", Claims: authn.ClaimSet{Subject: "bob"}})
+	store.Put("bob@example.com", Credential{Hash: "corrupt", Claims: auth.ClaimSet{Subject: "bob"}})
 	v := newVerifier(t, Config{Store: store, Hasher: h})
 	_, err := v.Authenticate(t.Context(), "bob@example.com", "pw")
 	if !errors.Is(err, ErrInvalidHash) || errors.Is(err, ErrInvalidCredentials) {
@@ -230,7 +230,7 @@ func TestRehashOnLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewMemoryStore()
-	store.Put("alice@example.com", Credential{Hash: encoded, Claims: authn.ClaimSet{Subject: "alice"}})
+	store.Put("alice@example.com", Credential{Hash: encoded, Claims: auth.ClaimSet{Subject: "alice"}})
 	current := Argon2id{Time: 1, MemoryKiB: 16384}
 	v := newVerifier(t, Config{Store: store, Hasher: current})
 
@@ -282,7 +282,7 @@ func TestRehashLosesToConcurrentReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	mem := NewMemoryStore()
-	mem.Put("alice@example.com", Credential{Hash: oldHash, Claims: authn.ClaimSet{Subject: "alice"}})
+	mem.Put("alice@example.com", Credential{Hash: oldHash, Claims: auth.ClaimSet{Subject: "alice"}})
 	current := Argon2id{Time: 1, MemoryKiB: 16384}
 
 	resetHash, err := current.Hash("brand new password")
@@ -291,7 +291,7 @@ func TestRehashLosesToConcurrentReset(t *testing.T) {
 	}
 	store := &raceStore{MemoryStore: mem}
 	store.onLookup = func() {
-		mem.Put("alice@example.com", Credential{Hash: resetHash, Claims: authn.ClaimSet{Subject: "alice"}})
+		mem.Put("alice@example.com", Credential{Hash: resetHash, Claims: auth.ClaimSet{Subject: "alice"}})
 	}
 	v := newVerifier(t, Config{Store: store, Hasher: current})
 
@@ -318,7 +318,7 @@ func TestReadOnlyStoreUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	mem := NewMemoryStore()
-	mem.Put("alice@example.com", Credential{Hash: encoded, Claims: authn.ClaimSet{Subject: "alice"}})
+	mem.Put("alice@example.com", Credential{Hash: encoded, Claims: auth.ClaimSet{Subject: "alice"}})
 	v := newVerifier(t, Config{Store: readOnlyStore{inner: mem}, Hasher: Argon2id{Time: 1, MemoryKiB: 16384}})
 	if _, err := v.Authenticate(t.Context(), "alice@example.com", "open sesame"); err != nil {
 		t.Fatal(err)
@@ -344,7 +344,7 @@ func TestFailedRehashLogsAndSucceeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	mem := NewMemoryStore()
-	mem.Put("alice@example.com", Credential{Hash: encoded, Claims: authn.ClaimSet{Subject: "alice"}})
+	mem.Put("alice@example.com", Credential{Hash: encoded, Claims: auth.ClaimSet{Subject: "alice"}})
 	var buf bytes.Buffer
 	v := newVerifier(t, Config{
 		Store:  failingRehashStore{mem},
@@ -366,7 +366,7 @@ func TestHashChangedSkipsSilently(t *testing.T) {
 		t.Fatal(err)
 	}
 	mem := NewMemoryStore()
-	mem.Put("alice@example.com", Credential{Hash: encoded, Claims: authn.ClaimSet{Subject: "alice"}})
+	mem.Put("alice@example.com", Credential{Hash: encoded, Claims: auth.ClaimSet{Subject: "alice"}})
 	var buf bytes.Buffer
 	store := &raceStore{MemoryStore: mem}
 	replacement, err := old.Hash("open sesame")
@@ -374,7 +374,7 @@ func TestHashChangedSkipsSilently(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.onLookup = func() {
-		mem.Put("alice@example.com", Credential{Hash: replacement, Claims: authn.ClaimSet{Subject: "alice"}})
+		mem.Put("alice@example.com", Credential{Hash: replacement, Claims: auth.ClaimSet{Subject: "alice"}})
 	}
 	v := newVerifier(t, Config{
 		Store:  store,
@@ -404,10 +404,10 @@ func TestClaimsMutationIsolated(t *testing.T) {
 	}
 	store := &rawStore{cred: Credential{
 		Hash: encoded,
-		Claims: authn.ClaimSet{
+		Claims: auth.ClaimSet{
 			Subject:  "alice",
-			Audience: authn.Audience{"api"},
-			IssuedAt: authn.NewNumericDate(time.Unix(1700000000, 0)),
+			Audience: auth.Audience{"api"},
+			IssuedAt: auth.NewNumericDate(time.Unix(1700000000, 0)),
 			Roles:    []string{"admin"},
 		},
 	}}
@@ -418,7 +418,7 @@ func TestClaimsMutationIsolated(t *testing.T) {
 	}
 	c.Roles[0] = "evil"
 	c.Audience[0] = "evil"
-	*c.IssuedAt = authn.NumericDate(1)
+	*c.IssuedAt = auth.NumericDate(1)
 	if store.cred.Claims.Roles[0] != "admin" || store.cred.Claims.Audience[0] != "api" ||
 		store.cred.Claims.IssuedAt.Time().Unix() != 1700000000 {
 		t.Fatal("mutating returned claims reached the stored credential")
@@ -485,7 +485,7 @@ func TestRehashSharesSemaphore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		mem.Put(fmt.Sprintf("u%d@example.com", i), Credential{Hash: encoded, Claims: authn.ClaimSet{Subject: "u"}})
+		mem.Put(fmt.Sprintf("u%d@example.com", i), Credential{Hash: encoded, Claims: auth.ClaimSet{Subject: "u"}})
 	}
 	v := newVerifier(t, Config{Store: mem, Hasher: h, MaxConcurrent: 1})
 	h.peak.Store(0)

@@ -4,9 +4,9 @@ module-sets:
     modules:
       - github.com/gofabrik/fabrik/assets
       - github.com/gofabrik/fabrik/assets/directive
-      - github.com/gofabrik/fabrik/authn
-      - github.com/gofabrik/fabrik/authn/password
-      - github.com/gofabrik/fabrik/authn/session
+      - github.com/gofabrik/fabrik/auth
+      - github.com/gofabrik/fabrik/auth/password
+      - github.com/gofabrik/fabrik/auth/session
       - github.com/gofabrik/fabrik/cache
       - github.com/gofabrik/fabrik/cli
       - github.com/gofabrik/fabrik/cli/directive

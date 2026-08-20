@@ -1,14 +1,14 @@
-# authn/password
+# auth/password
 
 Package `password` verifies email/password credentials with Argon2id and
-returns [authn](../README.md) claims for a session login.
+returns [auth](../README.md) claims for a session login.
 
 ```go
 store := password.NewMemoryStore()
 hash, _ := password.Argon2id{}.Hash("open sesame")
 store.Put("alice@example.com", password.Credential{
 	Hash:   hash,
-	Claims: authn.ClaimSet{Subject: "alice", Roles: []string{"admin"}},
+	Claims: auth.ClaimSet{Subject: "alice", Roles: []string{"admin"}},
 })
 
 verifier, _ := password.New(password.Config{Store: store})
@@ -53,7 +53,7 @@ Rate limiting stays outside the library. Apply it before `Authenticate` so
 blocked attempts do not reach the hasher. Account keys must use the store's
 normalization; `NormalizeEmail` matches `MemoryStore`.
 
-`Authenticate` is not an `authn.Authenticator` because no credential is carried
+`Authenticate` is not an `auth.Authenticator` because no credential is carried
 on each request. Pass its returned claims to a session login.
 
 ## Stores

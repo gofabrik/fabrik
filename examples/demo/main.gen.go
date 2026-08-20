@@ -21,7 +21,7 @@ import (
 	"github.com/gofabrik/fabrik/router"
 	"github.com/gofabrik/fabrik/web"
 
-	"demo/auth"
+	"demo/authentication"
 	"demo/shared"
 	web2 "demo/web"
 )
@@ -307,28 +307,28 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	authSessionAuth, err := auth.NewSessionAuth(sharedSessionManager)
+	authenticationSessionAuth, err := authentication.NewSessionAuth(sharedSessionManager)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	authPasswordVerifier, err := auth.NewPasswordVerifier()
+	authenticationPasswordVerifier, err := authentication.NewPasswordVerifier()
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
-	authRatelimitLimiter, err := auth.NewLoginLimiter(sharedRatelimitMemoryStore)
+	authenticationRatelimitLimiter, err := authentication.NewLoginLimiter(sharedRatelimitMemoryStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	authRatelimitLimiterLoginip, err := auth.NewLoginIPLimiter(sharedRatelimitMemoryStore)
+	authenticationRatelimitLimiterLoginip, err := authentication.NewLoginIPLimiter(sharedRatelimitMemoryStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	authHandlers := &auth.Handlers{
-		Auth:      authSessionAuth,
-		Verifier:  authPasswordVerifier,
-		Limiter:   authRatelimitLimiter,
-		IPLimiter: authRatelimitLimiterLoginip,
+	authenticationHandlers := &authentication.Handlers{
+		Auth:      authenticationSessionAuth,
+		Verifier:  authenticationPasswordVerifier,
+		Limiter:   authenticationRatelimitLimiter,
+		IPLimiter: authenticationRatelimitLimiterLoginip,
 	}
 	assetKind, err := assetsOptions.Mode()
 	if err != nil {
@@ -359,7 +359,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	sharedWebRequestFuncs := shared.NewTemplateRequestFuncs(sharedSessionManager, sharedFlash)
 	requestFuncs := web.MergeRequestFuncs(web.DefaultRequestFuncs(), sharedWebRequestFuncs)
 	appTemplates, err := web.LoadTemplateSources([]web.TemplateSource{
-		{FS: auth.Templates, Dir: "templates"},
+		{FS: authentication.Templates, Dir: "templates"},
 		{FS: shared.Templates, Dir: "templates"},
 		{FS: web2.Templates, Dir: "templates"},
 	}, web.FuncMap(assetServer.FuncMap()), sharedWebFuncMap, requestFuncs.Stubs())
@@ -472,8 +472,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Middleware
-	authenticatedMW := auth.Authenticated(adapter)
-	adminMW := auth.Admin(adapter)
+	authenticatedMW := authentication.Authenticated(adapter)
+	adminMW := authentication.Admin(adapter)
 	// before=*
 	r.Use(shared.LogAndRecover)
 	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
@@ -485,7 +485,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	sessionMW := shared.SessionMiddleware(sharedSessionManager)
 	// before sessionauth
 	r.Use(sessionMW)
-	sessionauthMW := auth.SessionAuthMiddleware(authSessionAuth)
+	sessionauthMW := authentication.SessionAuthMiddleware(authenticationSessionAuth)
 
 	// requires=session
 	r.Use(sessionauthMW)
@@ -495,11 +495,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Register
-	r.Method("GET", "/login", adapter.Wrap(authHandlers.ShowLogin), shared.NoStore)
-	r.Method("POST", "/login", adapter.Wrap(authHandlers.Login), shared.NoStore)
-	r.Method("POST", "/logout", adapter.Wrap(authHandlers.Logout))
-	r.Method("GET", "/private", adapter.Wrap(authHandlers.Private), shared.NoStore, authenticatedMW)
-	r.Method("GET", "/admin", adapter.Wrap(authHandlers.Admin), shared.NoStore, authenticatedMW, adminMW)
+	r.Method("GET", "/login", adapter.Wrap(authenticationHandlers.ShowLogin), shared.NoStore)
+	r.Method("POST", "/login", adapter.Wrap(authenticationHandlers.Login), shared.NoStore)
+	r.Method("POST", "/logout", adapter.Wrap(authenticationHandlers.Logout))
+	r.Method("GET", "/private", adapter.Wrap(authenticationHandlers.Private), shared.NoStore, authenticatedMW)
+	r.Method("GET", "/admin", adapter.Wrap(authenticationHandlers.Admin), shared.NoStore, authenticatedMW, adminMW)
 	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(adapter.Wrap(sharedErrorPages.NotFound))
 	r.MethodNotAllowed(adapter.Wrap(sharedErrorPages.MethodNotAllowed))

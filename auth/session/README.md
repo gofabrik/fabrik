@@ -1,6 +1,6 @@
-# authn/session
+# auth/session
 
-Session-backed authentication for [authn](../README.md). Login stores
+Session-backed authentication for [auth](../README.md). Login stores
 claims, middleware authenticates later requests, and logout destroys
 the session.
 
@@ -9,7 +9,7 @@ sessions, _ := session.New(session.Config{ /* ... */ })
 auth, _ := sessionauth.New(sessions, sessionauth.Options{})
 
 login := func(w http.ResponseWriter, r *http.Request) {
-	claims := &authn.ClaimSet{Subject: "alice", Roles: []string{"admin"}}
+	claims := &auth.ClaimSet{Subject: "alice", Roles: []string{"admin"}}
 	if err := auth.Login(r.Context(), claims); err != nil {
 		http.Error(w, "login failed", http.StatusInternalServerError)
 		return

@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/gofabrik/fabrik/authn"
+	"github.com/gofabrik/fabrik/auth"
 	"github.com/gofabrik/fabrik/session"
 )
 
@@ -34,10 +34,10 @@ type Auth struct {
 	log  *slog.Logger
 }
 
-const cellName = "github.com/gofabrik/fabrik/authn/session"
+const cellName = "github.com/gofabrik/fabrik/auth/session"
 
 type stored struct {
-	Claims authn.ClaimSet `json:"claims"`
+	Claims auth.ClaimSet `json:"claims"`
 }
 
 // New constructs an Auth and registers its private session storage on m.
@@ -62,12 +62,12 @@ func New(m Manager, opts Options) (*Auth, error) {
 // State commits when the response starts, so Login must run first. If
 // saving after promotion fails, Login destroys the session on a best-effort
 // basis to prevent stale claims from authenticating the new identity.
-func (a *Auth) Login(ctx context.Context, c *authn.ClaimSet) error {
+func (a *Auth) Login(ctx context.Context, c *auth.ClaimSet) error {
 	if c == nil || c.Subject == "" {
-		return errors.New("authn/session: Login requires claims with a subject")
+		return errors.New("auth/session: Login requires claims with a subject")
 	}
 	if err := a.m.Promote(ctx, c.Subject); err != nil {
-		return fmt.Errorf("authn/session: promote: %w", err)
+		return fmt.Errorf("auth/session: promote: %w", err)
 	}
 	snap := *c
 	snap.Expiry = nil
@@ -76,7 +76,7 @@ func (a *Auth) Login(ctx context.Context, c *authn.ClaimSet) error {
 		if derr := a.m.Destroy(ctx); derr != nil {
 			a.log.WarnContext(ctx, "session auth: cleanup destroy failed", "error", derr)
 		}
-		return fmt.Errorf("authn/session: store claims: %w", err)
+		return fmt.Errorf("auth/session: store claims: %w", err)
 	}
 	return nil
 }
@@ -93,7 +93,7 @@ func (a *Auth) Logout(ctx context.Context) error {
 // session claims. Store and decode failures are errors. A user ID that does
 // not match the stored subject is also an error because the session identity
 // is authoritative.
-func (a *Auth) Authenticate(r *http.Request) (*authn.ClaimSet, error) {
+func (a *Auth) Authenticate(r *http.Request) (*auth.ClaimSet, error) {
 	v, err := a.cell.Get(r.Context())
 	if err != nil {
 		if errors.Is(err, session.ErrNoSession) {
@@ -109,7 +109,7 @@ func (a *Auth) Authenticate(r *http.Request) (*authn.ClaimSet, error) {
 		return nil, err
 	}
 	if uid != v.Claims.Subject {
-		return nil, fmt.Errorf("authn/session: session user %q does not match the stored subject %q", uid, v.Claims.Subject)
+		return nil, fmt.Errorf("auth/session: session user %q does not match the stored subject %q", uid, v.Claims.Subject)
 	}
 	c := v.Claims
 	return &c, nil
@@ -119,13 +119,13 @@ func (a *Auth) Authenticate(r *http.Request) (*authn.ClaimSet, error) {
 // claims. Read failures are logged and treated as anonymous requests.
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := authn.Claims(r.Context()); !ok {
+		if _, ok := auth.Claims(r.Context()); !ok {
 			c, err := a.Authenticate(r)
 			switch {
 			case err != nil:
 				a.log.WarnContext(r.Context(), "session auth: read failed, continuing anonymous", "error", err)
 			case c != nil:
-				r = r.WithContext(authn.WithClaims(r.Context(), c))
+				r = r.WithContext(auth.WithClaims(r.Context(), c))
 			}
 		}
 		next.ServeHTTP(w, r)

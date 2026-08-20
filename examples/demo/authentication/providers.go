@@ -1,11 +1,11 @@
-package auth
+package authentication
 
 import (
 	"time"
 
-	"github.com/gofabrik/fabrik/authn"
-	"github.com/gofabrik/fabrik/authn/password"
-	sessionauth "github.com/gofabrik/fabrik/authn/session"
+	"github.com/gofabrik/fabrik/auth"
+	"github.com/gofabrik/fabrik/auth/password"
+	sessionauth "github.com/gofabrik/fabrik/auth/session"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
 )
@@ -26,7 +26,7 @@ func NewPasswordVerifier() (*password.Verifier, error) {
 	}
 	store.Put("admin@example.com", password.Credential{
 		Hash:   adminHash,
-		Claims: authn.ClaimSet{Subject: "admin", Roles: []string{"admin"}},
+		Claims: auth.ClaimSet{Subject: "admin", Roles: []string{"admin"}},
 	})
 
 	viewerHash, err := hasher.Hash("viewer")
@@ -35,7 +35,7 @@ func NewPasswordVerifier() (*password.Verifier, error) {
 	}
 	store.Put("viewer@example.com", password.Credential{
 		Hash:   viewerHash,
-		Claims: authn.ClaimSet{Subject: "viewer", Roles: []string{"viewer"}},
+		Claims: auth.ClaimSet{Subject: "viewer", Roles: []string{"viewer"}},
 	})
 
 	return password.New(password.Config{Store: store})

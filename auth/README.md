@@ -1,4 +1,4 @@
-# authn
+# auth
 
 Authentication primitives for Go HTTP services: claims, context
 transport, predicates, and route guards. Authentication schemes live
@@ -8,7 +8,7 @@ in separate modules. The package works with `net/http` and any mux.
 authenticate := func(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if user := r.Header.Get("X-User"); user != "" {
-			r = r.WithContext(authn.WithClaims(r.Context(), &authn.ClaimSet{
+			r = r.WithContext(auth.WithClaims(r.Context(), &auth.ClaimSet{
 				Subject: user,
 				Roles:   []string{"admin"},
 			}))
@@ -17,10 +17,10 @@ authenticate := func(next http.Handler) http.Handler {
 	})
 }
 
-var g authn.Guard
+var g auth.Guard
 mux := http.NewServeMux()
 mux.Handle("/admin", g.Role("admin")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	c, _ := authn.Claims(r.Context())
+	c, _ := auth.Claims(r.Context())
 	fmt.Fprintf(w, "hello %s", c.Subject)
 })))
 http.ListenAndServe(":8080", authenticate(mux))
@@ -69,7 +69,7 @@ login or token issuance, is outside this interface.
 The zero value is usable:
 
 ```go
-var g authn.Guard
+var g auth.Guard
 mux.Handle("/private", g.Authenticated()(private))
 mux.Handle("/admin", g.Role("admin")(admin))
 mux.Handle("/export", g.Scope("export")(export))
@@ -81,7 +81,7 @@ without the required grant gets 403. `OnUnauthenticated` and
 request:
 
 ```go
-g := authn.Guard{
+g := auth.Guard{
 	OnUnauthenticated: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	}),

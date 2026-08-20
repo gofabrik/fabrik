@@ -1,6 +1,6 @@
-// Package authn defines claims, request-context transport, predicates,
+// Package auth defines claims, request-context transport, predicates,
 // and route guards shared by authentication schemes.
-package authn
+package auth
 
 import (
 	"encoding/json"
@@ -52,7 +52,7 @@ func (a Audience) MarshalJSON() ([]byte, error) {
 
 func (a *Audience) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
-		return fmt.Errorf("authn: aud is neither a string nor an array of strings: null")
+		return fmt.Errorf("auth: aud is neither a string nor an array of strings: null")
 	}
 	var single string
 	if err := json.Unmarshal(data, &single); err == nil {
@@ -61,12 +61,12 @@ func (a *Audience) UnmarshalJSON(data []byte) error {
 	}
 	var raw []json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("authn: aud is neither a string nor an array of strings: %s", data)
+		return fmt.Errorf("auth: aud is neither a string nor an array of strings: %s", data)
 	}
 	many := make([]string, len(raw))
 	for i, el := range raw {
 		if err := json.Unmarshal(el, &many[i]); err != nil || string(el) == "null" {
-			return fmt.Errorf("authn: aud member is not a string: %s", el)
+			return fmt.Errorf("auth: aud member is not a string: %s", el)
 		}
 	}
 	*a = Audience(many)
@@ -99,7 +99,7 @@ func (d *NumericDate) Time() time.Time {
 func (d NumericDate) MarshalJSON() ([]byte, error) {
 	f := float64(d)
 	if math.IsNaN(f) || math.Abs(f) >= numericDateLimit {
-		return nil, fmt.Errorf("authn: NumericDate out of range: %v", f)
+		return nil, fmt.Errorf("auth: NumericDate out of range: %v", f)
 	}
 	if f == math.Trunc(f) {
 		return strconv.AppendInt(nil, int64(f), 10), nil
@@ -109,14 +109,14 @@ func (d NumericDate) MarshalJSON() ([]byte, error) {
 
 func (d *NumericDate) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
-		return fmt.Errorf("authn: NumericDate is not a number: null")
+		return fmt.Errorf("auth: NumericDate is not a number: null")
 	}
 	var f float64
 	if err := json.Unmarshal(data, &f); err != nil {
-		return fmt.Errorf("authn: NumericDate is not a number: %s", data)
+		return fmt.Errorf("auth: NumericDate is not a number: %s", data)
 	}
 	if math.IsNaN(f) || math.Abs(f) >= numericDateLimit {
-		return fmt.Errorf("authn: NumericDate out of range: %s", data)
+		return fmt.Errorf("auth: NumericDate out of range: %s", data)
 	}
 	*d = NumericDate(f)
 	return nil

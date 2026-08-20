@@ -1,0 +1,4 @@
+change_type: breaking
+component: auth
+note: Rename the authentication library family from authn to auth. The session claims snapshot key changes with the module path, so sessions persisted under the old name require a fresh login.
+issues: [0]
