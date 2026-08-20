@@ -1,10 +1,11 @@
-// Package dbtest runs store conformance against driver-backed stores.
+// Package dbtest runs store conformance against a SQLite-backed store.
 package dbtest
 
 import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,4 +110,67 @@ func TestSQLiteStore_WorksWithLimiter(t *testing.T) {
 	if res.RetryAfter != 10*time.Second {
 		t.Fatalf("RetryAfter = %s, want exactly 10s through SQL state", res.RetryAfter)
 	}
+}
+
+func TestClosedDB_ErrorWraps(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	t.Run("createSchema", func(t *testing.T) {
+		db, err := sql.Open("sqlite", "file::memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		_, err = rlsqlite.New(db, rlsqlite.Options{AutoCreate: true})
+		if err == nil || !strings.HasPrefix(err.Error(), "ratelimit: create schema: ") {
+			t.Fatalf("want prefix %q, got %v", "ratelimit: create schema: ", err)
+		}
+	})
+
+	openClosed := func(t *testing.T) *rlsqlite.Store {
+		t.Helper()
+		db, err := sql.Open("sqlite", "file::memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := rlsqlite.New(db, rlsqlite.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		return s
+	}
+
+	t.Run("get", func(t *testing.T) {
+		s := openClosed(t)
+		_, _, err := s.Get(ctx, "k", now)
+		if err == nil || !strings.HasPrefix(err.Error(), `ratelimit: get "k": `) {
+			t.Fatalf("want prefix %q, got %v", `ratelimit: get "k": `, err)
+		}
+	})
+
+	t.Run("setAbsent", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.SetIfAbsent(ctx, "k", 1, now, now.Add(time.Minute))
+		if err == nil || !strings.HasPrefix(err.Error(), `ratelimit: set absent "k": `) {
+			t.Fatalf("want prefix %q, got %v", `ratelimit: set absent "k": `, err)
+		}
+	})
+
+	t.Run("swap", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.CompareAndSwap(ctx, "k", 1, 2, now, now.Add(time.Minute))
+		if err == nil || !strings.HasPrefix(err.Error(), `ratelimit: swap "k": `) {
+			t.Fatalf("want prefix %q, got %v", `ratelimit: swap "k": `, err)
+		}
+	})
+
+	t.Run("sweep", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.Sweep(ctx, now)
+		if err == nil || !strings.HasPrefix(err.Error(), "ratelimit: sweep: ") {
+			t.Fatalf("want prefix %q, got %v", "ratelimit: sweep: ", err)
+		}
+	})
 }

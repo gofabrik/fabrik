@@ -1,3 +1,4 @@
+// Package dbtest runs store conformance against MySQL and MariaDB-backed stores.
 package dbtest
 
 import (
@@ -5,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,4 +169,67 @@ func testOversizedKeyRejected(t *testing.T, envVar string) {
 	} else if exists {
 		t.Fatal("oversized key was stored truncated to its 3072-byte prefix")
 	}
+}
+
+func TestClosedDB_ErrorWraps(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	t.Run("createSchema", func(t *testing.T) {
+		db, err := sql.Open("mysql", "user:pass@tcp(127.0.0.1)/test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		_, err = mysql.New(db, mysql.Options{AutoCreate: true})
+		if err == nil || !strings.HasPrefix(err.Error(), "ratelimit: create schema: ") {
+			t.Fatalf("want prefix %q, got %v", "ratelimit: create schema: ", err)
+		}
+	})
+
+	openClosed := func(t *testing.T) *mysql.Store {
+		t.Helper()
+		db, err := sql.Open("mysql", "user:pass@tcp(127.0.0.1)/test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := mysql.New(db, mysql.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		return s
+	}
+
+	t.Run("get", func(t *testing.T) {
+		s := openClosed(t)
+		_, _, err := s.Get(ctx, "k", now)
+		if err == nil || !strings.HasPrefix(err.Error(), `ratelimit: get "k": `) {
+			t.Fatalf("want prefix %q, got %v", `ratelimit: get "k": `, err)
+		}
+	})
+
+	t.Run("setAbsent", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.SetIfAbsent(ctx, "k", 1, now, now.Add(time.Minute))
+		if err == nil || !strings.HasPrefix(err.Error(), `ratelimit: set absent "k": `) {
+			t.Fatalf("want prefix %q, got %v", `ratelimit: set absent "k": `, err)
+		}
+	})
+
+	t.Run("swap", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.CompareAndSwap(ctx, "k", 1, 2, now, now.Add(time.Minute))
+		if err == nil || !strings.HasPrefix(err.Error(), `ratelimit: swap "k": `) {
+			t.Fatalf("want prefix %q, got %v", `ratelimit: swap "k": `, err)
+		}
+	})
+
+	t.Run("sweep", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.Sweep(ctx, now)
+		if err == nil || !strings.HasPrefix(err.Error(), "ratelimit: sweep: ") {
+			t.Fatalf("want prefix %q, got %v", "ratelimit: sweep: ", err)
+		}
+	})
 }

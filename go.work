@@ -30,7 +30,9 @@ use (
 	./query
 	./query/dbtest
 	./ratelimit
-	./ratelimit/dbtest
+	./ratelimit/mysql/dbtest
+	./ratelimit/postgres/dbtest
+	./ratelimit/sqlite/dbtest
 	./router
 	./router/bench
 	./router/directive
