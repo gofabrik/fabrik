@@ -1,3 +1,4 @@
+// Package dbtest runs store conformance against driver-backed stores.
 package dbtest
 
 import (
@@ -5,8 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gofabrik/fabrik/jobs/sqlite"
+	jobssqlite "github.com/gofabrik/fabrik/jobs/sqlite"
 	"github.com/gofabrik/fabrik/jobs/storetest"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -28,7 +30,7 @@ func openDB(t *testing.T) *sql.DB {
 func TestSQLiteStore_Conformance(t *testing.T) {
 	storetest.Run(t, func(t *testing.T) storetest.Backend {
 		db := openDB(t)
-		s, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
+		s, err := jobssqlite.New(db, jobssqlite.Options{AutoCreate: true})
 		if err != nil {
 			t.Fatal(err)
 		}

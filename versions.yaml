@@ -40,6 +40,7 @@ excluded-modules:
   - github.com/gofabrik/fabrik/cache/postgres/dbtest
   - github.com/gofabrik/fabrik/cache/sqlite/dbtest
   - github.com/gofabrik/fabrik/jobs/dbtest
+  - github.com/gofabrik/fabrik/jobs/sqlite/dbtest
   - github.com/gofabrik/fabrik/migrations/dbtest
   - github.com/gofabrik/fabrik/query/dbtest
   - github.com/gofabrik/fabrik/ratelimit/mysql/dbtest
