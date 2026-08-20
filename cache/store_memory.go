@@ -3,10 +3,10 @@ package cache
 import (
 	"container/list"
 	"context"
+	"fmt"
+	"math"
 	"sync"
 	"time"
-
-	"github.com/gofabrik/fabrik/cache/internal/cacheutil"
 )
 
 // MemoryStore is an in-process Store. MaxEntries caps the entry
@@ -43,7 +43,7 @@ func NewMemoryStore(opts MemoryOptions) *MemoryStore {
 
 // Get implements Store.
 func (m *MemoryStore) Get(ctx context.Context, key string, now time.Time) (Entry, bool, error) {
-	if err := cacheutil.OpNow(ctx, "get", key, now); err != nil {
+	if err := opNow(ctx, "get", key, now); err != nil {
 		return Entry{}, false, err
 	}
 	m.mu.Lock()
@@ -64,7 +64,7 @@ func (m *MemoryStore) Get(ctx context.Context, key string, now time.Time) (Entry
 
 // Set implements Store.
 func (m *MemoryStore) Set(ctx context.Context, key string, e Entry) error {
-	if err := cacheutil.OpExpiry(ctx, "set", key, e.Expires); err != nil {
+	if err := opExpiry(ctx, "set", key, e.Expires); err != nil {
 		return err
 	}
 	e.Value = append([]byte(nil), e.Value...)
@@ -86,7 +86,7 @@ func (m *MemoryStore) Set(ctx context.Context, key string, e Entry) error {
 
 // Delete implements Store.
 func (m *MemoryStore) Delete(ctx context.Context, key string) error {
-	if err := cacheutil.OpCtx(ctx, "delete", key); err != nil {
+	if err := opCtx(ctx, "delete", key); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -99,7 +99,7 @@ func (m *MemoryStore) Delete(ctx context.Context, key string) error {
 
 // Sweep implements Sweeper.
 func (m *MemoryStore) Sweep(ctx context.Context, now time.Time) (int, error) {
-	if err := cacheutil.OpNow(ctx, "sweep", "", now); err != nil {
+	if err := opNow(ctx, "sweep", "", now); err != nil {
 		return 0, err
 	}
 	m.mu.Lock()
@@ -124,4 +124,59 @@ func (m *MemoryStore) remove(el *list.Element) {
 // expired treats the expiry instant as expired.
 func expired(e Entry, now time.Time) bool {
 	return !e.Expires.IsZero() && !now.Before(e.Expires)
+}
+
+// minInstant and maxInstant bound the int64 Unix-nanosecond domain.
+var (
+	minInstant = time.Unix(0, math.MinInt64)
+	maxInstant = time.Unix(0, math.MaxInt64)
+)
+
+// checkNow returns an error when t is outside the int64 unix-nano domain.
+func checkNow(t time.Time) error {
+	if t.Before(minInstant) || t.After(maxInstant) {
+		return fmt.Errorf("instant %v outside the int64 unix-nano domain", t)
+	}
+	return nil
+}
+
+// checkExpiry accepts zero as the no-expiry sentinel.
+func checkExpiry(t time.Time) error {
+	if t.IsZero() {
+		return nil
+	}
+	return checkNow(t)
+}
+
+// opCtx returns an error when ctx is already canceled.
+func opCtx(ctx context.Context, op, key string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("cache: %s %q: %w", op, key, err)
+	}
+	return nil
+}
+
+// opNow validates the context and current time for an operation.
+func opNow(ctx context.Context, op, key string, now time.Time) error {
+	if err := opCtx(ctx, op, key); err != nil {
+		return err
+	}
+	if now.IsZero() {
+		return fmt.Errorf("cache: %s %q: zero instant", op, key)
+	}
+	if err := checkNow(now); err != nil {
+		return fmt.Errorf("cache: %s %q: %w", op, key, err)
+	}
+	return nil
+}
+
+// opExpiry validates the context and expiry for an operation.
+func opExpiry(ctx context.Context, op, key string, expires time.Time) error {
+	if err := opCtx(ctx, op, key); err != nil {
+		return err
+	}
+	if err := checkExpiry(expires); err != nil {
+		return fmt.Errorf("cache: %s %q: %w", op, key, err)
+	}
+	return nil
 }

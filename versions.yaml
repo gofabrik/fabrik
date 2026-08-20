@@ -36,7 +36,9 @@ module-sets:
 excluded-modules:
   # Test, example, and benchmark modules are built only in the workspace.
   - demo
-  - github.com/gofabrik/fabrik/cache/dbtest
+  - github.com/gofabrik/fabrik/cache/mysql/dbtest
+  - github.com/gofabrik/fabrik/cache/postgres/dbtest
+  - github.com/gofabrik/fabrik/cache/sqlite/dbtest
   - github.com/gofabrik/fabrik/jobs/dbtest
   - github.com/gofabrik/fabrik/migrations/dbtest
   - github.com/gofabrik/fabrik/query/dbtest

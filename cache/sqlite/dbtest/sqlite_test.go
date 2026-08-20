@@ -1,10 +1,11 @@
-// Package dbtest runs store conformance against driver-backed stores.
+// Package dbtest runs store conformance against a SQLite-backed store.
 package dbtest
 
 import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,4 +114,67 @@ func TestSQLiteStore_GetDoesNotPrune(t *testing.T) {
 	if _, ok, err := s.Get(ctx, "k", now); err != nil || ok {
 		t.Fatalf("swept row: ok=%v err=%v", ok, err)
 	}
+}
+
+func TestClosedDB_ErrorWraps(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	t.Run("createSchema", func(t *testing.T) {
+		db, err := sql.Open("sqlite", "file::memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		_, err = sqlite.New(db, sqlite.Options{AutoCreate: true})
+		if err == nil || !strings.HasPrefix(err.Error(), "cache: create schema: ") {
+			t.Fatalf("want prefix %q, got %v", "cache: create schema: ", err)
+		}
+	})
+
+	openClosed := func(t *testing.T) *sqlite.Store {
+		t.Helper()
+		db, err := sql.Open("sqlite", "file::memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := sqlite.New(db, sqlite.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		return s
+	}
+
+	t.Run("get", func(t *testing.T) {
+		s := openClosed(t)
+		_, _, err := s.Get(ctx, "k", now)
+		if err == nil || !strings.HasPrefix(err.Error(), `cache: get "k": `) {
+			t.Fatalf("want prefix %q, got %v", `cache: get "k": `, err)
+		}
+	})
+
+	t.Run("set", func(t *testing.T) {
+		s := openClosed(t)
+		err := s.Set(ctx, "k", cache.Entry{Value: []byte("v")})
+		if err == nil || !strings.HasPrefix(err.Error(), `cache: set "k": `) {
+			t.Fatalf("want prefix %q, got %v", `cache: set "k": `, err)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		s := openClosed(t)
+		err := s.Delete(ctx, "k")
+		if err == nil || !strings.HasPrefix(err.Error(), `cache: delete "k": `) {
+			t.Fatalf("want prefix %q, got %v", `cache: delete "k": `, err)
+		}
+	})
+
+	t.Run("sweep", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.Sweep(ctx, now)
+		if err == nil || !strings.HasPrefix(err.Error(), "cache: sweep: ") {
+			t.Fatalf("want prefix %q, got %v", "cache: sweep: ", err)
+		}
+	})
 }

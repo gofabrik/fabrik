@@ -9,10 +9,12 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/gofabrik/fabrik/cache"
-	"github.com/gofabrik/fabrik/cache/internal/sqlstore"
 )
 
 const schema = `CREATE TABLE IF NOT EXISTS cache_entries (
@@ -33,44 +35,154 @@ type Options struct {
 
 // Store keeps cache entries in a SQLite database.
 type Store struct {
-	eng *sqlstore.Engine
+	db *sql.DB
 }
 
 // New constructs a Store and optionally applies Schema.
 func New(db *sql.DB, opts Options) (*Store, error) {
-	eng, err := sqlstore.New(db, dialect{}, opts.AutoCreate)
-	if err != nil {
-		return nil, err
+	if db == nil {
+		return nil, errors.New("cache: db is required")
 	}
-	return &Store{eng: eng}, nil
+	if opts.AutoCreate {
+		if _, err := db.Exec(schema); err != nil {
+			return nil, fmt.Errorf("cache: create schema: %w", err)
+		}
+	}
+	return &Store{db: db}, nil
 }
 
-// Get implements cache.Store.
+// Get leaves expired rows for Sweep.
 func (s *Store) Get(ctx context.Context, key string, now time.Time) (cache.Entry, bool, error) {
-	return s.eng.Get(ctx, key, now)
+	if err := opNow(ctx, "get", key, now); err != nil {
+		return cache.Entry{}, false, err
+	}
+	var value []byte
+	var expires sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT value, expires_at FROM cache_entries WHERE key = ?`,
+		key).Scan(&value, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return cache.Entry{}, false, nil
+	}
+	if err != nil {
+		return cache.Entry{}, false, fmt.Errorf("cache: get %q: %w", key, err)
+	}
+	out := cache.Entry{Value: value}
+	if expires.Valid {
+		out.Expires = time.Unix(0, expires.Int64)
+	}
+	return out, true, nil
 }
 
 // Set implements cache.Store.
 func (s *Store) Set(ctx context.Context, key string, e cache.Entry) error {
-	return s.eng.Set(ctx, key, e)
+	if err := opExpiry(ctx, "set", key, e.Expires); err != nil {
+		return err
+	}
+	var expires any
+	if !e.Expires.IsZero() {
+		expires = e.Expires.UnixNano()
+	}
+	value := e.Value
+	if value == nil {
+		// Preserve nil as an empty value rather than SQL NULL.
+		value = []byte{}
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO cache_entries (key, value, expires_at) VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at`,
+		key, value, expires); err != nil {
+		return fmt.Errorf("cache: set %q: %w", key, err)
+	}
+	return nil
 }
 
 // Delete implements cache.Store.
 func (s *Store) Delete(ctx context.Context, key string) error {
-	return s.eng.Delete(ctx, key)
+	if err := opCtx(ctx, "delete", key); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM cache_entries WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("cache: delete %q: %w", key, err)
+	}
+	return nil
 }
 
 // Sweep implements cache.Sweeper.
 func (s *Store) Sweep(ctx context.Context, now time.Time) (int, error) {
-	return s.eng.Sweep(ctx, now)
+	if err := opNow(ctx, "sweep", "", now); err != nil {
+		return 0, err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM cache_entries WHERE expires_at IS NOT NULL AND expires_at <= ?`,
+		now.UnixNano())
+	if err != nil {
+		return 0, fmt.Errorf("cache: sweep: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("cache: sweep: %w", err)
+	}
+	return int(n), nil
 }
 
-type dialect struct{}
+var (
+	_ cache.Store   = (*Store)(nil)
+	_ cache.Sweeper = (*Store)(nil)
+)
 
-func (dialect) Placeholder(int) string { return "?" }
-func (dialect) KeyColumn() string      { return "key" }
-func (dialect) Schema() string         { return schema }
-func (dialect) UpsertSQL() string {
-	return `INSERT INTO cache_entries (key, value, expires_at) VALUES (?, ?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at`
+// minInstant and maxInstant bound the int64 Unix-nanosecond domain.
+var (
+	minInstant = time.Unix(0, math.MinInt64)
+	maxInstant = time.Unix(0, math.MaxInt64)
+)
+
+// checkNow returns an error when t is outside the int64 unix-nano domain.
+func checkNow(t time.Time) error {
+	if t.Before(minInstant) || t.After(maxInstant) {
+		return fmt.Errorf("instant %v outside the int64 unix-nano domain", t)
+	}
+	return nil
+}
+
+// checkExpiry accepts zero as the no-expiry sentinel.
+func checkExpiry(t time.Time) error {
+	if t.IsZero() {
+		return nil
+	}
+	return checkNow(t)
+}
+
+// opCtx returns an error when ctx is already canceled.
+func opCtx(ctx context.Context, op, key string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("cache: %s %q: %w", op, key, err)
+	}
+	return nil
+}
+
+// opNow validates the context and current time for an operation.
+func opNow(ctx context.Context, op, key string, now time.Time) error {
+	if err := opCtx(ctx, op, key); err != nil {
+		return err
+	}
+	if now.IsZero() {
+		return fmt.Errorf("cache: %s %q: zero instant", op, key)
+	}
+	if err := checkNow(now); err != nil {
+		return fmt.Errorf("cache: %s %q: %w", op, key, err)
+	}
+	return nil
+}
+
+// opExpiry validates the context and expiry for an operation.
+func opExpiry(ctx context.Context, op, key string, expires time.Time) error {
+	if err := opCtx(ctx, op, key); err != nil {
+		return err
+	}
+	if err := checkExpiry(expires); err != nil {
+		return fmt.Errorf("cache: %s %q: %w", op, key, err)
+	}
+	return nil
 }

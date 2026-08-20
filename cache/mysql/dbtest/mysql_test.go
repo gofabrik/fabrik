@@ -1,3 +1,4 @@
+// Package dbtest runs store conformance against a MySQL/MariaDB-backed store.
 package dbtest
 
 import (
@@ -5,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +17,7 @@ import (
 	"github.com/gofabrik/fabrik/cache/storetest"
 )
 
-func background() context.Context { return context.Background() }
+var mysqlDBCounter atomic.Int64
 
 func waitReady(t *testing.T, db *sql.DB) {
 	t.Helper()
@@ -32,8 +34,6 @@ func waitReady(t *testing.T, db *sql.DB) {
 	}
 	t.Fatalf("database not ready: %v", err)
 }
-
-var mysqlDBCounter atomic.Int64
 
 // openMySQL isolates each test in its own database.
 func openMySQL(t *testing.T, envVar string) *sql.DB {
@@ -106,7 +106,7 @@ func TestMariaDBStore_GetDoesNotPrune(t *testing.T) {
 
 func testGetDoesNotPrune(t *testing.T, envVar string) {
 	s := newMySQLStore(t, envVar)
-	ctx := background()
+	ctx := context.Background()
 	now := time.Unix(5000, 0)
 	exp := now.Add(-time.Minute)
 	if err := s.Set(ctx, "k", cache.Entry{Value: []byte("stale"), Expires: exp}); err != nil {
@@ -139,7 +139,7 @@ func TestMariaDBStore_MaxLengthKey(t *testing.T) {
 // testMaxLengthKey verifies the 3072-byte key boundary without compression.
 func testMaxLengthKey(t *testing.T, envVar string) {
 	s := newMySQLStore(t, envVar)
-	ctx := background()
+	ctx := context.Background()
 	key := storetest.IncompressibleKey(3072)
 	if err := s.Set(ctx, key, cache.Entry{Value: []byte("v")}); err != nil {
 		t.Fatal(err)
@@ -148,4 +148,67 @@ func testMaxLengthKey(t *testing.T, envVar string) {
 	if err != nil || !ok || string(e.Value) != "v" {
 		t.Fatalf("Get max-length key = %q %v %v", e.Value, ok, err)
 	}
+}
+
+func TestClosedDB_ErrorWraps(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	t.Run("createSchema", func(t *testing.T) {
+		db, err := sql.Open("mysql", "root@/test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		_, err = mysql.New(db, mysql.Options{AutoCreate: true})
+		if err == nil || !strings.HasPrefix(err.Error(), "cache: create schema: ") {
+			t.Fatalf("want prefix %q, got %v", "cache: create schema: ", err)
+		}
+	})
+
+	openClosed := func(t *testing.T) *mysql.Store {
+		t.Helper()
+		db, err := sql.Open("mysql", "root@/test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := mysql.New(db, mysql.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		return s
+	}
+
+	t.Run("get", func(t *testing.T) {
+		s := openClosed(t)
+		_, _, err := s.Get(ctx, "k", now)
+		if err == nil || !strings.HasPrefix(err.Error(), `cache: get "k": `) {
+			t.Fatalf("want prefix %q, got %v", `cache: get "k": `, err)
+		}
+	})
+
+	t.Run("set", func(t *testing.T) {
+		s := openClosed(t)
+		err := s.Set(ctx, "k", cache.Entry{Value: []byte("v")})
+		if err == nil || !strings.HasPrefix(err.Error(), `cache: set "k": `) {
+			t.Fatalf("want prefix %q, got %v", `cache: set "k": `, err)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		s := openClosed(t)
+		err := s.Delete(ctx, "k")
+		if err == nil || !strings.HasPrefix(err.Error(), `cache: delete "k": `) {
+			t.Fatalf("want prefix %q, got %v", `cache: delete "k": `, err)
+		}
+	})
+
+	t.Run("sweep", func(t *testing.T) {
+		s := openClosed(t)
+		_, err := s.Sweep(ctx, now)
+		if err == nil || !strings.HasPrefix(err.Error(), "cache: sweep: ") {
+			t.Fatalf("want prefix %q, got %v", "cache: sweep: ", err)
+		}
+	})
 }
