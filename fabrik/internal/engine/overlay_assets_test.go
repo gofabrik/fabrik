@@ -16,7 +16,7 @@ func TestWireAssetOverlay(t *testing.T) {
 	if r, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = r
 	}
-	assetsDir, err := filepath.Abs("../../../assetmapper")
+	assetsDir, err := filepath.Abs("../../../assets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestWireAssetOverlay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/assetmapper v0.0.0\n\nreplace github.com/gofabrik/fabrik/assetmapper => "+assetsDir+"\n")
+	write("go.mod", "module app\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/assets v0.0.0\n\nreplace github.com/gofabrik/fabrik/assets => "+assetsDir+"\n")
 	write("main.go", "package main\n\nfunc main() { _ = run }\n")
 	write("shared/assets.go", "package shared\n\nimport \"embed\"\n\n//fabrik:assets\n//go:embed all:assets\nvar Assets embed.FS\n")
 	write("shared/assets/style.css", "body {}\n")

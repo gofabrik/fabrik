@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -112,7 +114,7 @@ func TestLSP(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n")
+	write("go.mod", "module app\n\ngo 1.27\n")
 	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
 	webSrc := `package web
 
@@ -235,7 +237,7 @@ func TestLSPPublishesConfigDiagnostics(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module app\n\ngo 1.26\n")
+	write("go.mod", "module app\n\ngo 1.27\n")
 	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
 	write("fabrik.yaml", "generate:\n  emit: bogus\n")
 	webSrc := `package web
@@ -259,5 +261,29 @@ func Index(w http.ResponseWriter, r *http.Request) {}
 	p := c.diagnostics(yamlURI)
 	if len(p.Diagnostics) != 1 || !strings.Contains(p.Diagnostics[0].Message, `invalid emit "bogus"`) {
 		t.Fatalf("config diagnostics = %+v, want the invalid-emit error on fabrik.yaml", p.Diagnostics)
+	}
+}
+
+// Wire output preserves v1 escaping, omitted fields, and byte-length framing.
+func TestWriteMessageKeepsV1Bytes(t *testing.T) {
+	msg := rpcMessage{
+		JSONRPC: "2.0",
+		Method:  "textDocument/publishDiagnostics",
+		Params:  json.RawMessage(`{"message":"expected <-> in a && chain"}`),
+	}
+	var buf bytes.Buffer
+	if err := writeMessage(&buf, msg); err != nil {
+		t.Fatalf("writeMessage: %v", err)
+	}
+	want, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(want), want)
+	if buf.String() != frame {
+		t.Fatalf("framed bytes differ from the v1 reference:\n got: %q\nwant: %q", buf.String(), frame)
+	}
+	if strings.Contains(buf.String(), `"id"`) {
+		t.Fatalf("empty optional fields must stay omitted: %q", buf.String())
 	}
 }

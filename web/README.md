@@ -1,8 +1,9 @@
 # web
 
 Typed HTTP responses for Go handlers: request in, response value out,
-errors centralized. The request side is a light wrapper; full request
-typing belongs to form binding. Zero dependencies.
+errors centralized. Sectioned HTML templates load into the renderer the
+adapter uses. The request side is a light wrapper; full request typing
+belongs to form binding. Zero dependencies.
 
 ## Why
 
@@ -19,7 +20,7 @@ func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 		return nil, err
 	}
 	if user == nil {
-		return web.View(LoginPage{Error: "invalid credentials"}), nil
+		return web.Template("auth/login", LoginPage{Error: "invalid credentials"}), nil
 	}
 	req.SetCookie("session", token, web.CookieSecure())
 	return web.Redirect("/account"), nil
@@ -44,8 +45,12 @@ request. Typed and plain handlers mix freely, route by route. Adopting
 ## Usage
 
 ```go
+set, err := web.LoadTemplates(templatesFS, "templates")
+if err != nil {
+	return err
+}
 adapter := web.NewAdapter(
-	web.WithRenderer(set),             // anything with Render(w, name, data) error
+	web.WithRenderer(set),             // anything with Render(w, name, block, data) error
 	web.WithErrorHandler(onError),     // default: log, then ErrorStatus or 500
 )
 
@@ -59,24 +64,77 @@ mux.HandleFunc("GET /health", plainHandler)
 
 | Value | Behavior |
 |---|---|
-| `web.View(page)` | renders `page.Template()` with the page as data, via the renderer; an immutable value, safe to share |
-| `web.Template(name, data)` | renders a named template directly |
-| `web.JSON{Value: v}` | `application/json`, buffered; encode errors reach the error handler with nothing written; `Status` overrides the 200 default (`web.JSON{Status: 201, Value: v}`) |
+| `web.Template(name, data)` | renders a named template via the renderer, buffered: a failed render reaches the error handler with nothing written |
+| `web.JSON(v)` | `application/json`, buffered; encode errors reach the error handler with nothing written |
 | `web.Redirect("/x")` | 303 See Other; the URL is sent verbatim, use absolute paths |
 | `web.RedirectPermanent("/x")` | 308 |
 | `web.Status(code)` | status only, no body byte |
 | `web.Text(code, s)`, `web.HTML(code, s)` | small direct bodies |
 
-`View` pages are structs with a `Template() string` method. Data and
-destination in one value:
+Template and JSON responses chain; every call returns a copy, so a
+shared value is safe from what any handler adds to it:
 
 ```go
-type LoginPage struct{ Error string }
-func (LoginPage) Template() string { return "auth/login" }
+web.Template("article/form", data).Status(http.StatusUnprocessableEntity)
+web.Template("todo/list", todo).Block("row")   // one fragment, not the document
+web.JSON(item).Status(http.StatusCreated).Header("Cache-Control", "no-store")
 ```
 
-The `Renderer` is a one-method interface (`Render(w, name, data)
-error`); any template system satisfying it plugs in.
+## Templates
+
+`LoadTemplates` parses a tree of section directories: files whose names
+begin with an underscore are partials shared into every page of their
+section, and the `_default` section supplies partials to every other
+section. Page names are bare basenames in `_default` and
+section-qualified elsewhere (`web/home`). Several trees combine with
+`LoadTemplateSources`; a section belongs to exactly one tree.
+
+There is no layout rule. A page and its partials parse into one group,
+and rendering executes whichever template in the group is named - the
+whole document or one fragment of it. The one convention is the
+default: an empty block renders `_layout.html`, the conventional
+layout partial, wrapping whatever the page calls `content`.
+`WithBlock` replaces that default adapter-wide; `.Block(name)` per
+response.
+
+A page declares which of its pieces are addressable from outside by
+naming them with the `region/` prefix (`{{define "region/results"}}`);
+`Templates.Region` resolves such a name and nothing else.
+
+The `Renderer` is a one-method interface
+(`Render(w, name, block string, data any) error`); any template system
+satisfying it plugs in, and each renderer owns what an empty block
+means.
+
+## Fragments: id is the region name
+
+`Template(name, data).Fragment()` answers one URL two ways: an htmx
+swap gets the region it targets, everything else gets the whole page.
+
+```go
+return web.Template("dash/page", data).Fragment(), nil
+```
+
+The convention that ties them together is a shared name. Give the swap
+target element an `id` equal to a declared region:
+
+```html
+{{ define "region/results" }}<div id="results">…</div>{{ end }}
+```
+
+htmx sends that id as `HX-Target`, the response resolves it against the
+page's regions (through a renderer that implements `RegionRenderer`,
+which `Templates` does), and answers with that region. A normal,
+boosted or history-restoring request is answered as it would be without
+`Fragment` - with `.Block(name)` if one is set, otherwise the adapter's
+default. Only an htmx swap is answered by target.
+
+A swap whose target has no id sends no `HX-Target` and is refused with
+400; a target naming no declared region is a 404; both are `no-store`.
+`Fragment` is for pieces whose stable id is their name - use `.Block`
+for row mutations and other targets a page will never declare. Fragment
+answers carry `Vary: HX-Request, HX-Boosted, HX-History-Restore-Request,
+HX-Target`, since one URL now has more than one representation.
 
 ## One adapter per response surface
 

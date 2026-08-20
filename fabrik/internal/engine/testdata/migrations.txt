@@ -4,7 +4,7 @@ and dialect the app provides. Nothing runs unless the command is selected.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/cli v0.0.0
 
@@ -26,6 +26,7 @@ import (
 	"database/sql"
 
 	"github.com/gofabrik/fabrik/migrations"
+	"github.com/gofabrik/fabrik/migrations/sqlite"
 
 	"github.com/gofabrik/fabrik/cli"
 )
@@ -34,11 +35,11 @@ import (
 func NewDB() (*sql.DB, error) { return sql.Open("sqlite", "file:app.db") }
 
 //fabrik:provider
-func NewDialect() migrations.Dialect { return migrations.DialectSQLite }
+func NewDriver() migrations.Driver { return sqlite.Driver() }
 
 //fabrik:cli:command
-func MigrateDB(ctx cli.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
-	return src.Migrate(ctx, db, d)
+func MigrateDB(ctx cli.Context, db *sql.DB, drv migrations.Driver, src migrations.Sources) error {
+	return src.Migrate(ctx, db, drv)
 }
 -- shared/migrations.go --
 package shared
@@ -109,12 +110,12 @@ func run() int {
 					if err != nil {
 						return err
 					}
-					sharedMigrationsDialect := shared.NewDialect()
+					sharedMigrationsDriver := shared.NewDriver()
 					migrationSources := migrations.Sources{
 						{Stream: "shared", FS: shared.Migrations, Dir: "migrations"},
 						{Stream: "todos", FS: todos.Migrations, Dir: "migrations"},
 					}
-					return shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDialect, migrationSources)
+					return shared.MigrateDB(ctx, sharedSqlDB, sharedMigrationsDriver, migrationSources)
 				},
 			},
 		},

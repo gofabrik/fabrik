@@ -22,6 +22,7 @@ func freeAddr(t *testing.T) string {
 
 func waitListening(t *testing.T, addr string) {
 	t.Helper()
+	// A real listener cannot run inside a synctest bubble.
 	for range 200 {
 		c, err := net.Dial("tcp", addr)
 		if err == nil {

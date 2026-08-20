@@ -4,7 +4,7 @@ than a late failure in the generated app's RegisterCron call.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/cli v0.0.0
 

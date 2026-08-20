@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ func TestCompileFixtureReportsBuildOutput(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	gomod := "module fixture\n\ngo 1.26\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => /tmp/x\n)\n"
+	gomod := "module fixture\n\ngo 1.27\n\nreplace (\n\tgithub.com/gofabrik/fabrik/config => /tmp/x\n)\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func compileFixture(dir, outDir, mainDir string, files map[string][]byte, replac
 	// #nosec G204 -- the command and all arguments are controlled by this test
 	build := exec.Command("go", "build", "-o", os.DevNull, target)
 	build.Dir = buildDir
-	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN="+runtime.Version())
 	if b, err := build.CombinedOutput(); err != nil {
 		var src []byte
 		for _, name := range slices.Sorted(maps.Keys(files)) {
@@ -128,9 +129,8 @@ func compileFixture(dir, outDir, mainDir string, files map[string][]byte, replac
 var fixtureModules = []struct{ token, path, rel string }{
 	{"ROUTERDIR", "github.com/gofabrik/fabrik/router", "../../../router"},
 	{"CONFIGDIR", "github.com/gofabrik/fabrik/config", "../../../config"},
-	{"TEMPLATEDIR", "github.com/gofabrik/fabrik/templates", "../../../templates"},
 	{"WEBDIR", "github.com/gofabrik/fabrik/web", "../../../web"},
-	{"ASSETSDIR", "github.com/gofabrik/fabrik/assetmapper", "../../../assetmapper"},
+	{"ASSETSDIR", "github.com/gofabrik/fabrik/assets", "../../../assets"},
 	{"MIGRATIONSDIR", "github.com/gofabrik/fabrik/migrations", "../../../migrations"},
 	{"JOBSDIR", "github.com/gofabrik/fabrik/jobs", "../../../jobs"},
 	{"CLIDIR", "github.com/gofabrik/fabrik/cli", "../../../cli"},
@@ -197,11 +197,11 @@ func TestWireOptionsFullComments(t *testing.T) {
 		t.Fatalf("WireOptions: %v", err)
 	}
 	src := string(res.Src)
-	// The select result inherits its enclosing provider's store.go:32 origin.
+	// The select result inherits its enclosing provider's store.go:33 origin.
 	for _, want := range []string{
 		"// provider shared/http.go:5",
-		"// provider:select store/store.go:23",
-		"// provider store/store.go:32",
+		"// provider:select store/store.go:24",
+		"// provider store/store.go:33",
 		"// hook shared/config.go:15",
 	} {
 		if !strings.Contains(src, want) {
@@ -303,7 +303,7 @@ func TestWireOptionsGraph(t *testing.T) {
 	}
 	pool := byID["serve/storePool"]
 	if pool.Kind != "call" || pool.Fn != "store.NewPool" || pool.Type != "*store.Pool" ||
-		pool.Directive != "provider" || pool.Pos != "store/store.go:44" {
+		pool.Directive != "provider" || pool.Pos != "store/store.go:45" {
 		t.Errorf("provider node = %+v", pool)
 	}
 	sel := byID["serve/storeStore"]
@@ -541,27 +541,27 @@ func TestWireOptionsFlagsStaleGeneratedFiles(t *testing.T) {
 	}
 	writeFixtureTree(t, dir, txtar.Parse(data))
 	leftover := filepath.Join(dir, "shared", "fabrik.gen.go")
-	if err := os.WriteFile(leftover, []byte("package shared\n"), 0o644); err != nil {
+	if err := os.WriteFile(leftover, []byte("package shared\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	// Detect leftovers excluded from package loading by a build tag.
 	tagged := filepath.Join(dir, "oldgen", "fabrik.gen.go")
-	if err := os.MkdirAll(filepath.Dir(tagged), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(tagged), 0o755); err != nil { // #nosec G301 -- test directory
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tagged, []byte("//go:build e2e\n\npackage oldgen\n"), 0o644); err != nil {
+	if err := os.WriteFile(tagged, []byte("//go:build e2e\n\npackage oldgen\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 
 	// Generated files owned by a nested module are not leftovers.
 	nested := filepath.Join(dir, "nested")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	if err := os.MkdirAll(nested, 0o755); err != nil { // #nosec G301 -- test directory
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module nested\n\ngo 1.26\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte("module nested\n\ngo 1.27\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "main.gen.go"), []byte("package main\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "main.gen.go"), []byte("package main\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 
@@ -595,7 +595,7 @@ func TestWireOptionsRejectsSymlinkEscapingDir(t *testing.T) {
 	dir := filepath.Join(base, "mod")
 	outside := filepath.Join(base, "outside")
 	for _, d := range []string{dir, outside} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o755); err != nil { // #nosec G301 -- test directory
 			t.Fatal(err)
 		}
 	}
@@ -624,11 +624,11 @@ func TestResolveDirFollowsInModuleSymlink(t *testing.T) {
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
-	real := filepath.Join(root, "real")
-	if err := os.MkdirAll(real, 0o755); err != nil {
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil { // #nosec G301 -- test directory
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(root, "link")); err != nil {
+	if err := os.Symlink(realDir, filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -636,8 +636,8 @@ func TestResolveDirFollowsInModuleSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDir: %v", err)
 	}
-	if !contained || resolved != filepath.Join(real, "app") {
-		t.Errorf("resolveDir = %q, contained %v; want %q inside the module", resolved, contained, filepath.Join(real, "app"))
+	if !contained || resolved != filepath.Join(realDir, "app") {
+		t.Errorf("resolveDir = %q, contained %v; want %q inside the module", resolved, contained, filepath.Join(realDir, "app"))
 	}
 }
 
@@ -667,5 +667,119 @@ func TestEmbeddedCycleDetectedThroughSymlinkedDir(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Diags = %v, want the cycle reported against the physical output package", res.Diags)
+	}
+}
+
+func TestMiddlewareLabelCommentLevels(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "middleware_ordering.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(level gen.CommentLevel) string {
+		dir := t.TempDir()
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = r
+		}
+		writeFixtureTree(t, dir, txtar.Parse(data))
+		res, err := WireOptions(dir, nil, Options{Comments: level})
+		if err != nil {
+			t.Fatalf("WireOptions: %v", err)
+		}
+		return string(res.Src)
+	}
+
+	labels := []string{"// before=*", "// unconstrained (file order)", "// after=phantom (inactive); requires=session"}
+	sections := run(gen.CommentsSections)
+	for _, want := range labels {
+		if !strings.Contains(sections, want) {
+			t.Errorf("sections output missing %q", want)
+		}
+	}
+	full := run(gen.CommentsFull)
+	for _, want := range labels {
+		if !strings.Contains(full, want) {
+			t.Errorf("full output missing %q", want)
+		}
+	}
+	off := run(gen.CommentsOff)
+	for _, label := range append(labels, "// Middleware") {
+		if strings.Contains(off, label) {
+			t.Errorf("comments=off still contains %q", label)
+		}
+	}
+}
+
+func TestMiddlewareGraphSectionInSidecar(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "middleware_ordering.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	writeFixtureTree(t, dir, txtar.Parse(data))
+	res, err := WireOptions(dir, nil, Options{Graph: true})
+	if err != nil {
+		t.Fatalf("WireOptions: %v", err)
+	}
+	if res.Graph == nil {
+		t.Fatal("no graph produced")
+	}
+	raw, err := json.Marshal(res.Graph.Sections["middleware"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var section struct {
+		Stack []struct {
+			Name   string `json:"name"`
+			Reason string `json:"reason"`
+		} `json:"stack"`
+		Chains []struct {
+			Route string   `json:"route"`
+			Names []string `json:"names"`
+		} `json:"chains"`
+		Inactive []struct {
+			Source string `json:"source"`
+			Ref    string `json:"ref"`
+			Pos    string `json:"pos"`
+		} `json:"inactive"`
+	}
+	if err := json.Unmarshal(raw, &section); err != nil {
+		t.Fatal(err)
+	}
+
+	wantStack := [][2]string{
+		{"zeta.Logged", "before=*"},
+		{"beta.Tail", "unconstrained (file order)"},
+		{"session", "before sessionauth"},
+		{"sessionauth", "after=phantom (inactive); requires=session"},
+	}
+	if len(section.Stack) != len(wantStack) {
+		t.Fatalf("stack = %+v, want %d entries", section.Stack, len(wantStack))
+	}
+	for i, want := range wantStack {
+		if section.Stack[i].Name != want[0] || section.Stack[i].Reason != want[1] {
+			t.Errorf("stack[%d] = %+v, want %v", i, section.Stack[i], want)
+		}
+	}
+	if len(section.Chains) != 2 ||
+		section.Chains[0].Route != "/files" ||
+		strings.Join(section.Chains[0].Names, ",") != "guard" ||
+		section.Chains[1].Route != "GET /{$}" ||
+		strings.Join(section.Chains[1].Names, ",") != "guard,audit" {
+		t.Errorf("chains = %+v, want /files with guard and GET /{$$} with guard,audit", section.Chains)
+	}
+	if len(section.Inactive) != 1 || section.Inactive[0].Source != "sessionauth" ||
+		section.Inactive[0].Ref != "after=phantom" || section.Inactive[0].Pos != "alpha/mw.go:5" {
+		t.Errorf("inactive = %+v, want sessionauth after=phantom alpha/mw.go:5", section.Inactive)
+	}
+	if all, err := json.Marshal(res.Graph); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(all), dir) {
+		t.Errorf("graph JSON leaks the checkout path %q", dir)
 	}
 }

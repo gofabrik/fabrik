@@ -29,11 +29,11 @@ func fixture(t *testing.T, version string, mods []modSpec) *modset.Config {
 	}
 	versions := "module-sets:\n  fabrik:\n    version: " + version + "\n    modules:\n" + published.String()
 	write(t, filepath.Join(root, "versions.yaml"), versions)
-	write(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse (\n"+uses.String()+")\n")
+	write(t, filepath.Join(root, "go.work"), "go 1.27\n\nuse (\n"+uses.String()+")\n")
 
 	for _, m := range mods {
 		dir := filepath.Join(root, m.dir)
-		gomod := "module " + m.path + "\n\ngo 1.26\n"
+		gomod := "module " + m.path + "\n\ngo 1.27\n"
 		if len(m.requires) > 0 {
 			gomod += "\nrequire (\n"
 			for p, v := range m.requires {

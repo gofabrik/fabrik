@@ -7,9 +7,9 @@ vars:
   MULTIMOD: '{{.ROOT_DIR}}/.task-bin/multimod'
   MODULE_DIRS:
     sh: cd {{.ROOT_DIR}} && go work edit -json | jq -r '.Use[].DiskPath'
-  # Run pinned tools with the workspace toolchain so they can analyze Go 1.26 code.
-  GOLANGCI: 'go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2'
-  GOVULNCHECK: 'go run golang.org/x/vuln/cmd/govulncheck@v1.1.4'
+  # Use the workspace toolchain for tools that analyze Go 1.27 code.
+  GOLANGCI: 'go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0'
+  GOVULNCHECK: 'go run golang.org/x/vuln/cmd/govulncheck@v1.7.0'
 
 tasks:
   default:
@@ -17,12 +17,13 @@ tasks:
     silent: true
 
   ci:
-    desc: Per-PR gate - build, test, manifest lint, go.work drift, changelog validate
+    desc: Per-PR gate - build, test, manifest lint, go.work drift, go version consistency, changelog validate
     cmds:
       - task: build
       - task: test
       - task: manifest:lint
       - task: workspace:check
+      - task: goversion:check
       - task: changelog:validate
 
   build:
@@ -43,6 +44,29 @@ tasks:
     dir: '{{.ROOT_DIR}}/internal/tools'
     env: { GOWORK: 'off' }
     cmds: [go test ./...]
+
+  db:up:
+    desc: Start Postgres, MySQL, and MariaDB via Docker Compose and wait until healthy
+    dir: '{{.ROOT_DIR}}'
+    cmds: [docker compose up -d --wait]
+
+  db:down:
+    desc: Stop and remove the database containers
+    dir: '{{.ROOT_DIR}}'
+    cmds: [docker compose down]
+
+  test:db:
+    desc: Run database-backed test modules with live DSNs
+    vars:
+      DBTEST_DIRS:
+        sh: cd {{.ROOT_DIR}} && go work edit -json | jq -r '.Use[].DiskPath' | grep '/dbtest$'
+    env:
+      TEST_POSTGRES_DSN: 'postgres://postgres:proto@localhost:55432/proto?sslmode=disable'
+      TEST_MYSQL_DSN: 'root:proto@tcp(localhost:53306)/proto?parseTime=true&multiStatements=true'
+      TEST_MARIADB_DSN: 'root:proto@tcp(localhost:53307)/proto?parseTime=true&multiStatements=true'
+    cmds:
+      - for: { var: DBTEST_DIRS }
+        cmd: cd {{.ROOT_DIR}}/{{.ITEM}} && go test ./...
 
   lint:
     desc: Lint, static analysis, and formatting across every module (report only, never gates)
@@ -112,6 +136,11 @@ tasks:
     desc: Fail if go.work's replace block drifted from versions.yaml
     deps: [_build:release]
     cmds: ['{{.RELEASE}} workspace-check']
+
+  goversion:check:
+    desc: Fail if any go.mod, template, fixture, or workflow pin disagrees with go.work's go directive
+    deps: [_build:release]
+    cmds: ['{{.RELEASE}} goversion-check']
 
   changelog:validate:
     desc: Validate the .chloggen fragments

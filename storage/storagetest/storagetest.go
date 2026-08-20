@@ -222,9 +222,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 		s := factory(t)
 		var wg sync.WaitGroup
 		stop := make(chan struct{})
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -235,8 +233,8 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 				_ = s.Put(ctx, "shared/failing", r)
 				_ = s.Delete(ctx, "shared/failing")
 			}
-		}()
-		for i := 0; i < 30; i++ {
+		})
+		for i := range 30 {
 			k := fmt.Sprintf("shared/keep-%02d", i)
 			if err := s.Put(ctx, k, strings.NewReader(k)); err != nil {
 				close(stop)
@@ -378,7 +376,7 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 	t.Run("ConcurrentPutsDistinctKeys", func(t *testing.T) {
 		s := factory(t)
 		var wg sync.WaitGroup
-		for i := 0; i < 20; i++ {
+		for i := range 20 {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()

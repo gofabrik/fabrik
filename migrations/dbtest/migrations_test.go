@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/migrations"
+	"github.com/gofabrik/fabrik/migrations/sqlite"
 
 	_ "modernc.org/sqlite"
 )
@@ -33,7 +34,7 @@ func openDB(t *testing.T) *sql.DB {
 
 func TestMigrate_EmptySource(t *testing.T) {
 	db := openDB(t)
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, fstest.MapFS{}); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), fstest.MapFS{}); err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
 	var count int
@@ -52,7 +53,7 @@ func TestMigrate_AppliesInOrder(t *testing.T) {
 		"0010_third.sql":  &fstest.MapFile{Data: []byte(`CREATE TABLE c (id INTEGER PRIMARY KEY)`)},
 		"0002_second.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,10 +89,10 @@ func TestMigrate_Idempotent(t *testing.T) {
 	src := fstest.MapFS{
 		"0001_init.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src); err != nil {
 		t.Fatalf("re-run failed: %v", err)
 	}
 	var count int
@@ -110,7 +111,7 @@ func TestMigrate_FailureRollsBack(t *testing.T) {
 		"0002_bad.sql": &fstest.MapFile{Data: []byte(`THIS IS NOT VALID SQL`)},
 		"0003_ok.sql":  &fstest.MapFile{Data: []byte(`CREATE TABLE c (id INTEGER PRIMARY KEY)`)},
 	}
-	err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src)
+	err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -138,14 +139,14 @@ func TestMigrate_DetectsModifiedMigration(t *testing.T) {
 	original := fstest.MapFS{
 		"0001_init.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, original); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), original); err != nil {
 		t.Fatal(err)
 	}
 
 	modified := fstest.MapFS{
 		"0001_init.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE t (id INTEGER PRIMARY KEY, x TEXT)`)},
 	}
-	err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, modified)
+	err := migrations.Migrate(context.Background(), db, sqlite.Driver(), modified)
 	if err == nil {
 		t.Fatal("expected checksum mismatch error")
 	}
@@ -159,7 +160,7 @@ func TestMigrate_ModifiedMigrationBlocksLaterPending(t *testing.T) {
 	original := fstest.MapFS{
 		"0001_init.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, original); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), original); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +168,7 @@ func TestMigrate_ModifiedMigrationBlocksLaterPending(t *testing.T) {
 		"0001_init.sql":  &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY, oops TEXT)`)},
 		"0002_later.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, tampered); err == nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), tampered); err == nil {
 		t.Fatal("expected checksum mismatch error")
 	}
 	if _, err := db.Exec(`SELECT * FROM b`); err == nil {
@@ -181,7 +182,7 @@ func TestMigrate_DuplicateVersion(t *testing.T) {
 		"0001_a.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 		"0001_b.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY)`)},
 	}
-	err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src)
+	err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -200,7 +201,7 @@ func TestMigrate_TimestampVersionsAvoidBranchCollisions(t *testing.T) {
 		"20260507143022_branch_a_add_users.sql":  &fstest.MapFile{Data: []byte(`CREATE TABLE users (id INTEGER PRIMARY KEY)`)},
 		"20260507091044_branch_b_add_orders.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE orders (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,7 +250,7 @@ func TestMigrate_BlocksWhenSQLiteWriterLockHeld(t *testing.T) {
 		"0001_init.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)},
 	}
 
-	err = migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src)
+	err = migrations.Migrate(context.Background(), db, sqlite.Driver(), src)
 	if err == nil {
 		t.Fatal("expected error when writer lock is held by another conn")
 	}
@@ -284,7 +285,7 @@ func TestMigrate_ProceedsAfterLockReleased(t *testing.T) {
 	src := fstest.MapFS{
 		"0001_init.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE t (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src); err != nil {
 		t.Fatalf("migrations.Migrate should proceed once lock is released: %v", err)
 	}
 	if err := <-releaseErr; err != nil {
@@ -305,14 +306,14 @@ func TestMigrate_RejectsOrphanInDB(t *testing.T) {
 		"0001_a.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 		"0002_b.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, full); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), full); err != nil {
 		t.Fatal(err)
 	}
 
 	truncated := fstest.MapFS{
 		"0001_a.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 	}
-	err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, truncated)
+	err := migrations.Migrate(context.Background(), db, sqlite.Driver(), truncated)
 	if err == nil {
 		t.Fatal("expected orphan error")
 	}
@@ -327,7 +328,7 @@ func TestStatus_AppliedPendingDrifted(t *testing.T) {
 		"0001_a.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 		"0002_b.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, initial); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), initial); err != nil {
 		t.Fatal(err)
 	}
 
@@ -336,7 +337,7 @@ func TestStatus_AppliedPendingDrifted(t *testing.T) {
 		"0002_b.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY, x TEXT)`)},
 		"0003_c.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE c (id INTEGER PRIMARY KEY)`)},
 	}
-	statuses, err := migrations.Status(context.Background(), db, migrations.DialectSQLite, inspect)
+	statuses, err := migrations.Status(context.Background(), db, sqlite.Driver(), inspect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,14 +383,14 @@ func TestStatus_ReportsOrphan(t *testing.T) {
 		"0001_a.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 		"0002_b.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY)`)},
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, full); err != nil {
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), full); err != nil {
 		t.Fatal(err)
 	}
 
 	older := fstest.MapFS{
 		"0001_a.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 	}
-	statuses, err := migrations.Status(context.Background(), db, migrations.DialectSQLite, older)
+	statuses, err := migrations.Status(context.Background(), db, sqlite.Driver(), older)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +417,7 @@ func TestStatus_ReportsOrphan(t *testing.T) {
 func TestMigrate_CanceledMigrateLeavesPriorCommitsIntact(t *testing.T) {
 	db := openDB(t)
 
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, fstest.MapFS{
+	if err := migrations.Migrate(context.Background(), db, sqlite.Driver(), fstest.MapFS{
 		"0001_first.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 	}); err != nil {
 		t.Fatal(err)
@@ -425,7 +426,7 @@ func TestMigrate_CanceledMigrateLeavesPriorCommitsIntact(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := migrations.Migrate(ctx, db, migrations.DialectSQLite, fstest.MapFS{
+	err := migrations.Migrate(ctx, db, sqlite.Driver(), fstest.MapFS{
 		"0001_first.sql":  &fstest.MapFile{Data: []byte(`CREATE TABLE a (id INTEGER PRIMARY KEY)`)},
 		"0002_second.sql": &fstest.MapFile{Data: []byte(`CREATE TABLE b (id INTEGER PRIMARY KEY)`)},
 	})
@@ -456,15 +457,15 @@ func TestMigrate_ConcurrentSQLite(t *testing.T) {
 
 	const N = 4
 	results := make(chan error, N)
-	for i := 0; i < N; i++ {
+	for range N {
 		go func() {
-			results <- migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src)
+			results <- migrations.Migrate(context.Background(), db, sqlite.Driver(), src)
 		}()
 	}
 
 	var errs []error
 	succeeded := 0
-	for i := 0; i < N; i++ {
+	for range N {
 		err := <-results
 		if err == nil {
 			succeeded++
@@ -496,7 +497,7 @@ func TestMigrate_BadFilename(t *testing.T) {
 	src := fstest.MapFS{
 		"not-a-migration.sql": &fstest.MapFile{Data: []byte(`SELECT 1`)},
 	}
-	err := migrations.Migrate(context.Background(), db, migrations.DialectSQLite, src)
+	err := migrations.Migrate(context.Background(), db, sqlite.Driver(), src)
 	if err == nil {
 		t.Fatal("expected error")
 	}

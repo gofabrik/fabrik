@@ -3,7 +3,8 @@ package jobs
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"sort"
 	"strconv"
@@ -145,7 +146,7 @@ func (m *Manager) Schedule(name string, spec Spec, msg any, opts ScheduleOptions
 }
 
 func (m *Manager) buildScheduleRow(name, kind string, payload []byte, spec Spec, opts ScheduleOptions) (ScheduleRow, error) {
-	optsJSON, err := json.Marshal(opts)
+	optsJSON, err := json.Marshal(opts, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return ScheduleRow{}, fmt.Errorf("jobs: encode schedule options: %w", err)
 	}
@@ -254,7 +255,7 @@ func (m *Manager) fireSchedule(ctx context.Context, row ScheduleRow, now time.Ti
 		return
 	}
 	var opts ScheduleOptions
-	if err := json.Unmarshal(row.OptionsJSON, &opts); err != nil {
+	if err := json.Unmarshal(row.OptionsJSON, &opts, jsonv1.DefaultOptionsV1()); err != nil {
 		m.config.Logger.Warn("jobs: scheduler bad options", "schedule", row.Name, "err", err)
 		return
 	}
@@ -296,7 +297,7 @@ func (m *Manager) fireSchedule(ctx context.Context, row ScheduleRow, now time.Ti
 
 	var emitted []Job
 	for _, tick := range ticks {
-		jobsForTick, err := m.buildJobs(row.Kind, handlerIDs, json.RawMessage(row.Payload), o, tick, true)
+		jobsForTick, err := m.buildJobs(row.Kind, handlerIDs, jsonv1.RawMessage(row.Payload), o, tick, true)
 		if err != nil {
 			// Skip invalid persisted rows without creating a hot loop.
 			m.config.Logger.Warn("jobs: scheduler buildJobs; advancing without firing", "schedule", row.Name, "err", err)

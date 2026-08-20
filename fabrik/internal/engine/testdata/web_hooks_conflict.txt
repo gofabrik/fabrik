@@ -1,0 +1,35 @@
+A hook belongs to one directive: the typed and raw variants of the same
+miss hook cannot both be declared.
+-- go.mod --
+module app
+
+go 1.27
+
+require github.com/gofabrik/fabrik/web v0.0.0
+
+replace github.com/gofabrik/fabrik/web => WEBDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	fabrikweb "github.com/gofabrik/fabrik/web"
+)
+
+//fabrik:http:notfound
+func NotFound(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:web:notfound
+func TypedNotFound(req *fabrikweb.Request) (fabrikweb.Response, error) {
+	return fabrikweb.Status(http.StatusNotFound), nil
+}
+-- want/diags --
+error: web/web.go:12:1: //fabrik:web:notfound conflicts with //fabrik:http:notfound at $WORK/web/web.go:9:1
+  help: the router holds one handler per hook; declare one of the two

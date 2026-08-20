@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/token"
+	"slices"
 	"sort"
 	"strings"
 
@@ -104,13 +105,14 @@ func (g *Gen) writeEntrypoints(b *bytes.Buffer, ctxPkg string) {
 		if len(path) == 0 {
 			path = []string{c.Name}
 		}
-		base := "New"
+		var base strings.Builder
+		base.WriteString("New")
 		for _, seg := range path {
-			base += exportSegment(seg)
+			base.WriteString(exportSegment(seg))
 		}
-		name := base
+		name := base.String()
 		for n := 2; taken[name]; n++ {
-			name = fmt.Sprintf("%s%d", base, n)
+			name = fmt.Sprintf("%s%d", base.String(), n)
 		}
 		taken[name] = true
 		g.writeEntrypoint(b, c, name, ctxPkg)
@@ -119,7 +121,7 @@ func (g *Gen) writeEntrypoints(b *bytes.Buffer, ctxPkg string) {
 
 func exportSegment(seg string) string {
 	var out strings.Builder
-	for _, part := range strings.Split(seg, "-") {
+	for part := range strings.SplitSeq(seg, "-") {
 		out.WriteString(upperFirst(part))
 	}
 	return out.String()
@@ -298,9 +300,9 @@ func (g *Gen) writeEntrypoint(b *bytes.Buffer, c CommandFunc, name, ctxPkg strin
 	if hasCleanup {
 		b.WriteString("\ncleanup := func() error {\n")
 		b.WriteString("var errs []error\n")
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			b.WriteString("if " + cleanups[i] + " != nil {\n")
-			b.WriteString("errs = append(errs, " + cleanups[i] + "())\n")
+		for _, cleanup := range slices.Backward(cleanups) {
+			b.WriteString("if " + cleanup + " != nil {\n")
+			b.WriteString("errs = append(errs, " + cleanup + "())\n")
 			b.WriteString("}\n")
 		}
 		b.WriteString("return " + errsPkg + ".Join(errs...)\n")

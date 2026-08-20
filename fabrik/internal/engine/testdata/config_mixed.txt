@@ -3,7 +3,7 @@ sectioned structs is an error.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/config v0.0.0
 

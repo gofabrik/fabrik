@@ -10,6 +10,7 @@ import (
 	"github.com/gofabrik/fabrik/httpserver"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
+	sqlitemigrations "github.com/gofabrik/fabrik/migrations/sqlite"
 )
 
 // Print the resolved configuration.
@@ -64,7 +65,7 @@ func Serve(ctx cli.Context, server *httpserver.Server) error {
 // Database maintenance commands.
 //
 //fabrik:cli:group name=database
-var _database struct{}
+var _database struct{} //nolint:unused // group directive sentinel; the generator validates the carrier
 
 // Apply pending database migrations.
 //
@@ -76,7 +77,7 @@ func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources, dryRun bool) e
 		_, err := fmt.Fprintln(ctx.Stdout(), "would apply pending migrations")
 		return err
 	}
-	if err := src.Migrate(ctx, db, migrations.DialectSQLite); err != nil {
+	if err := src.Migrate(ctx, db, sqlitemigrations.Driver()); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintln(ctx.Stdout(), "migrations applied")

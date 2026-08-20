@@ -1,0 +1,14 @@
+{{ define "title" }}Log in{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Log in</h1>
+  {{ with .Error }}<p class="error">{{ . }}</p>{{ end }}
+  <form method="post" action="/login">
+    <label>Email <input name="email" type="email" value="{{ .Form.Value "email" }}" autocomplete="email"></label>
+    {{ with .Form.Error "email" }}<span class="error">{{ . }}</span>{{ end }}
+    <label>Password <input type="password" name="password" autocomplete="current-password"></label>
+    {{ with .Form.Error "password" }}<span class="error">{{ . }}</span>{{ end }}
+    <button type="submit">Log in</button>
+  </form>
+{{ end }}

@@ -19,6 +19,7 @@ type Host struct {
 	deferred []func(*gen.Gen) diag.Diagnostics
 	building bool
 	epilogue map[*gen.Gen]bool
+	hooks    map[string]HookClaim
 }
 
 // NewHost bundles the routing state one generation run shares.
@@ -57,6 +58,42 @@ func (h *Host) record(fn func(*gen.Gen) diag.Diagnostics) {
 	h.deferred = append(h.deferred, fn)
 }
 
+// HookClaim names the directive holding one of the router's miss hooks and
+// where it was declared.
+type HookClaim struct {
+	Directive string
+	Pos       token.Position
+}
+
+// ClaimHook records that directive declares the miss hook for method. The
+// router holds one handler per hook, whichever directive sets it, so a second
+// claim reports the first and is refused.
+func (h *Host) ClaimHook(method, directive string, pos token.Position) (HookClaim, bool) {
+	if h.hooks == nil {
+		h.hooks = map[string]HookClaim{}
+	}
+	if first, taken := h.hooks[method]; taken {
+		return first, false
+	}
+	h.hooks[method] = HookClaim{Directive: directive, Pos: pos}
+	return HookClaim{}, true
+}
+
+// EmitHook registers a miss handler on the router through the recorded
+// bundle, with handler producing the expression once emission runs.
+func (h *Host) EmitHook(g *gen.Gen, method string, pos token.Position, handler func(*gen.Gen) (string, diag.Diagnostics)) {
+	h.record(func(g *gen.Gen) diag.Diagnostics {
+		r := routerSingleton(g)
+		expr, ds := handler(g)
+		g.Node(&gen.Call{
+			Base: gen.Base{Phase: gen.PhaseRegister, Origin: gen.Origin{Pos: pos}},
+			Fn:   r + "." + method,
+			Args: []string{expr},
+		})
+		return ds
+	})
+}
+
 // Router returns the router after emitting its pending registrations.
 func (h *Host) Router(g *gen.Gen) (string, diag.Diagnostics) {
 	r := routerSingleton(g)
@@ -80,6 +117,7 @@ func (h *Host) FinishBundle(g *gen.Gen) diag.Diagnostics {
 		for _, fn := range h.deferred {
 			ds = append(ds, fn(g)...)
 		}
+		h.mw.graphSection(g)
 		return ""
 	})
 	return ds
@@ -170,6 +208,13 @@ func (h *Host) EmitRoute(g *gen.Gen, args RouteArgs, recvObj *types.TypeName, po
 	key := args.Method + " " + pattern
 	if d, ok := h.routes.add(key, pos); !ok {
 		return append(ds, d)
+	}
+	if len(mws) > 0 {
+		names := make([]string, len(mws))
+		for i, nd := range mws {
+			names[i] = displayName(nd)
+		}
+		h.mw.chains = append(h.mw.chains, resolvedChain{route: key, names: names})
 	}
 
 	h.record(func(g *gen.Gen) diag.Diagnostics {

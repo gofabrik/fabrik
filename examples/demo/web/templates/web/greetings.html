@@ -1,0 +1,23 @@
+{{ define "title" }}Greetings{{ end }}
+
+{{ define "region/list" }}
+  <section id="list">
+    <ul>
+    {{ range .Rows }}<li class="greeting"><a href="/greetings/{{ .ID }}/edit">{{ .Name }}</a></li>
+    {{ end }}</ul>
+    <p class="pager">Showing {{ .Page.First }}-{{ .Page.Last }} of {{ .Page.Total }}</p>
+    <nav class="pager-controls">
+      {{ if .Page.HasPrev }}<a href="/greetings?page=1" hx-get="/greetings?page=1" hx-target="#list" hx-swap="outerHTML" hx-push-url="true">first</a>
+      <a href="/greetings?page={{ .Page.Prev }}" hx-get="/greetings?page={{ .Page.Prev }}" hx-target="#list" hx-swap="outerHTML" hx-push-url="true">prev</a>
+      {{ end }}{{ if .Page.HasNext }}<a href="/greetings?page={{ .Page.Next }}" hx-get="/greetings?page={{ .Page.Next }}" hx-target="#list" hx-swap="outerHTML" hx-push-url="true">next</a>
+      <a href="/greetings?page={{ .Page.Pages }}" hx-get="/greetings?page={{ .Page.Pages }}" hx-target="#list" hx-swap="outerHTML" hx-push-url="true">last</a>
+      {{ end }}
+    </nav>
+  </section>
+{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Greetings</h1>
+  {{ template "region/list" . }}
+{{ end }}

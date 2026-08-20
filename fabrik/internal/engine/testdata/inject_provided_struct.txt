@@ -3,7 +3,7 @@ mappings because mappings belong on provider parameters.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

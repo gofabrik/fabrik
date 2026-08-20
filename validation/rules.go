@@ -7,6 +7,7 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -33,8 +34,8 @@ var emailRule Rule[string] = func(s string) error {
 	if err != nil || addr.Address != s {
 		return errors.New("must be a valid email address")
 	}
-	at := strings.LastIndex(s, "@")
-	if at < 0 || !strings.Contains(s[at+1:], ".") {
+	_, after, found := strings.CutLast(s, "@")
+	if !found || !strings.Contains(after, ".") {
 		return errors.New("must be a valid email address")
 	}
 	return nil
@@ -122,10 +123,8 @@ func Max[T cmp.Ordered](n T) Rule[T] {
 // In requires value to be one of allowed.
 func In[T comparable](allowed ...T) Rule[T] {
 	return func(v T) error {
-		for _, a := range allowed {
-			if v == a {
-				return nil
-			}
+		if slices.Contains(allowed, v) {
+			return nil
 		}
 		return fmt.Errorf("must be one of %s", joinValues(allowed))
 	}

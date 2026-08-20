@@ -67,12 +67,15 @@ func (s *Scope) st() *state {
 	return s.state
 }
 
-func (s *Scope) Get(pattern string, h http.HandlerFunc)     { s.Method(http.MethodGet, pattern, h) }
-func (s *Scope) Post(pattern string, h http.HandlerFunc)    { s.Method(http.MethodPost, pattern, h) }
-func (s *Scope) Put(pattern string, h http.HandlerFunc)     { s.Method(http.MethodPut, pattern, h) }
-func (s *Scope) Patch(pattern string, h http.HandlerFunc)   { s.Method(http.MethodPatch, pattern, h) }
-func (s *Scope) Delete(pattern string, h http.HandlerFunc)  { s.Method(http.MethodDelete, pattern, h) }
-func (s *Scope) Head(pattern string, h http.HandlerFunc)    { s.Method(http.MethodHead, pattern, h) }
+func (s *Scope) Get(pattern string, h http.HandlerFunc)   { s.Method(http.MethodGet, pattern, h) }
+func (s *Scope) Post(pattern string, h http.HandlerFunc)  { s.Method(http.MethodPost, pattern, h) }
+func (s *Scope) Put(pattern string, h http.HandlerFunc)   { s.Method(http.MethodPut, pattern, h) }
+func (s *Scope) Patch(pattern string, h http.HandlerFunc) { s.Method(http.MethodPatch, pattern, h) }
+
+func (s *Scope) Delete(pattern string, h http.HandlerFunc) { s.Method(http.MethodDelete, pattern, h) }
+
+func (s *Scope) Head(pattern string, h http.HandlerFunc) { s.Method(http.MethodHead, pattern, h) }
+
 func (s *Scope) Options(pattern string, h http.HandlerFunc) { s.Method(http.MethodOptions, pattern, h) }
 
 // Method registers h for the given HTTP method and pattern, wrapped in mw
@@ -429,8 +432,8 @@ func joinPattern(base, pattern string) string {
 
 // chain wraps h in mw, outermost first.
 func chain(mw []Middleware, h http.Handler) http.Handler {
-	for i := len(mw) - 1; i >= 0; i-- {
-		h = mw[i](h)
+	for _, m := range slices.Backward(mw) {
+		h = m(h)
 		if isNilHandler(h) {
 			panic("router: middleware returned a nil handler")
 		}

@@ -1,8 +1,11 @@
-go 1.26
+go 1.27
 
 use (
-	./assetmapper
-	./assetmapper/directive
+	./assets
+	./assets/directive
+	./authn
+	./authn/password
+	./authn/session
 	./cache
 	./cache/dbtest
 	./cli
@@ -23,6 +26,7 @@ use (
 	./migrations
 	./migrations/dbtest
 	./migrations/directive
+	./paging
 	./query
 	./query/dbtest
 	./ratelimit
@@ -33,16 +37,17 @@ use (
 	./session
 	./session/dbtest
 	./storage
-	./templates
-	./templates/directive
 	./validation
 	./web
 	./web/directive
 )
 
 replace (
-	github.com/gofabrik/fabrik/assetmapper v0.1.0 => ./assetmapper
-	github.com/gofabrik/fabrik/assetmapper/directive v0.1.0 => ./assetmapper/directive
+	github.com/gofabrik/fabrik/assets v0.1.0 => ./assets
+	github.com/gofabrik/fabrik/assets/directive v0.1.0 => ./assets/directive
+	github.com/gofabrik/fabrik/authn v0.1.0 => ./authn
+	github.com/gofabrik/fabrik/authn/password v0.1.0 => ./authn/password
+	github.com/gofabrik/fabrik/authn/session v0.1.0 => ./authn/session
 	github.com/gofabrik/fabrik/cache v0.1.0 => ./cache
 	github.com/gofabrik/fabrik/cli v0.1.0 => ./cli
 	github.com/gofabrik/fabrik/cli/directive v0.1.0 => ./cli/directive
@@ -59,14 +64,13 @@ replace (
 	github.com/gofabrik/fabrik/mail v0.1.0 => ./mail
 	github.com/gofabrik/fabrik/migrations v0.1.0 => ./migrations
 	github.com/gofabrik/fabrik/migrations/directive v0.1.0 => ./migrations/directive
+	github.com/gofabrik/fabrik/paging v0.1.0 => ./paging
 	github.com/gofabrik/fabrik/query v0.1.0 => ./query
 	github.com/gofabrik/fabrik/ratelimit v0.1.0 => ./ratelimit
 	github.com/gofabrik/fabrik/router v0.1.0 => ./router
 	github.com/gofabrik/fabrik/router/directive v0.1.0 => ./router/directive
 	github.com/gofabrik/fabrik/session v0.1.0 => ./session
 	github.com/gofabrik/fabrik/storage v0.1.0 => ./storage
-	github.com/gofabrik/fabrik/templates v0.1.0 => ./templates
-	github.com/gofabrik/fabrik/templates/directive v0.1.0 => ./templates/directive
 	github.com/gofabrik/fabrik/validation v0.1.0 => ./validation
 	github.com/gofabrik/fabrik/web v0.1.0 => ./web
 	github.com/gofabrik/fabrik/web/directive v0.1.0 => ./web/directive

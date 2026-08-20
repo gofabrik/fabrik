@@ -19,16 +19,9 @@ func decode(values url.Values, files map[string][]*multipart.FileHeader, errs *v
 	}
 	rt := rv.Type()
 	for i := 0; i < rt.NumField(); i++ {
-		ft := rt.Field(i)
-		if !ft.IsExported() {
+		name, skip := fieldName(rt.Field(i))
+		if skip {
 			continue
-		}
-		name, _, _ := strings.Cut(ft.Tag.Get("form"), ",")
-		if name == "-" {
-			continue
-		}
-		if name == "" {
-			name = snakeCase(ft.Name)
 		}
 		if setFile(rv.Field(i), files[name]) {
 			continue
@@ -139,6 +132,23 @@ func first(ss []string) string {
 		return ""
 	}
 	return ss[0]
+}
+
+// fieldName is the form field a struct field binds to, and whether the field
+// is skipped entirely. Decoding and encoding both go through here, so the two
+// directions cannot disagree about what a field is called.
+func fieldName(ft reflect.StructField) (name string, skip bool) {
+	if !ft.IsExported() {
+		return "", true
+	}
+	name, _, _ = strings.Cut(ft.Tag.Get("form"), ",")
+	if name == "-" {
+		return "", true
+	}
+	if name == "" {
+		name = snakeCase(ft.Name)
+	}
+	return name, false
 }
 
 // snakeCase converts a Go field name to its default form field name.

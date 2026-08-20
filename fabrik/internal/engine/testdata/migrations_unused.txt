@@ -3,7 +3,7 @@ names the start-hook recipe.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/cli v0.0.0
 
@@ -67,4 +67,4 @@ func run() int {
 -- want/diags --
 warning: shared/migrations.go:5:1: migrations Migrations can never run: nothing injects migrations.Sources
   help: add a migrate command: //fabrik:cli:command
-func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error { return src.Migrate(ctx, db, migrations.DialectSQLite) }
+func Migrate(ctx cli.Context, db *sql.DB, src migrations.Sources) error { return src.Migrate(ctx, db, sqlite.Driver()) }

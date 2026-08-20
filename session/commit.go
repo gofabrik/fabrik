@@ -9,7 +9,7 @@ import (
 )
 
 // commit finalizes a request's session state at response start.
-func (m *core) commit(ctx context.Context, st *state, w http.ResponseWriter) error {
+func (m *Manager) commit(ctx context.Context, st *state, w http.ResponseWriter) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	// A commit failure still starts the response.
@@ -67,7 +67,7 @@ func (m *core) commit(ctx context.Context, st *state, w http.ResponseWriter) err
 
 // rotateAtCommit writes the new SID before deleting the old row.
 // Rotation never extends absolute expiry. Callers hold st.mu.
-func (m *core) rotateAtCommit(ctx context.Context, st *state) error {
+func (m *Manager) rotateAtCommit(ctx context.Context, st *state) error {
 	// Rotation preserves malformed payload bytes when no staged cells
 	// require decoding.
 	var payload []byte
@@ -99,7 +99,9 @@ func (m *core) rotateAtCommit(ctx context.Context, st *state) error {
 		return err
 	}
 	// Best-effort delete; a stale record expires on its own.
-	_ = m.cfg.Store.Delete(ctx, oldSID)
+	if err := m.cfg.Store.Delete(ctx, oldSID); err != nil {
+		m.cfg.Logger.WarnContext(ctx, "session rotation: old SID delete failed", "error", err)
+	}
 	st.record = stored
 	if cells != nil {
 		st.cells = cells
@@ -110,7 +112,7 @@ func (m *core) rotateAtCommit(ctx context.Context, st *state) error {
 
 // commitDirty overlays staged cells on the loaded cell map and
 // CAS-saves, reloading on conflicts. Callers hold st.mu.
-func (m *core) commitDirty(ctx context.Context, st *state) error {
+func (m *Manager) commitDirty(ctx context.Context, st *state) error {
 	if err := st.decodeCells(); err != nil {
 		return err
 	}
@@ -150,7 +152,7 @@ func (m *core) commitDirty(ctx context.Context, st *state) error {
 
 // mintAtCommit creates the new session a sessionless request staged.
 // Callers hold st.mu.
-func (m *core) mintAtCommit(ctx context.Context, st *state) error {
+func (m *Manager) mintAtCommit(ctx context.Context, st *state) error {
 	cells := st.mergedView()
 	payload, err := encodeEnvelope(cells)
 	if err != nil {
@@ -181,7 +183,7 @@ func (m *core) mintAtCommit(ctx context.Context, st *state) error {
 
 // insertFresh retries SID collisions without merging into another
 // session's record.
-func (m *core) insertFresh(ctx context.Context, rec Record) (Record, error) {
+func (m *Manager) insertFresh(ctx context.Context, rec Record) (Record, error) {
 	for attempt := 0; ; attempt++ {
 		sid, err := m.mintSID()
 		if err != nil {
@@ -201,7 +203,7 @@ func (m *core) insertFresh(ctx context.Context, rec Record) (Record, error) {
 
 // maybeBumpIdle extends a clean-read session's idle expiry through
 // TTLBumper. Returns whether the bump ran. Callers hold st.mu.
-func (m *core) maybeBumpIdle(ctx context.Context, st *state) bool {
+func (m *Manager) maybeBumpIdle(ctx context.Context, st *state) bool {
 	if m.cfg.IdleBumpInterval <= 0 || m.cfg.IdleExpiry <= 0 {
 		return false
 	}

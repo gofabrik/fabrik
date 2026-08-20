@@ -3,7 +3,7 @@ providers suggest //fabrik:inject for provider parameters and struct fields.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

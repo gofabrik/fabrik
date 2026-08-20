@@ -1,0 +1,45 @@
+Misuse of the typed miss hooks.
+-- go.mod --
+module app
+
+go 1.27
+
+require github.com/gofabrik/fabrik/web v0.0.0
+
+replace github.com/gofabrik/fabrik/web => WEBDIR
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- web/web.go --
+package web
+
+import (
+	"net/http"
+
+	fabrikweb "github.com/gofabrik/fabrik/web"
+)
+
+//fabrik:web:notfound
+func BadSig() {}
+
+//fabrik:web:notfound
+var notAFunc int
+
+//fabrik:web:methodnotallowed
+func RawSig(w http.ResponseWriter, r *http.Request) {}
+
+//fabrik:web:methodnotallowed
+func Generic[T any](req *fabrikweb.Request) (fabrikweb.Response, error) {
+	return fabrikweb.Status(http.StatusMethodNotAllowed), nil
+}
+-- want/diags --
+error: web/web.go:9:1: handler BadSig has the wrong signature
+  help: want func(req *web.Request) (web.Response, error)
+error: web/web.go:12:1: //fabrik:web:notfound must be on a function
+error: web/web.go:15:1: handler RawSig has the wrong signature
+  help: want func(req *web.Request) (web.Response, error)
+error: web/web.go:18:1: handler Generic cannot be generic (generated code cannot instantiate type parameters)
+  help: declare a concrete handler

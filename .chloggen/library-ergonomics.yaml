@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: Add a development mail transport that prints message bodies and links, first or last global middleware insertion, nested template sections, header-only status responses, and raw query time normalization.
+issues: [0]

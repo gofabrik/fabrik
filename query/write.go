@@ -259,3 +259,38 @@ func buildInsertParts(fm *fieldMap, val reflect.Value) (cols []string, placehold
 	}
 	return cols, placeholders, args
 }
+
+// UpdateOne is [Update] for a where clause that identifies a single row. It
+// returns [ErrNotFound] when nothing matched, so callers can tell a missing
+// row from a failed statement without inspecting a count.
+//
+// Affecting more than one row is reported as an error, but the statement has
+// already been applied by then: run it inside a transaction if that has to be
+// undone.
+func UpdateOne(ctx context.Context, db Executor, d Dialect, table, where string, row any, whereArgs ...any) error {
+	n, err := Update(ctx, db, d, table, where, row, whereArgs...)
+	if err != nil {
+		return err
+	}
+	return exactlyOne("query.UpdateOne", n)
+}
+
+// DeleteOne is [Delete] for a where clause that identifies a single row, with
+// the same reporting as [UpdateOne].
+func DeleteOne(ctx context.Context, db Executor, d Dialect, table, where string, whereArgs ...any) error {
+	n, err := Delete(ctx, db, d, table, where, whereArgs...)
+	if err != nil {
+		return err
+	}
+	return exactlyOne("query.DeleteOne", n)
+}
+
+func exactlyOne(op string, n int64) error {
+	switch {
+	case n == 0:
+		return ErrNotFound
+	case n > 1:
+		return fmt.Errorf("%s: statement affected %d rows, want 1", op, n)
+	}
+	return nil
+}

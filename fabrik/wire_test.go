@@ -14,7 +14,7 @@ import (
 
 func writeGoMod(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.27\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -51,6 +51,7 @@ func TestParseWireArgsThreadsOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_ = graph
 	if dir != "app" || !check || ov.Comments == nil || *ov.Comments != gen.CommentsFull {
 		t.Fatalf("parseWireArgs = %q, %v, %+v", dir, check, ov)
 	}
@@ -136,7 +137,7 @@ func TestWriteGraphSidecars(t *testing.T) {
 		t.Fatalf("written = %v", written)
 	}
 	for _, name := range []string{"fabrik.graph.json", "fabrik.graph.dot", "fabrik.graph.mmd"} {
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		data, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304 -- test reads its own temp directory
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,7 +145,7 @@ func TestWriteGraphSidecars(t *testing.T) {
 			t.Errorf("%s is empty or unterminated", name)
 		}
 	}
-	jsonData, err := os.ReadFile(filepath.Join(dir, "fabrik.graph.json"))
+	jsonData, err := os.ReadFile(filepath.Join(dir, "fabrik.graph.json")) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,14 +159,14 @@ func TestWriteGraphSidecars(t *testing.T) {
 	if round.Nodes[0].ID != "run/db" {
 		t.Errorf("round-tripped graph = %+v", round)
 	}
-	dot, err := os.ReadFile(filepath.Join(dir, "fabrik.graph.dot"))
+	dot, err := os.ReadFile(filepath.Join(dir, "fabrik.graph.dot")) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(string(dot), "digraph fabrik {") {
 		t.Errorf("dot sidecar:\n%s", dot)
 	}
-	mmd, err := os.ReadFile(filepath.Join(dir, "fabrik.graph.mmd"))
+	mmd, err := os.ReadFile(filepath.Join(dir, "fabrik.graph.mmd")) // #nosec G304 -- test reads its own temp directory
 	if err != nil {
 		t.Fatal(err)
 	}

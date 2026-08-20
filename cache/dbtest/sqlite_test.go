@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/cache"
+	"github.com/gofabrik/fabrik/cache/sqlite"
 	"github.com/gofabrik/fabrik/cache/storetest"
 	_ "modernc.org/sqlite"
 )
 
-func openDB(t *testing.T) *sql.DB {
+func openSQLite(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "cache.db")
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
@@ -28,9 +29,9 @@ func openDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func newStore(t *testing.T) *cache.SQLiteStore {
+func newSQLiteStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := cache.NewSQLiteStore(openDB(t), cache.SQLiteOptions{AutoCreate: true})
+	s, err := sqlite.New(openSQLite(t), sqlite.Options{AutoCreate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,13 +40,13 @@ func newStore(t *testing.T) *cache.SQLiteStore {
 
 func TestSQLiteStore_Conformance(t *testing.T) {
 	storetest.Run(t, func(t *testing.T) cache.Store {
-		return newStore(t)
+		return newSQLiteStore(t)
 	})
 }
 
 func TestSQLiteStore_AutoCreate(t *testing.T) {
-	db := openDB(t)
-	if _, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{}); err != nil {
+	db := openSQLite(t)
+	if _, err := sqlite.New(db, sqlite.Options{}); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -53,17 +54,17 @@ func TestSQLiteStore_AutoCreate(t *testing.T) {
 	if err != nil || n != 0 {
 		t.Fatalf("table exists without AutoCreate: n=%d err=%v", n, err)
 	}
-	if _, err := db.Exec(cache.SQLiteSchema()); err != nil {
-		t.Fatalf("applying SQLiteSchema: %v", err)
+	if _, err := db.Exec(sqlite.Schema()); err != nil {
+		t.Fatalf("applying Schema: %v", err)
 	}
-	if _, err := db.Exec(cache.SQLiteSchema()); err != nil {
-		t.Fatalf("SQLiteSchema is not idempotent: %v", err)
+	if _, err := db.Exec(sqlite.Schema()); err != nil {
+		t.Fatalf("Schema is not idempotent: %v", err)
 	}
 }
 
 func TestSQLiteStore_NoExpiryStoredAsNull(t *testing.T) {
-	db := openDB(t)
-	s, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{AutoCreate: true})
+	db := openSQLite(t)
+	s, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,15 +93,14 @@ func TestSQLiteStore_NoExpiryStoredAsNull(t *testing.T) {
 }
 
 func TestSQLiteStore_GetDoesNotPrune(t *testing.T) {
-	s := newStore(t)
+	s := newSQLiteStore(t)
 	ctx := context.Background()
 	now := time.Unix(5000, 0)
 	exp := now.Add(-time.Minute)
 	if err := s.Set(ctx, "k", cache.Entry{Value: []byte("stale"), Expires: exp}); err != nil {
 		t.Fatal(err)
 	}
-	// Reads leave expired rows for Sweep.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		e, ok, err := s.Get(ctx, "k", now)
 		if err != nil || !ok || !e.Expires.Equal(exp) {
 			t.Fatalf("read %d: %+v %v %v", i, e, ok, err)
@@ -110,7 +110,7 @@ func TestSQLiteStore_GetDoesNotPrune(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("Sweep = %d, %v", n, err)
 	}
-	if _, ok, _ := s.Get(ctx, "k", now); ok {
-		t.Fatal("swept row still present")
+	if _, ok, err := s.Get(ctx, "k", now); err != nil || ok {
+		t.Fatalf("swept row: ok=%v err=%v", ok, err)
 	}
 }

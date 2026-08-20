@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gofabrik/fabrik/storage"
+	"github.com/gofabrik/fabrik/storage/s3"
 	"github.com/gofabrik/fabrik/storage/storagetest"
 )
 
@@ -41,7 +42,7 @@ func TestS3Conformance(t *testing.T) {
 	storagetest.Run(t, func(t *testing.T) storage.Storage {
 		n++
 		bucket := fmt.Sprintf("conformance-%d-%d", os.Getpid(), n)
-		s, err := storage.NewS3(storage.S3Options{
+		s, err := s3.New(s3.Options{
 			Endpoint:      endpoint,
 			Bucket:        bucket,
 			AccessKey:     os.Getenv("TEST_S3_ACCESS"),

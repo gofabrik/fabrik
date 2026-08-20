@@ -117,7 +117,7 @@ func TestLayoutBlockSizeCap(t *testing.T) {
 	var universe []Node
 	var section []phaseNode
 	prev := ""
-	for i := 0; i < layoutBlockMax+3; i++ {
+	for i := range layoutBlockMax + 3 {
 		v := "v" + strings.Repeat("x", i+1)
 		var n *Call
 		if prev == "" {

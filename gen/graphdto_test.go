@@ -312,7 +312,7 @@ func TestGraphIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		again, err := json.Marshal(graphWorld(t).Graph())
 		if err != nil {
 			t.Fatal(err)
@@ -498,7 +498,7 @@ func TestGraphMultiNameBindingIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		again, err := json.Marshal(build(t).Graph())
 		if err != nil {
 			t.Fatal(err)
@@ -1004,7 +1004,7 @@ func TestGraphFragmentsMatchRenderedFunctions(t *testing.T) {
 		exported[f.Fn] = true
 	}
 	rendered := map[string]bool{}
-	for _, line := range strings.Split(string(src), "\n") {
+	for line := range strings.SplitSeq(string(src), "\n") {
 		if !strings.HasPrefix(line, "func ") {
 			continue
 		}
@@ -1052,12 +1052,16 @@ type B struct{}
 				return "", ds
 			}
 			v := g.Var(base)
-			g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-				Var: v, Fn: g.Import("example.com/app") + ".New" + strings.ToUpper(base[:1]) + base[1:],
-				Args: []string{cv}, Err: ErrReturn, Type: tt})
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+				Var:  v, Fn: g.Import("example.com/app") + ".New" + strings.ToUpper(base[:1]) + base[1:],
+				Args: []string{cv}, Err: ErrReturn, Type: tt,
+			})
 			v2 := g.Var(base + "Twin")
-			g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-				Var: v2, Fn: g.Import("example.com/app") + ".Wrap", Args: []string{v}, Err: ErrNone, Type: tt})
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+				Var:  v2, Fn: g.Import("example.com/app") + ".Wrap", Args: []string{v}, Err: ErrNone, Type: tt,
+			})
 			return v, ds
 		})
 	}
@@ -1101,10 +1105,14 @@ type Store struct{}
 	g.SetDirective("provider")
 	g.BindLazy(store, "db", func() (string, diag.Diagnostics) {
 		v := g.Var("conn")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-			Var: v, Fn: g.Import("example.com/app") + ".NewStore", Err: ErrReturn, Type: store})
-		ping := &Call{Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
-			Fn: "app.Ping", Args: []string{v}, Err: ErrNone}
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Var:  v, Fn: g.Import("example.com/app") + ".NewStore", Err: ErrReturn, Type: store,
+		})
+		ping := &Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Directive: "provider"}},
+			Fn:   "app.Ping", Args: []string{v}, Err: ErrNone,
+		}
 		g.Node(ping)
 		g.Node(ping)
 		return v, nil
@@ -1156,5 +1164,62 @@ type Store struct{}
 	}
 	if want.Fragment == "" || !reflect.DeepEqual(want.Usage, []string{"alpha", "beta"}) {
 		t.Fatalf("folded attribution wrong: %+v", want)
+	}
+}
+
+func TestGraphSectionAppearsInJSON(t *testing.T) {
+	g := New()
+	g.SetModule("demo")
+	g.SetDirective("provider")
+	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "v", Expr: "mk()"})
+
+	type testPayload struct {
+		Items []string `json:"items"`
+	}
+	g.GraphSection("middleware", testPayload{Items: []string{"a", "b"}})
+
+	gr := g.Graph()
+	if gr.Sections == nil {
+		t.Fatal("Sections is nil after GraphSection registration")
+	}
+	data, err := json.Marshal(gr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"sections"`) {
+		t.Fatalf("JSON must contain sections key:\n%s", text)
+	}
+	if !strings.Contains(text, `"middleware"`) {
+		t.Fatalf("JSON must contain middleware section:\n%s", text)
+	}
+	if !strings.Contains(text, `"items"`) {
+		t.Fatalf("JSON must contain payload fields:\n%s", text)
+	}
+
+	// DOT and Mermaid are unchanged by sections.
+	dot := gr.DOT()
+	if strings.Contains(dot, "sections") || strings.Contains(dot, "middleware") {
+		t.Fatalf("DOT must not mention sections:\n%s", dot)
+	}
+	mmd := gr.Mermaid()
+	if strings.Contains(mmd, "sections") || strings.Contains(mmd, "middleware") {
+		t.Fatalf("Mermaid must not mention sections:\n%s", mmd)
+	}
+}
+
+func TestGraphSectionsOmittedWhenEmpty(t *testing.T) {
+	g := New()
+	g.SetModule("demo")
+	g.SetDirective("provider")
+	g.Node(&Assign{Base: Base{Phase: PhaseWire}, Var: "v", Expr: "mk()"})
+
+	gr := g.Graph()
+	data, err := json.Marshal(gr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"sections"`) {
+		t.Fatalf("empty sections must be omitted from JSON:\n%s", data)
 	}
 }

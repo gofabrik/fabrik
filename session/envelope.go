@@ -1,14 +1,17 @@
 package session
 
 import (
-	"encoding/json"
+	jsonv1 "encoding/json"
+	"encoding/json/jsontext"
+	json "encoding/json/v2"
 	"fmt"
+	"maps"
 )
 
 // decodeEnvelope parses payload bytes into the cell map.
 func decodeEnvelope(payload []byte) (map[string]cellRaw, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &raw); err != nil {
+	var raw map[string]jsontext.Value
+	if err := json.Unmarshal(payload, &raw, jsonv1.DefaultOptionsV1()); err != nil {
 		return nil, fmt.Errorf("session: malformed payload envelope: %w", err)
 	}
 	cells := make(map[string]cellRaw, len(raw))
@@ -23,11 +26,11 @@ func encodeEnvelope(cells map[string]cellRaw) ([]byte, error) {
 	if len(cells) == 0 {
 		return []byte("{}"), nil
 	}
-	raw := make(map[string]json.RawMessage, len(cells))
+	raw := make(map[string]jsontext.Value, len(cells))
 	for k, v := range cells {
-		raw[k] = json.RawMessage(v)
+		raw[k] = jsontext.Value(v)
 	}
-	out, err := json.Marshal(raw)
+	out, err := json.Marshal(raw, jsonv1.DefaultOptionsV1(), json.Deterministic(true))
 	if err != nil {
 		return nil, fmt.Errorf("session: encode payload envelope: %w", err)
 	}
@@ -37,9 +40,7 @@ func encodeEnvelope(cells map[string]cellRaw) ([]byte, error) {
 // mergedView returns stored cells overlaid with staged writes.
 func (st *state) mergedView() map[string]cellRaw {
 	out := make(map[string]cellRaw, len(st.cells)+len(st.staged))
-	for k, v := range st.cells {
-		out[k] = v
-	}
+	maps.Copy(out, st.cells)
 	for k, v := range st.staged {
 		if v == nil {
 			delete(out, k)

@@ -6,6 +6,7 @@ import (
 	iofs "io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -164,10 +165,7 @@ func sourceFor(path string, texts map[string]string) string {
 // spanRange covers the token at the diagnostic column.
 func spanRange(src string, pos token.Position) lspRange {
 	line := pos.Line - 1
-	startCol := pos.Column - 1
-	if startCol < 0 {
-		startCol = 0
-	}
+	startCol := max(pos.Column-1, 0)
 	endCol := startCol + 1
 
 	lineText := nthLine(src, line)
@@ -272,42 +270,46 @@ func (s *lspServer) completion(uri string, pos lspPosition) []completionItem {
 	}
 
 	args := tokens[1:]
-	if partial, kind, ok := activeMWChain(meta, args, trailingSpace); ok {
+	if partial, key, kind, ok := activeMWChain(meta, args, trailingSpace); ok {
 		directive := "http:middleware"
 		if kind == gen.KindCLIMiddlewareRef {
 			directive = "cli:middleware"
 		}
-		return s.middlewareCompletions(uri, partial, directive)
+		items := s.middlewareCompletions(uri, partial, directive)
+		if (key == "after" || key == "before") && (partial == "" || strings.HasPrefix("*", partial)) { //nolint:gocritic // deliberate: check if "*" starts with the typed partial
+			items = append(items, completionItem{Label: "*", Kind: 12, Detail: "all", InsertText: "*"})
+		}
+		return items
 	}
 	return argCompletions(meta, args, trailingSpace)
 }
 
-func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, gen.ValueKind, bool) {
-	for i := len(args) - 1; i >= 0; i-- {
-		key, val, hasEq := strings.Cut(args[i], "=")
+func activeMWChain(meta gen.Meta, args []string, trailingSpace bool) (string, string, gen.ValueKind, bool) {
+	for i, arg := range slices.Backward(args) {
+		key, val, hasEq := strings.Cut(arg, "=")
 		if !hasEq {
 			continue
 		}
 		kind, isMW := mwAttrKind(meta, key)
 		if !isMW {
-			return "", 0, false
+			return "", "", 0, false
 		}
 		cur := val
 		for j := i + 1; j < len(args); j++ {
 			if !strings.HasSuffix(cur, ",") {
-				return "", 0, false
+				return "", "", 0, false
 			}
 			cur = args[j]
 		}
 		if !trailingSpace {
-			return cur, kind, true
+			return cur, key, kind, true
 		}
 		if strings.HasSuffix(cur, ",") {
-			return "", kind, true
+			return "", key, kind, true
 		}
-		return "", 0, false
+		return "", "", 0, false
 	}
-	return "", 0, false
+	return "", "", 0, false
 }
 
 func mwAttrKind(meta gen.Meta, key string) (gen.ValueKind, bool) {
@@ -320,8 +322,8 @@ func mwAttrKind(meta gen.Meta, key string) (gen.ValueKind, bool) {
 }
 
 func (s *lspServer) middlewareCompletions(uri, partial, directive string) []completionItem {
-	if i := strings.LastIndex(partial, ","); i >= 0 {
-		partial = partial[i+1:]
+	if _, after, found := strings.CutLast(partial, ","); found {
+		partial = after
 	}
 	root := s.rootForURI(uri)
 	if root == "" {
@@ -563,10 +565,5 @@ func generatedOutputFile(path string) bool {
 	if base == "main.gen.go" || base == "fabrik.gen.go" {
 		return true
 	}
-	for _, owned := range genfiles.Owned(filepath.Dir(path)) {
-		if owned == base {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(genfiles.Owned(filepath.Dir(path)), base)
 }

@@ -1,4 +1,4 @@
--- The jobs schema, applied through migrations (jobs.SQLiteSchema()), so
+-- The jobs/sqlite schema is managed by migrations, so
 -- the store is constructed with AutoCreate: false and jobs.Run reconciles
 -- schedules against tables these migrations created.
 CREATE TABLE IF NOT EXISTS jobs (

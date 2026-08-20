@@ -501,13 +501,13 @@ func TestExec_ConcurrentInvocationsAreSafe(t *testing.T) {
 	}
 	const workers = 16
 	done := make(chan struct{}, workers)
-	for i := 0; i < workers; i++ {
+	for range workers {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			exec(t, root, []string{"serve"})
 		}()
 	}
-	for i := 0; i < workers; i++ {
+	for range workers {
 		<-done
 	}
 	if len(root.Subcommands) != 1 {

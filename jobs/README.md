@@ -1,7 +1,7 @@
 # jobs
 
 A durable background-job engine with typed messages, retries, scheduling,
-crash recovery, and memory or SQLite storage.
+crash recovery, and memory, SQLite, PostgreSQL, or MySQL/MariaDB storage.
 
 ```go
 type WelcomeEmail struct{ UserID int64 }
@@ -38,7 +38,7 @@ mgr.Publish(ctx, OrderPlaced{ID: 100})
 |------|----------|
 | `Enqueue(ctx, msg, opts...)` | Command: the one handler. Errors on 0 or >1. Returns the job id. |
 | `Publish(ctx, msg, opts...)` | Event: one job per handler. Returns a per-handler result. |
-| `EnqueueTx` / `PublishTx` | Same, inside a `*sql.Tx` (SQLite store only). |
+| `EnqueueTx` / `PublishTx` | Same, inside a `*sql.Tx` (any SQL-backed store). |
 | `Schedule(name, spec, msg, opts)` | Declare a recurring message schedule: `jobs.Cron("0 6 * * *")` or `jobs.Every(d)`. Persisted at `ReconcileSchedules`. |
 
 Options ride along as functional options: `After`, `At`, `Queue`,
@@ -62,7 +62,7 @@ non-idempotent side effects behind your own idempotency key.
 - **Crash recovery**: an expired lease is reclaimed and re-run (or
   discarded at the cap).
 - **Concurrency**: `Concurrency` caps in-flight jobs; `PerQueue` caps them
-  per queue. With `PerQueue` set, SQLite applies budgets over a fixed 500-row
+  per queue. With `PerQueue` set, SQL stores apply budgets over a fixed 500-row
   candidate window, so a saturated queue can delay eligible rows beyond it.
 - **Inspection**: `GetJob`, `ListJobs`, `ListJobAttempts`, `ListQueues`,
   `ListWorkers`. **Hooks**: `OnEnqueue`, `OnAttemptStart`,
@@ -116,17 +116,28 @@ directly when you need finer control.
 ```go
 store := jobs.NewMemoryStore()                       // tests, local dev
 
-store, _ := jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: true})
+store, _ := sqlite.New(db, sqlite.Options{AutoCreate: true})     // jobs/sqlite
+store, _ := postgres.New(db, postgres.Options{AutoCreate: true}) // jobs/postgres
+store, _ := mysql.New(db, mysql.Options{AutoCreate: true})       // jobs/mysql
 ```
 
-The SQLite store takes a caller-opened `*sql.DB` and imports no driver.
-Open it with WAL, a busy timeout, and immediate-locked transactions; for
-`modernc.org/sqlite`:
+Each database-backed store lives in its own package under `jobs/` and takes
+a caller-opened `*sql.DB`. Construct with `AutoCreate: true`, or apply the
+package's `Schema()` through your migrations.
+
+The SQLite store supports one SQLite file used by one or more processes on
+a single node. Open it with WAL, a busy timeout, and immediate-locked
+transactions; for `modernc.org/sqlite`:
 
 ```
 file:jobs.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate
 ```
 
-Construct with `AutoCreate: true`, or apply `jobs.SQLiteSchema()` through
-your migrations. It supports one SQLite file used by one or more processes
-on a single node.
+The `mysql` package serves both MySQL and MariaDB. Its identifier columns
+(kind, handler id, queue, worker id, schedule group and name) are
+`VARBINARY(255)`, matching the manager's 255-byte identifier bound; job
+and attempt ids are store-generated UUIDs in `VARBINARY(191)`;
+`unique_key` is `VARBINARY(2048)`. Longer values are rejected, and applying
+the multi-statement schema needs `multiStatements=true` in the DSN.
+PostgreSQL indexed values are subject to its content-dependent B-tree
+limit of roughly 2700 bytes. SQLite has no identifier limit.

@@ -188,8 +188,7 @@ func (p *Provider) Check(n any, t gen.Typed) diag.Diagnostics {
 	nd.pkg = fn.Pkg()
 	nd.returns = []types.Type{types.Unalias(results.At(0).Type())}
 	nd.fset = t.Fset
-	for i := 0; i < sig.Params().Len(); i++ {
-		v := sig.Params().At(i)
+	for v := range sig.Params().Variables() {
 		nd.params = append(nd.params, param{t: v.Type(), pos: t.Fset.Position(v.Pos()), ident: v.Name()})
 	}
 

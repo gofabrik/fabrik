@@ -4,5 +4,7 @@ assets:
 log:
   format: text
   level: debug
+mailer:
+  kind: dev
 session:
   cookie_secure: false

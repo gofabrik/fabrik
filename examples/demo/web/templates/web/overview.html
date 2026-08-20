@@ -1,0 +1,34 @@
+{{ define "title" }}Overview{{ end }}
+
+{{ define "region/recent" }}
+  <section id="recent">
+    <h2>Recent greetings</h2>
+    <ul>
+    {{ range .Recent }}<li class="greeting">{{ .Name }}</li>
+    {{ end }}</ul>
+  </section>
+{{ end }}
+
+{{ define "region/files" }}
+  <section id="files">
+    <h2>Files</h2>
+    <ul>
+    {{ range .Files }}<li class="file"><a href="/files/{{ .Key }}">{{ .Key }}</a> ({{ .Size }} bytes)</li>
+    {{ end }}</ul>
+  </section>
+{{ end }}
+
+{{ define "region/uptime" }}
+  <section id="uptime">
+    <h2>Uptime</h2>
+    <p>Up for {{ humanizeAge .Started }}.</p>
+  </section>
+{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Overview</h1>
+  {{ template "region/recent" . }}
+  {{ template "region/files" . }}
+  {{ template "region/uptime" . }}
+{{ end }}

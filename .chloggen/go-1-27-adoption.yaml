@@ -1,0 +1,4 @@
+change_type: breaking
+component: fabrik
+note: fabrik now requires Go 1.27 and preserves byte-compatible JSON output and stored data while migrating to encoding/json/v2.
+issues: [0]

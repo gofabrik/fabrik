@@ -47,8 +47,8 @@ func (o overlayDirFS) ReadDir(name string) ([]fs.DirEntry, error) {
 		}
 		overlaid = true
 		rest := abs[len(prefix):]
-		if i := strings.IndexByte(rest, filepath.Separator); i >= 0 {
-			child := rest[:i]
+		if before, _, ok := strings.Cut(rest, string(filepath.Separator)); ok {
+			child := before
 			if _, onDisk := entries[child]; !onDisk {
 				entries[child] = overlayDirEntry{name: child, dir: true}
 			}

@@ -2,7 +2,7 @@ The router injects into handler structs like any other dependency.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/router v0.0.0
 

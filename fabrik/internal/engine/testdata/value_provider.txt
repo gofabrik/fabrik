@@ -2,7 +2,7 @@ A value-returning provider coexists with routes on the same struct type.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

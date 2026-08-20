@@ -52,14 +52,14 @@ func isNilExecutor(e Executor) bool {
 // Dialect returns the bound dialect.
 func (q *DB) Dialect() Dialect { return q.dialect }
 
-// QueryContext delegates to the bound executor.
+// QueryContext delegates to the bound executor after normalizing args.
 func (q *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return q.exec.QueryContext(ctx, query, args...)
+	return q.exec.QueryContext(ctx, query, normArgs(args)...)
 }
 
-// ExecContext delegates to the bound executor.
+// ExecContext delegates to the bound executor after normalizing args.
 func (q *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return q.exec.ExecContext(ctx, query, args...)
+	return q.exec.ExecContext(ctx, query, normArgs(args)...)
 }
 
 // Insert is [Insert] with the bound executor and dialect.
@@ -92,4 +92,14 @@ func (q *DB) Tx(ctx context.Context, fn func(*DB) error) error {
 	return Tx(ctx, db, func(tx *sql.Tx) error {
 		return fn(&DB{exec: tx, dialect: q.dialect})
 	})
+}
+
+// UpdateOne is [UpdateOne] with the bound executor and dialect.
+func (q *DB) UpdateOne(ctx context.Context, table, where string, row any, whereArgs ...any) error {
+	return UpdateOne(ctx, q.exec, q.dialect, table, where, row, whereArgs...)
+}
+
+// DeleteOne is [DeleteOne] with the bound executor and dialect.
+func (q *DB) DeleteOne(ctx context.Context, table, where string, whereArgs ...any) error {
+	return DeleteOne(ctx, q.exec, q.dialect, table, where, whereArgs...)
 }

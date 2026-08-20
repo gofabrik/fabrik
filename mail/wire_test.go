@@ -164,7 +164,7 @@ func TestWire_MixedWithAttachment(t *testing.T) {
 	if err != nil || string(decoded) != strings.Repeat("x", 200) {
 		t.Errorf("attachment payload does not round-trip (err %v)", err)
 	}
-	for _, line := range strings.Split(raw, "\r\n") {
+	for line := range strings.SplitSeq(raw, "\r\n") {
 		if len(line) > 76 {
 			t.Errorf("base64 line %d chars, want <= 76", len(line))
 		}
@@ -181,8 +181,8 @@ func rawPart(t *testing.T, w, cte string) string {
 		t.Fatalf("no %s part", cte)
 	}
 	rest := w[i:]
-	j := strings.Index(rest, "\r\n\r\n")
-	body := rest[j+4:]
+	_, after, _ := strings.Cut(rest, "\r\n\r\n")
+	body := after
 	if k := strings.Index(body, "\r\n--"); k >= 0 {
 		body = body[:k]
 	}
@@ -204,7 +204,7 @@ func TestWire_EncodedHeadersAndFolding(t *testing.T) {
 	if err != nil || subj != m.Subject {
 		t.Errorf("Subject must round-trip in full:\n got %q\nwant %q (err %v)", subj, m.Subject, err)
 	}
-	for _, line := range strings.Split(w, "\r\n") {
+	for line := range strings.SplitSeq(w, "\r\n") {
 		if len(line) > 78 {
 			t.Errorf("header/body line exceeds 78 chars: %q", line)
 		}

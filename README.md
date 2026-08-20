@@ -9,6 +9,8 @@ release.
 
 ## Install
 
+Requires Go 1.27 or later.
+
 ```sh
 go install github.com/gofabrik/fabrik/fabrik@latest
 ```
@@ -120,12 +122,13 @@ together by the CLI:
 
 - [router](router/README.md) - routing and middleware on top of `net/http`.
 - [httpserver](httpserver/README.md) - serve an `http.Handler` with graceful shutdown.
+- [cli](cli/README.md) - opinionated, typed CLI library for Go.
 - [config](config/README.md) - typed YAML configuration with defaults and env overrides.
-- [templates](templates/README.md) - sectioned HTML templates with shared layouts and helpers.
 - [web](web/README.md) - typed HTTP responses and request helpers.
-- [assetmapper](assetmapper/README.md) - import maps, vendored browser packages, and hashed assets.
+- [assets](assets/README.md) - import maps, vendored browser packages, and hashed assets.
 - [migrations](migrations/README.md) - forward-only SQL migrations for `database/sql`.
 - [query](query/README.md) - typed reads and struct-derived writes over `database/sql`.
+- [paging](paging/README.md) - offset page numbers for a store query and its controls.
 - [jobs](jobs/README.md) - background jobs.
 - [mail](mail/README.md) - transactional email with template-rendered bodies and pluggable transports.
 - [ratelimit](ratelimit/README.md) - keyed rate limiting with exact retry timing and pluggable stores.
@@ -133,5 +136,7 @@ together by the CLI:
 - [storage](storage/README.md) - blob storage by key over pluggable backends (memory, local directory, S3-compatible).
 - [session](session/README.md) - typed HTTP sessions with pluggable stores and tokens.
 - [flash](flash/README.md) - one-shot messages stored in sessions.
+- [authn](authn/README.md) - authentication claims, request predicates, and route guards.
+- [authn/session](authn/session/README.md) - session-backed login, logout, and request authentication.
 - [validation](validation/README.md) - code-based input validation with field-keyed errors.
 - [forms](forms/README.md) - HTTP request binding into typed structs, validated.

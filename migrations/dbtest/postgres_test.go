@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gofabrik/fabrik/migrations"
+	"github.com/gofabrik/fabrik/migrations/postgres"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -67,14 +68,14 @@ func TestPostgres_ApplyRerunDriftOrphan(t *testing.T) {
 		"0001_users.sql": sqlFile(`CREATE TABLE users (id BIGINT PRIMARY KEY)`),
 		"0002_items.sql": sqlFile(`CREATE TABLE items (id BIGINT PRIMARY KEY)`),
 	}
-	if err := migrations.Migrate(ctx, db, migrations.DialectPostgres, src); err != nil {
+	if err := migrations.Migrate(ctx, db, postgres.Driver(), src); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Migrate(ctx, db, migrations.DialectPostgres, src); err != nil {
+	if err := migrations.Migrate(ctx, db, postgres.Driver(), src); err != nil {
 		t.Fatalf("rerun should be idempotent: %v", err)
 	}
 
-	statuses, err := migrations.Status(ctx, db, migrations.DialectPostgres, src)
+	statuses, err := migrations.Status(ctx, db, postgres.Driver(), src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,12 +87,12 @@ func TestPostgres_ApplyRerunDriftOrphan(t *testing.T) {
 		"0001_users.sql": sqlFile(`CREATE TABLE users (id BIGINT PRIMARY KEY, oops TEXT)`),
 		"0002_items.sql": src["0002_items.sql"],
 	}
-	if err := migrations.Migrate(ctx, db, migrations.DialectPostgres, tampered); !errors.Is(err, migrations.ErrDrift) {
+	if err := migrations.Migrate(ctx, db, postgres.Driver(), tampered); !errors.Is(err, migrations.ErrDrift) {
 		t.Fatalf("tampered: err = %v, want ErrDrift", err)
 	}
 
 	truncated := fstest.MapFS{"0001_users.sql": src["0001_users.sql"]}
-	if err := migrations.Migrate(ctx, db, migrations.DialectPostgres, truncated); !errors.Is(err, migrations.ErrOrphan) {
+	if err := migrations.Migrate(ctx, db, postgres.Driver(), truncated); !errors.Is(err, migrations.ErrOrphan) {
 		t.Fatalf("truncated: err = %v, want ErrOrphan", err)
 	}
 }
@@ -105,7 +106,7 @@ INSERT INTO settings (key, value) VALUES ('theme', 'dark');
 CREATE INDEX settings_value ON settings (value);
 `),
 	}
-	if err := migrations.Migrate(context.Background(), db, migrations.DialectPostgres, src); err != nil {
+	if err := migrations.Migrate(context.Background(), db, postgres.Driver(), src); err != nil {
 		t.Fatal(err)
 	}
 	var value string
@@ -129,7 +130,7 @@ func TestPostgres_AdvisoryLockSerializes(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = migrations.Migrate(ctx, db, migrations.DialectPostgres, src)
+			errs[i] = migrations.Migrate(ctx, db, postgres.Driver(), src)
 		}(i)
 	}
 	wg.Wait()

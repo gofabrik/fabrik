@@ -151,7 +151,7 @@ func TestNew_Validation(t *testing.T) {
 func TestAllow_Exactness(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerMinute(6).WithBurst(3))
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		res, err := lim.Allow(ctx, "k")
 		if err != nil || !res.Allowed {
 			t.Fatalf("call %d: %+v err=%v", i+1, res, err)
@@ -207,7 +207,7 @@ func TestAllowN_Bounds(t *testing.T) {
 func TestReserve_SpacingAndHorizon(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerSecond(1).WithBurst(1))
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		r, err := lim.Reserve(ctx, "k")
 		if err != nil {
 			t.Fatal(err)
@@ -250,7 +250,7 @@ func TestReserve_DefaultHorizon(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerHour(1).WithBurst(1))
 	ctx := context.Background()
 	// A reservation exactly at the 24-hour horizon is valid.
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		if _, err := lim.Reserve(ctx, "k"); err != nil {
 			t.Fatalf("reservation %d within the 24h default horizon: %v", i, err)
 		}
@@ -396,10 +396,8 @@ func TestConcurrentAdmissionExact(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	allowed := 0
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 100 {
+		wg.Go(func() {
 			res, err := lim.Allow(context.Background(), "k")
 			if err != nil {
 				t.Error(err)
@@ -410,7 +408,7 @@ func TestConcurrentAdmissionExact(t *testing.T) {
 				allowed++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if allowed != 10 {
@@ -424,10 +422,8 @@ func TestConcurrentReservationSpacing(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	got := map[int64]int{}
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			r, err := lim.Reserve(context.Background(), "k")
 			if err != nil {
 				t.Error(err)
@@ -436,10 +432,10 @@ func TestConcurrentReservationSpacing(t *testing.T) {
 			mu.Lock()
 			got[r.ReadyAt.UnixNano()]++
 			mu.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		want := base.Add(time.Duration(i) * time.Second).UnixNano()
 		if got[want] != 1 {
 			t.Fatalf("slot %d claimed %d times, want exactly once", i, got[want])

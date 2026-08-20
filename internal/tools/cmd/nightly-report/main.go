@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/gofabrik/fabrik/internal/tools/nightlyreport"
 )
 
@@ -18,24 +20,46 @@ func main() {
 	freshness := flag.String("freshness", "", "path to `go list -m -u -json all` output")
 	freshnessExit := flag.Int("freshness-exit", 0, "exit code of the freshness `go list`")
 	budget := flag.Int("budget", 900_000, "maximum report size in bytes")
+	root := flag.String("root", ".", "repository root holding the module directories")
 	toolchain := flag.String("toolchain", "", "toolchain label for the header")
 	tools := flag.String("tools", "", "tool-versions label for the header")
 	date := flag.String("date", "", "report date for the header")
 	flag.Parse()
 
+	known := knownModulePaths(*root, *modules)
+
 	var results []nightlyreport.ModuleResult
-	for _, m := range strings.Split(*modules, ",") {
+	for m := range strings.SplitSeq(*modules, ",") {
 		m = strings.TrimSpace(m)
 		if m == "" {
 			continue
 		}
-		results = append(results, classifyModule(filepath.Join(*artifacts, nightlyreport.Slug(m)), m))
+		results = append(results, classifyModule(filepath.Join(*artifacts, nightlyreport.Slug(m)), m, known))
 	}
 
 	freshStatus, updates := loadFreshness(*freshness, *freshnessExit)
 
 	meta := nightlyreport.Meta{Date: *date, Toolchain: *toolchain, Tools: *tools}
 	fmt.Print(nightlyreport.Render(results, freshStatus, updates, meta, *budget))
+}
+
+// knownModulePaths reads declared module paths from listed directories, skipping unreadable go.mod files.
+func knownModulePaths(root, modules string) map[string]bool {
+	known := map[string]bool{}
+	for m := range strings.SplitSeq(modules, ",") {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, m, "go.mod")) // #nosec G304 -- workflow-supplied module list
+		if err != nil {
+			continue
+		}
+		if path := modfile.ModulePath(data); path != "" {
+			known[path] = true
+		}
+	}
+	return known
 }
 
 // loadFreshness treats an empty path as not run and read failures as errors.
@@ -53,7 +77,7 @@ func loadFreshness(path string, exit int) (nightlyreport.Status, []nightlyreport
 }
 
 // classifyModule treats an absent artifact directory as not run and missing check output as an error.
-func classifyModule(dir, module string) nightlyreport.ModuleResult {
+func classifyModule(dir, module string, known map[string]bool) nightlyreport.ModuleResult {
 	ran := isDir(dir)
 
 	lintJSON, lintJSONOK := readFile(dir, "lint.json")
@@ -76,7 +100,7 @@ func classifyModule(dir, module string) nightlyreport.ModuleResult {
 	tidyTxt, tidyTxtOK := readFile(dir, "tidy.txt")
 	tidyErr, _ := readFile(dir, "tidy.err")
 	tidyExit, tidyExitOK := readExit(dir, "tidy.exit")
-	tidy := nightlyreport.Resolve(ran, tidyTxtOK && tidyExitOK, nightlyreport.ClassifyTidy(tidyTxt, tidyErr, tidyExit))
+	tidy := nightlyreport.Resolve(ran, tidyTxtOK && tidyExitOK, nightlyreport.ClassifyTidy(tidyTxt, tidyErr, tidyExit, known))
 
 	return nightlyreport.ModuleResult{
 		Module:     module,

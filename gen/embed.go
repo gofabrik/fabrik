@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -17,10 +18,8 @@ func EmbedCovers(a Annotation, pattern string) (found, covered bool) {
 			continue
 		}
 		found = true
-		for _, p := range embedPatterns(rest) {
-			if p == pattern {
-				return true, true
-			}
+		if slices.Contains(embedPatterns(rest), pattern) {
+			return true, true
 		}
 	}
 	return found, false

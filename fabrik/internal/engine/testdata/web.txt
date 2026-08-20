@@ -1,18 +1,16 @@
 Typed and plain handlers mix on one struct: shared group prefix, shared
-middleware names, one conflict table; View responses render through the
+middleware names, one conflict table; Template responses render through the
 declared template set.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require (
-	github.com/gofabrik/fabrik/templates v0.0.0
 	github.com/gofabrik/fabrik/web v0.0.0
 )
 
 replace (
-	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
 	github.com/gofabrik/fabrik/web => WEBDIR
 )
 -- main.go --
@@ -33,7 +31,7 @@ package web
 
 import "embed"
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 -- web/templates/_default/_layout.html --
@@ -53,14 +51,12 @@ type HomePage struct {
 	Title string
 }
 
-func (HomePage) Template() string { return "home" }
-
 //fabrik:http:group /app middleware=auth
 type Handlers struct{}
 
 //fabrik:web GET /home
 func (h *Handlers) Home(req *web.Request) (web.Response, error) {
-	return web.View(HomePage{Title: "hi"}), nil
+	return web.Template("home", HomePage{Title: "hi"}), nil
 }
 
 //fabrik:web POST /save
@@ -81,7 +77,6 @@ import (
 	"os"
 
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
 	web2 "github.com/gofabrik/fabrik/web"
 
 	"app/shared"
@@ -93,11 +88,12 @@ func run() int {
 		// Providers
 		r := router.New()
 		webHandlers := &web.Handlers{}
-		webTemplates, err := templates.Load(web.Templates, "templates")
+		requestFuncs := web2.DefaultRequestFuncs()
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}
-		adapter := web2.NewAdapter(web2.WithRenderer(webTemplates))
+		adapter := web2.NewAdapter(web2.WithRenderer(webTemplates), web2.WithRequestFuncs(requestFuncs))
 
 		// Register
 		r.Method("GET", "/app/home", adapter.Wrap(webHandlers.Home), shared.RequireAuth)

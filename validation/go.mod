@@ -1,3 +1,3 @@
 module github.com/gofabrik/fabrik/validation
 
-go 1.26
+go 1.27

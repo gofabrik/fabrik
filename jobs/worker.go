@@ -420,11 +420,9 @@ func (w *Worker) run(row ClaimedJob, rs *runState) {
 
 	var cancelByUser atomic.Bool
 	var auxWg sync.WaitGroup
-	auxWg.Add(1)
-	go func() {
-		defer auxWg.Done()
+	auxWg.Go(func() {
 		w.heartbeat(hbCtx, row.ID, cancel, &cancelByUser)
-	}()
+	})
 
 	jc := &jobCtx{
 		Context: runCtx,

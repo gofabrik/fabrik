@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 )
@@ -141,10 +142,10 @@ func composeHandler(res *ParseResult) Handler {
 		return handler
 	}
 	// Walk path inside-out so the root middleware is outermost.
-	for i := len(res.path) - 1; i >= 0; i-- {
-		ms := res.path[i].Use
-		for j := len(ms) - 1; j >= 0; j-- {
-			handler = ms[j](handler)
+	for _, v := range slices.Backward(res.path) {
+		ms := v.Use
+		for _, m := range slices.Backward(ms) {
+			handler = m(handler)
 		}
 	}
 	return handler

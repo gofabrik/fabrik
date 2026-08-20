@@ -2,8 +2,9 @@
 
 {{ define "content" }}
   {{ template "_nav.html" . }}
-  {{ range .Flashes }}<p class="flash flash-{{ .Kind }}">{{ .Text }}</p>
+  {{ range flashes }}<p class="flash flash-{{ .Kind }}">{{ .Text }}</p>
   {{ end }}<h1>{{ .Greeting }}</h1>
+  <p>{{ if session.Name }}Signed in as {{ session.Name }}{{ else }}No name saved yet{{ end }}; viewing {{ request.Path }}.</p>
   <p>Served at {{ humanizeAge .Started }} of uptime; visit #{{ .Visits }}.</p>
   <p><a href="/greet">Set greeting</a></p>
   <h2>Recent greetings</h2>

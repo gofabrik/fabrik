@@ -5,11 +5,12 @@ package mailtemplates
 import (
 	"bytes"
 	"fmt"
-	htmltpl "html/template"
 	"io/fs"
 	"path"
 	"strings"
-	texttpl "text/template"
+
+	htmltpl "github.com/gofabrik/t/html/template"
+	texttpl "github.com/gofabrik/t/text/template"
 )
 
 // Content holds the rendered bodies of one message.

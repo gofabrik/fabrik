@@ -2,7 +2,8 @@ package session
 
 import (
 	"context"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 	"reflect"
 )
@@ -10,22 +11,27 @@ import (
 // Registry is the sealed library-facing view of a session [Manager].
 //
 //	func New(m session.Registry) (*CSRF, error) {
-//		h, err := session.Use(m, key)
+//		h, err := session.Use[data](m, cellName)
 //		...
 //	}
 type Registry interface {
-	registry() *core
+	registry() *Manager
 }
 
-// Use registers a typed library cell and returns its handle.
+// Use registers a typed library cell by name and returns its handle.
 //
-// The same [Key] value is idempotent; the same name with a different
+// The same name and type is idempotent; the same name with a different
 // type is an error. Cell values persist through encoding/json.
 //
+// Exporting both the name constant and payload type deliberately shares the cell.
+//
 // Use is concurrency-safe and intended at wiring time.
-func Use[T any](m Registry, key Key[T]) (*Handle[T], error) {
-	if key.name == "" {
-		return nil, fmt.Errorf("session.Use: zero Key (declare one with session.NewKey)")
+func Use[T any](m Registry, name string) (*Handle[T], error) {
+	if name == "" {
+		return nil, fmt.Errorf("session.Use: name is empty")
+	}
+	if name == appKey {
+		return nil, fmt.Errorf("session.Use: the cell name %q is reserved for the app session (use the Manager's typed accessors)", appKey)
 	}
 	t := reflect.TypeFor[T]()
 	if err := checkCellType(t, "Use"); err != nil {
@@ -38,20 +44,37 @@ func Use[T any](m Registry, key Key[T]) (*Handle[T], error) {
 	if c == nil {
 		return nil, fmt.Errorf("session.Use: Registry carries no session manager (typed nil?)")
 	}
-	if err := c.register(key.name, t); err != nil {
+	if err := c.register(name, t); err != nil {
 		return nil, err
 	}
-	return &Handle[T]{m: c, key: key.name}, nil
+	return &Handle[T]{m: c, key: name}, nil
 }
 
 // Handle is typed access to one session cell.
 type Handle[T any] struct {
-	m   *core
+	m   *Manager
 	key string
 }
 
-// Key returns the handle's resolved cell key.
-func (h *Handle[T]) Key() string { return h.key }
+// Name returns the cell name.
+func (h *Handle[T]) Name() string { return h.key }
+
+// appKey is reserved for the app's own session data.
+const appKey = "app"
+
+func checkCellType(t reflect.Type, fn string) error {
+	if t.Kind() != reflect.Struct {
+		return fmt.Errorf("session.%s: cell type %s is not a struct", fn, typeLabel(t))
+	}
+	return nil
+}
+
+func typeLabel(t reflect.Type) string {
+	if t.Name() != "" && t.PkgPath() != "" {
+		return t.PkgPath() + "." + t.Name()
+	}
+	return t.String()
+}
 
 // Get returns the cell's request-current value. Absence reads as T's
 // zero value.
@@ -83,7 +106,8 @@ func (h *Handle[T]) Save(ctx context.Context, v T) error {
 
 // Update applies fn under optimistic CAS and writes immediately.
 //
-// fn may re-run after a conflict and must be self-contained.
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (h *Handle[T]) Update(ctx context.Context, fn func(*T) error) error {
 	return h.m.cellUpdate(ctx, h.key, h.rawFn(fn))
 }
@@ -93,8 +117,8 @@ func (h *Handle[T]) Clear(ctx context.Context) error {
 	return h.m.cellClear(ctx, h.key)
 }
 
-// Load reads the cell by SID without request middleware.
-func (h *Handle[T]) Load(ctx context.Context, sid string) (T, error) {
+// GetSID reads the cell by SID without request middleware.
+func (h *Handle[T]) GetSID(ctx context.Context, sid string) (T, error) {
 	var zero T
 	raw, ok, err := h.m.loadCell(ctx, sid, h.key)
 	if err != nil || !ok {
@@ -104,6 +128,9 @@ func (h *Handle[T]) Load(ctx context.Context, sid string) (T, error) {
 }
 
 // UpdateSID updates the cell by SID without creating a session.
+//
+// fn may run more than once, even if the update fails, and must have
+// no side effects beyond mutating its argument.
 func (h *Handle[T]) UpdateSID(ctx context.Context, sid string, fn func(*T) error) error {
 	return h.m.updateCellSID(ctx, sid, h.key, h.rawFn(fn))
 }
@@ -129,7 +156,7 @@ func (h *Handle[T]) ClearSID(ctx context.Context, sid string) error {
 }
 
 func (h *Handle[T]) encode(v T) (cellRaw, error) {
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(v, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return nil, fmt.Errorf("session: cell %q: encode: %w", h.key, err)
 	}
@@ -138,7 +165,7 @@ func (h *Handle[T]) encode(v T) (cellRaw, error) {
 
 func (h *Handle[T]) decode(raw cellRaw) (T, error) {
 	var v T
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := json.Unmarshal(raw, &v, jsonv1.DefaultOptionsV1()); err != nil {
 		var zero T
 		return zero, fmt.Errorf("session: cell %q: decode: %w", h.key, err)
 	}

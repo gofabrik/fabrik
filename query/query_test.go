@@ -1,6 +1,7 @@
 package query
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -42,11 +43,11 @@ func TestFieldMap_BuiltOncePerType(t *testing.T) {
 		Email string
 		Name  string `db:"display_name"`
 	}
-	fm1, err := getFieldMap(reflect.TypeOf(User{}))
+	fm1, err := getFieldMap(reflect.TypeFor[User]())
 	if err != nil {
 		t.Fatalf("getFieldMap: unexpected error %v", err)
 	}
-	fm2, _ := getFieldMap(reflect.TypeOf(User{}))
+	fm2, _ := getFieldMap(reflect.TypeFor[User]())
 	if fm1 != fm2 {
 		t.Errorf("fieldMap not cached: got distinct pointers %p vs %p", fm1, fm2)
 	}
@@ -64,7 +65,7 @@ func TestFieldMap_SkipsUnexported(t *testing.T) {
 		Public string
 		hidden string //nolint:unused // intentional unexported field for test
 	}
-	fm, err := getFieldMap(reflect.TypeOf(withPrivate{}))
+	fm, err := getFieldMap(reflect.TypeFor[withPrivate]())
 	if err != nil {
 		t.Fatalf("getFieldMap: unexpected error %v", err)
 	}
@@ -79,7 +80,7 @@ func TestFieldMap_DuplicateColumnError(t *testing.T) {
 		Alpha string `db:"x"`
 		Beta  string `db:"x"`
 	}
-	_, err := getFieldMap(reflect.TypeOf(T{}))
+	_, err := getFieldMap(reflect.TypeFor[T]())
 	if !errors.Is(err, ErrDuplicateColumn) {
 		t.Fatalf("error = %v, want ErrDuplicateColumn", err)
 	}
@@ -100,7 +101,7 @@ func TestFieldMap_TagCollidesWithDerivedName(t *testing.T) {
 		UserID int64  // derives to "user_id"
 		Other  string `db:"user_id"` // explicit override collides
 	}
-	if _, err := getFieldMap(reflect.TypeOf(T{})); !errors.Is(err, ErrDuplicateColumn) {
+	if _, err := getFieldMap(reflect.TypeFor[T]()); !errors.Is(err, ErrDuplicateColumn) {
 		t.Fatalf("error = %v, want ErrDuplicateColumn when db: tag collides with derived name", err)
 	}
 }
@@ -111,7 +112,7 @@ func TestFieldMap_CaseOnlyDuplicateColumnError(t *testing.T) {
 		A string `db:"Name"`
 		B string `db:"name"`
 	}
-	if _, err := getFieldMap(reflect.TypeOf(T{})); !errors.Is(err, ErrDuplicateColumn) {
+	if _, err := getFieldMap(reflect.TypeFor[T]()); !errors.Is(err, ErrDuplicateColumn) {
 		t.Fatalf("error = %v, want ErrDuplicateColumn for a case-only column collision", err)
 	}
 }
@@ -123,7 +124,7 @@ func TestFieldMap_DashTagSkipsField(t *testing.T) {
 		Email    string
 		Internal string `db:"-"`
 	}
-	fm, err := getFieldMap(reflect.TypeOf(T{}))
+	fm, err := getFieldMap(reflect.TypeFor[T]())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Base
 			Email string
 		}
-		if _, err := getFieldMap(reflect.TypeOf(User{})); !errors.Is(err, ErrUnsupportedFieldType) {
+		if _, err := getFieldMap(reflect.TypeFor[User]()); !errors.Is(err, ErrUnsupportedFieldType) {
 			t.Fatalf("err = %v, want ErrUnsupportedFieldType for embedded struct", err)
 		}
 	})
@@ -184,7 +185,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Email string
 			Addr  Address
 		}
-		if _, err := getFieldMap(reflect.TypeOf(User{})); !errors.Is(err, ErrUnsupportedFieldType) {
+		if _, err := getFieldMap(reflect.TypeFor[User]()); !errors.Is(err, ErrUnsupportedFieldType) {
 			t.Fatalf("err = %v, want ErrUnsupportedFieldType for nested struct", err)
 		}
 	})
@@ -193,7 +194,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Email string
 			Addr  *Address
 		}
-		if _, err := getFieldMap(reflect.TypeOf(User{})); !errors.Is(err, ErrUnsupportedFieldType) {
+		if _, err := getFieldMap(reflect.TypeFor[User]()); !errors.Is(err, ErrUnsupportedFieldType) {
 			t.Fatalf("err = %v, want ErrUnsupportedFieldType for *struct", err)
 		}
 	})
@@ -202,7 +203,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			Base  `db:"-"`
 			Email string
 		}
-		fm, err := getFieldMap(reflect.TypeOf(User{}))
+		fm, err := getFieldMap(reflect.TypeFor[User]())
 		if err != nil {
 			t.Fatalf(`db:"-" embedded struct should be skipped, got %v`, err)
 		}
@@ -218,7 +219,7 @@ func TestFieldMap_RejectsUnsupportedStructFields(t *testing.T) {
 			At      time.Time
 			Balance moneyValuerScanner
 		}
-		if _, err := getFieldMap(reflect.TypeOf(Row{})); err != nil {
+		if _, err := getFieldMap(reflect.TypeFor[Row]()); err != nil {
 			t.Fatalf("column-type structs must be accepted, got %v", err)
 		}
 	})
@@ -312,7 +313,7 @@ func TestFieldMap_NonASCIIFieldRejected(t *testing.T) {
 	type T struct {
 		Ł string
 	}
-	if _, err := getFieldMap(reflect.TypeOf(T{})); !errors.Is(err, ErrInvalidIdentifier) {
+	if _, err := getFieldMap(reflect.TypeFor[T]()); !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("error = %v, want ErrInvalidIdentifier for a non-ASCII field name", err)
 	}
 }
@@ -675,7 +676,7 @@ func TestClassifierRegistry_ConcurrentRegisterAndClassify(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			RegisterClassifier(func(error) error { return nil })
 		}
 	}()
@@ -687,7 +688,7 @@ func TestClassifierRegistry_ConcurrentRegisterAndClassify(t *testing.T) {
 			ID int64
 			X  string
 		}
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			_, _ = Insert(context.Background(), exec, DialectSQLite, "t", Row{X: "x"})
 		}
 	}()
@@ -742,14 +743,14 @@ func TestClassifierRegistry_SentinelReturnedUnderConcurrentRegister(t *testing.T
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			RegisterClassifier(func(error) error { return nil })
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			if got := classify(marker); !errors.Is(got, ErrUnique) {
 				t.Errorf("classify returned %v, want it to wrap ErrUnique", got)
 				return
@@ -771,5 +772,77 @@ func (e *erroringExecutor) QueryContext(_ context.Context, _ string, _ ...any) (
 }
 
 func (e *erroringExecutor) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row {
+	return nil
+}
+
+// Named arguments preserve their names while their values are normalized.
+func TestArgOf_NamedArg(t *testing.T) {
+	stamp := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	got := argOf(sql.Named("at", stamp))
+	named, ok := got.(sql.NamedArg)
+	if !ok {
+		t.Fatalf("argOf(sql.Named) = %T, want sql.NamedArg", got)
+	}
+	if named.Name != "at" {
+		t.Errorf("name = %q, want %q", named.Name, "at")
+	}
+	if named.Value != stamp.Format(time.RFC3339Nano) {
+		t.Errorf("value = %v, want the normalized stamp", named.Value)
+	}
+}
+
+// Argument normalization is idempotent because *DB-backed helpers may apply it twice.
+func TestArgOf_Idempotent(t *testing.T) {
+	stamp := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	once := argOf(stamp)
+	if twice := argOf(once); twice != once {
+		t.Errorf("argOf(argOf(t)) = %v, want %v", twice, once)
+	}
+}
+
+func TestRawPaths_NormalizeArgs(t *testing.T) {
+	stamp := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	exec := &captureExec{}
+	db, err := New(exec, DialectSQLite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(context.Background(), "insert", stamp, "s", 7, []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = db.QueryContext(context.Background(), "select", sql.Named("at", stamp))
+
+	want := stamp.Format(time.RFC3339Nano)
+	if exec.args[0][0] != want {
+		t.Errorf("ExecContext time arg = %v (%T), want %q", exec.args[0][0], exec.args[0][0], want)
+	}
+	if exec.args[0][1] != "s" || exec.args[0][2] != 7 {
+		t.Errorf("string/int args changed: %v", exec.args[0][1:3])
+	}
+	if b, ok := exec.args[0][3].([]byte); !ok || !bytes.Equal(b, []byte{1}) {
+		t.Errorf("[]byte arg changed: %v (%T)", exec.args[0][3], exec.args[0][3])
+	}
+	named, ok := exec.args[1][0].(sql.NamedArg)
+	if !ok || named.Name != "at" || named.Value != want {
+		t.Errorf("QueryContext named arg = %#v, want name at, normalized value", exec.args[1][0])
+	}
+}
+
+type captureExec struct {
+	args [][]any
+}
+
+func (e *captureExec) ExecContext(_ context.Context, _ string, args ...any) (sql.Result, error) {
+	e.args = append(e.args, args)
+	return fakeResult{}, nil
+}
+
+func (e *captureExec) QueryContext(_ context.Context, _ string, args ...any) (*sql.Rows, error) {
+	e.args = append(e.args, args)
+	return nil, errors.New("captureExec: no rows")
+}
+
+func (e *captureExec) QueryRowContext(_ context.Context, _ string, _ ...any) *sql.Row {
 	return nil
 }

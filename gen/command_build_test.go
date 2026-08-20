@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -97,9 +98,9 @@ func TestCommandDispatchBuildsAndRuns(t *testing.T) {
 	write("main.go", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(run()) }\n")
 	write("support.go", fixtureSupport)
 	write("dep/dep.go", "package dep\n\ntype Store struct{}\n\ntype Extra struct{}\n\ntype Final struct{}\n")
-	write("go.mod", "module fixture\n\ngo 1.26\n\nrequire github.com/gofabrik/fabrik/cli v0.1.0\n\nreplace github.com/gofabrik/fabrik/cli => "+cliPath+"\n")
+	write("go.mod", "module fixture\n\ngo 1.27\n\nrequire github.com/gofabrik/fabrik/cli v0.1.0\n\nreplace github.com/gofabrik/fabrik/cli => "+cliPath+"\n")
 
-	goEnv := append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+	goEnv := append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN="+runtime.Version())
 	tidy := exec.Command("go", "mod", "tidy")
 	tidy.Dir = dir
 	tidy.Env = goEnv

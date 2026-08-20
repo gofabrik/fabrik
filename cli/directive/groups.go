@@ -168,6 +168,7 @@ func (gr *Group) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	ds = append(ds, ids...)
 	use, mds := gr.fam.resolveMiddleware(g, nd.pos, nd.middleware)
 	ds = append(ds, mds...)
+	ds = append(ds, gr.fam.validateRequires(nd.pos, nd.middleware, gr.fam.earlierNames(nd.path))...)
 	if ds.HasFatal() {
 		return ds
 	}
@@ -267,6 +268,7 @@ func (r *Root) Emit(n any, g *gen.Gen) diag.Diagnostics {
 	ds = append(ds, ids...)
 	use, mds := r.fam.resolveMiddleware(g, nd.pos, nd.middleware)
 	ds = append(ds, mds...)
+	ds = append(ds, r.fam.validateRequires(nd.pos, nd.middleware, nil)...)
 	if ds.HasFatal() {
 		return ds
 	}
@@ -338,7 +340,7 @@ func exampleSpecs(exs []*exampleNode) []gen.CommandExample {
 // strippedDoc removes directive lines from a doc comment.
 func strippedDoc(text string) string {
 	var kept []string
-	for _, ln := range strings.Split(text, "\n") {
+	for ln := range strings.SplitSeq(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(ln), "fabrik:") {
 			continue
 		}
@@ -406,7 +408,7 @@ func splitPathSegments(a gen.Annotation, attr gen.Arg) ([]string, diag.Diagnosti
 func splitAliases(a gen.Annotation, attr gen.Arg) ([]string, diag.Diagnostics) {
 	var ds diag.Diagnostics
 	var out []string
-	for _, alias := range strings.Split(attr.Text, ",") {
+	for alias := range strings.SplitSeq(attr.Text, ",") {
 		if !tokenRE.MatchString(alias) {
 			ds.Error(a.ArgPos(attr.Col), fmt.Sprintf("invalid CLI token %q in alias=", alias),
 				"aliases are single lowercase kebab-case tokens")

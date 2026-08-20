@@ -3,7 +3,7 @@ references, and the constructor near-miss.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 
@@ -29,6 +29,9 @@ func BadName(next http.Handler) http.Handler { return next }
 //fabrik:http:middleware name=twice
 func First(next http.Handler) http.Handler { return next }
 
+//fabrik:http:middleware name=twice global=true
+func Thrice(next http.Handler) http.Handler { return next }
+
 //fabrik:http:middleware name=twice
 func Second(next http.Handler) http.Handler { return next }
 
@@ -45,7 +48,7 @@ func NearMiss(next http.Handler) func(http.Handler) http.Handler {
 
 type MW func(http.Handler) http.Handler
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func CustomType(t2 *T) MW {
 	return func(next http.Handler) http.Handler { return next }
 }
@@ -58,11 +61,13 @@ error: web/web.go:13:31: invalid middleware name "No.Cache"
   help: use a short identifier: name=auth
 error: web/web.go:19:1: duplicate middleware name "twice"
   help: first declared at $WORK/web/web.go:16:1
-error: web/web.go:22:33: invalid middleware name "bad-ref"
+error: web/web.go:22:1: duplicate middleware name "twice"
+  help: first declared at $WORK/web/web.go:16:1
+error: web/web.go:25:33: invalid middleware name "bad-ref"
   help: use declared names, comma-separated: middleware=auth,audit
-error: web/web.go:25:33: middleware "shared.RequireAuth" references code; middleware= takes declared names
+error: web/web.go:28:33: middleware "shared.RequireAuth" references code; middleware= takes declared names
   help: declare //fabrik:http:middleware name=<name> on the function and reference the name
-error: web/web.go:28:1: middleware NearMiss is neither form: not a direct middleware (it does not return http.Handler itself), not a constructor (its http.Handler parameter cannot resolve from the binding surface)
+error: web/web.go:31:1: middleware NearMiss is neither form: not a direct middleware (it does not return http.Handler itself), not a constructor (its http.Handler parameter cannot resolve from the binding surface)
   help: direct: func(next http.Handler) http.Handler; constructor: binding-resolved parameters returning the middleware
-error: web/web.go:35:1: middleware CustomType has the wrong signature
+error: web/web.go:38:1: middleware CustomType has the wrong signature
   help: want func(next http.Handler) http.Handler, or a constructor returning func(http.Handler) http.Handler or router.Middleware (optionally with error)

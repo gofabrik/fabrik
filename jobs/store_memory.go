@@ -3,6 +3,7 @@ package jobs
 import (
 	"cmp"
 	"context"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -442,9 +443,7 @@ func (s *MemoryStore) ListQueues(_ context.Context) ([]QueueInfo, error) {
 	out := make([]QueueInfo, 0, len(byName))
 	for name, counts := range byName {
 		cp := make(map[State]int, len(counts))
-		for k, v := range counts {
-			cp[k] = v
-		}
+		maps.Copy(cp, counts)
 		out = append(out, QueueInfo{Name: name, Counts: cp})
 	}
 	slices.SortFunc(out, func(a, b QueueInfo) int { return cmp.Compare(a.Name, b.Name) })

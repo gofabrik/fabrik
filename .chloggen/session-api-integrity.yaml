@@ -1,0 +1,4 @@
+change_type: breaking
+component: session
+note: Replace `session.Key` and `session.NewKey` with `session.Use[T](Registry, name)`, rename `Handle.Key` to `Handle.Name`, rename manager and handle `Load` methods to `GetSID`, and rename `ListForUser` and `RevokeAllForUser` to `ListByUser` and `RevokeByUser`. Require `MemoryOptions` in `NewMemoryStore`, allow its clock to be configured, and log failures to revoke old session IDs during `Promote` and `Renew`.
+issues: [0]

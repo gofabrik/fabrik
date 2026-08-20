@@ -58,15 +58,13 @@ func TestRecorder_NoRecordOnInvalidOrCanceled(t *testing.T) {
 func TestRecorder_ConcurrentSends(t *testing.T) {
 	rec := &mail.Recorder{}
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 20 {
+		wg.Go(func() {
 			m := valid()
 			if err := rec.Send(context.Background(), &m); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if n := len(rec.Sent()); n != 20 {

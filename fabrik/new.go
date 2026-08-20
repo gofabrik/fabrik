@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"text/template"
+
+	"github.com/gofabrik/t/text/template"
 
 	"github.com/gofabrik/fabrik/fabrik/internal/genconfig"
 )
@@ -24,12 +25,11 @@ const starterRoot = "templates/starter"
 
 // starterFabrikModules includes dependencies introduced by code generation.
 var starterFabrikModules = []string{
-	"github.com/gofabrik/fabrik/assetmapper",
+	"github.com/gofabrik/fabrik/assets",
 	"github.com/gofabrik/fabrik/cli",
 	"github.com/gofabrik/fabrik/config",
 	"github.com/gofabrik/fabrik/httpserver",
 	"github.com/gofabrik/fabrik/router",
-	"github.com/gofabrik/fabrik/templates",
 	"github.com/gofabrik/fabrik/web",
 }
 
@@ -192,8 +192,8 @@ func repinFabrik(dir, version string) error {
 // module path element: my-app -> MY_APP.
 func envPrefix(module string) string {
 	base := module
-	if i := strings.LastIndexByte(base, '/'); i >= 0 {
-		base = base[i+1:]
+	if _, after, found := strings.CutLast(base, "/"); found {
+		base = after
 	}
 	var b strings.Builder
 	for _, r := range strings.ToUpper(base) {
@@ -213,7 +213,7 @@ func envPrefix(module string) string {
 // extractFlag removes "--name value" or "--name=value" from args.
 func extractFlag(args []string, name string) (string, []string) {
 	prefix := "--" + name
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		switch {
 		case args[i] == prefix && i+1 < len(args):
 			return args[i+1], append(append([]string{}, args[:i]...), args[i+2:]...)

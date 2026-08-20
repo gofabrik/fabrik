@@ -453,7 +453,6 @@ func TestBundleKeepsRegistrationOrderAgainstAnchors(t *testing.T) {
 	routerPtr := types.NewPointer(routerNamed)
 
 	for i, pattern := range []string{"/first", "/second", "/third"} {
-		pattern := pattern
 		at := token.Position{Filename: "handlers.go", Line: 90 - i*30}
 		if ds := h.EmitHandle(g, pattern, at, func() (string, diag.Diagnostics) {
 			return "nil", nil

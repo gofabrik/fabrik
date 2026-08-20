@@ -35,10 +35,10 @@ func (c *countingStore) saveCount() int {
 	return c.saves
 }
 
-func harness(t *testing.T) (*session.Manager[appSession], *Flash, *countingStore) {
+func harness(t *testing.T) (*session.Manager, *Flash, *countingStore) {
 	t.Helper()
-	store := &countingStore{Store: session.NewMemoryStore()}
-	m, err := session.New[appSession](session.Config{
+	store := &countingStore{Store: session.NewMemoryStore(session.MemoryOptions{})}
+	m, err := session.New(session.Config{
 		Store:          store,
 		Token:          session.Cookie{},
 		AbsoluteExpiry: time.Hour,
@@ -55,10 +55,10 @@ func harness(t *testing.T) (*session.Manager[appSession], *Flash, *countingStore
 }
 
 // Use a retry budget high enough for the intentional contention in this file.
-func managerWithRetries(t *testing.T, retries int) (*session.Manager[appSession], *Flash) {
+func managerWithRetries(t *testing.T, retries int) (*session.Manager, *Flash) {
 	t.Helper()
-	m, err := session.New[appSession](session.Config{
-		Store:          session.NewMemoryStore(),
+	m, err := session.New(session.Config{
+		Store:          session.NewMemoryStore(session.MemoryOptions{}),
 		Token:          session.Cookie{},
 		AbsoluteExpiry: time.Hour,
 		IdleExpiry:     30 * time.Minute,
@@ -76,7 +76,7 @@ func managerWithRetries(t *testing.T, retries int) (*session.Manager[appSession]
 
 // serve runs one request through the session middleware and returns
 // the response's session cookie value, if any.
-func serve(t *testing.T, m *session.Manager[appSession], sid string, handler func(ctx context.Context)) string {
+func serve(t *testing.T, m *session.Manager, sid string, handler func(ctx context.Context)) string {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/", nil)
 	if sid != "" {
@@ -247,7 +247,7 @@ func TestCoexistsWithAppData(t *testing.T) {
 		_ = fl.Add(ctx, "success", "Saved.")
 	})
 	serve(t, m, sid, func(ctx context.Context) {
-		s, err := m.Get(ctx)
+		s, err := m.Get[appSession](ctx)
 		if err != nil || s.Name != "alice" {
 			t.Fatalf("app data = %+v, %v", s, err)
 		}
@@ -255,8 +255,8 @@ func TestCoexistsWithAppData(t *testing.T) {
 			t.Fatalf("flash lost beside app data: %+v", msgs)
 		}
 	})
-	if !strings.HasPrefix(key.Name(), "github.com/gofabrik/fabrik/flash") {
-		t.Fatalf("cell key = %q", key.Name())
+	if !strings.HasPrefix(cellName, "github.com/gofabrik/fabrik/flash") {
+		t.Fatalf("cell name = %q", cellName)
 	}
 }
 
@@ -329,7 +329,7 @@ func TestConcurrentAddsAllSurvive(t *testing.T) {
 	const n = 20
 	errs := make([]error, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -358,7 +358,7 @@ func TestConcurrentTakesDeliverOnce(t *testing.T) {
 	m, fl := managerWithRetries(t, 100)
 	const msgs = 5
 	sid := serve(t, m, "", func(ctx context.Context) {
-		for i := 0; i < msgs; i++ {
+		for i := range msgs {
 			_ = fl.Add(ctx, "info", fmt.Sprintf("m%d", i))
 		}
 	})
@@ -367,7 +367,7 @@ func TestConcurrentTakesDeliverOnce(t *testing.T) {
 	results := make([][]Message, takers)
 	errs := make([]error, takers)
 	var wg sync.WaitGroup
-	for i := 0; i < takers; i++ {
+	for i := range takers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

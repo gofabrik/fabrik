@@ -1,8 +1,8 @@
 # migrations
 
 Forward-only SQL migrations for `database/sql`: plain `NNNN_name.sql`
-files, checksummed against drift, applied in version order. SQLite and
-Postgres. Stdlib-only core.
+files, checksummed against drift, applied in version order. SQLite,
+Postgres, and MySQL/MariaDB via per-database driver packages.
 
 ## The model
 
@@ -30,16 +30,32 @@ the history being append-only.
 var files embed.FS
 
 fsys, _ := fs.Sub(files, "migrations")
-if err := migrations.Migrate(ctx, db, migrations.DialectSQLite, fsys); err != nil {
+if err := migrations.Migrate(ctx, db, sqlite.Driver(), fsys); err != nil {
 	log.Fatal(err)
 }
 ```
+
+The backend is a `Driver` value from the `sqlite`, `postgres`, or
+`mysql` subpackage (`mysql` serves both MySQL and MariaDB). The
+`Driver` interface is exported so other backends can implement it; its
+shape is unstable before 1.0.0.
+
+In a fabrik application, config-driven backend selection can use a
+`//fabrik:provider:select` group whose cases return the leaf drivers.
 
 `Migrate` is idempotent; each migration commits in its own
 transaction, and a failure keeps everything already applied
 (re-running resumes). A file may contain several statements; the
 whole body runs inside the migration's transaction. `Status` reports
 every migration as `pending`, `applied`, `drifted`, or `orphan`.
+
+**MySQL/MariaDB exception**: both servers implicitly commit DDL, so a
+failed migration can leave earlier statements applied without a
+`schema_migrations` record. Use single-statement or idempotent migrations.
+Two DSN options are required:
+`multiStatements=true` for multi-statement bodies and `parseTime=true`
+for `Status` timestamps. The `schema_migrations` key columns are
+`VARBINARY(191)`; stream and file names beyond 191 bytes are rejected.
 
 ## Streams
 
@@ -53,7 +69,7 @@ srcs := migrations.Sources{
 	{Stream: "auth", FS: auth.Migrations, Dir: "migrations"},
 	{Stream: "todos", FS: todos.Migrations, Dir: "migrations"},
 }
-if err := srcs.Migrate(ctx, db, dialect); err != nil { ... }
+if err := srcs.Migrate(ctx, db, sqlite.Driver()); err != nil { ... }
 ```
 
 Streams apply in sorted stream order, one engine session and one lock
@@ -80,16 +96,18 @@ with per-engine behavior:
 - **SQLite** locks per migration (`BEGIN IMMEDIATE`); the final state
   is correct, but a losing runner can fail on a raced migration body
   and needs a retry.
+- **MySQL/MariaDB** hold a `GET_LOCK` named lock on a dedicated
+  connection for the whole call; concurrent runs fully serialize. A
+  crash releases the lock with the connection.
 
-## Testing against Postgres
+## Testing against live databases
 
-The default test suite is hermetic (SQLite, in a nested `dbtest`
-module so the library itself stays dependency-free). Postgres
-integration tests cover apply/rerun/drift/orphan, multi-statement
-bodies, and advisory-lock serialization:
+The default test suite is hermetic. Live integration tests run on every
+backend whose DSN is set. `task db:up` at the repository root starts all
+three databases:
 
 ```sh
-TEST_POSTGRES_DSN='postgres://user:pass@localhost:5432/testdb?sslmode=disable' go test ./dbtest
+TEST_POSTGRES_DSN=... TEST_MYSQL_DSN=... TEST_MARIADB_DSN=... go test ./dbtest
 ```
 
 ## Errors

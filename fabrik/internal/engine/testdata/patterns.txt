@@ -3,7 +3,7 @@ rest-of-path wildcards, exact match, wildcard group prefixes.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

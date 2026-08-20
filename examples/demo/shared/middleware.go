@@ -3,19 +3,20 @@ package shared
 import (
 	"net/http"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/router/middleware"
 	"github.com/gofabrik/fabrik/session"
 )
 
-//fabrik:http:middleware
-func Logged(next http.Handler) http.Handler { return middleware.Logger(next) }
+// LogAndRecover logs requests outside panic recovery and runs before unmarked middleware.
+//
+//fabrik:http:middleware global=true before=*
+func LogAndRecover(next http.Handler) http.Handler {
+	return middleware.Logger(middleware.Recover(next))
+}
 
-//fabrik:http:middleware
-func Recovered(next http.Handler) http.Handler { return middleware.Recover(next) }
-
-//fabrik:http:middleware
-func SecureHeadersMiddleware(assets assetmapper.Server) func(http.Handler) http.Handler {
+//fabrik:http:middleware global=true
+func SecureHeadersMiddleware(assets assets.Server) func(http.Handler) http.Handler {
 	return middleware.SecureHeaders(
 		middleware.WithCSP(middleware.CSP{
 			ScriptSrc: append([]string{middleware.CSPSelf}, assets.ImportmapCSPSources()...),
@@ -23,13 +24,13 @@ func SecureHeadersMiddleware(assets assetmapper.Server) func(http.Handler) http.
 	)
 }
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func CrossOriginMiddleware(c *http.CrossOriginProtection) func(http.Handler) http.Handler {
 	return c.Handler
 }
 
-//fabrik:http:middleware
-func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
+//fabrik:http:middleware name=session global=true
+func SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {
 	return m.Middleware
 }
 

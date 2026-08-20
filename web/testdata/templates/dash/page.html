@@ -1,0 +1,3 @@
+{{ define "content" }}<main>{{ template "region/results" . }}{{ template "region/recent" . }}</main>{{ end }}
+{{ define "region/results" }}<div id="results">results for {{ .Query }}</div>{{ end }}
+{{ define "region/recent" }}<ul id="recent"><li>recent</li></ul>{{ end }}

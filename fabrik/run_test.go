@@ -10,11 +10,11 @@ import (
 
 func TestModuleRoot_WalksUpToGoMod(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module app\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module app\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	nested := filepath.Join(root, "web", "assets")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	if err := os.MkdirAll(nested, 0o755); err != nil { // #nosec G301 -- test directory
 		t.Fatal(err)
 	}
 	got, err := moduleRoot(nested)
@@ -62,7 +62,7 @@ func TestRunEnv_DefaultsDevelopmentOnlyWhenUnset(t *testing.T) {
 		t.Errorf("explicitly empty FABRIK_ENV must stay explicit, got %v", env)
 	}
 
-	os.Unsetenv("FABRIK_ENV")
+	os.Unsetenv("FABRIK_ENV") //nolint:errcheck // t.Setenv restores at cleanup; unset tests the default-injection path
 	env := runEnv()
 	if !slices.Contains(env, "FABRIK_ENV=development") {
 		t.Errorf("unset FABRIK_ENV: injected env %v is missing FABRIK_ENV=development", env)
@@ -71,10 +71,10 @@ func TestRunEnv_DefaultsDevelopmentOnlyWhenUnset(t *testing.T) {
 
 func TestRunCommandRefusesEmbeddedOutput(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.26\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module app\n\ngo 1.27\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "fabrik.yaml"), []byte("generate:\n  emit: embedded\n  dir: appwire\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "fabrik.yaml"), []byte("generate:\n  emit: embedded\n  dir: appwire\n"), 0o644); err != nil { // #nosec G306 -- test fixture in temp directory
 		t.Fatal(err)
 	}
 	if _, err := runCommand(dir, nil); err == nil || !strings.Contains(err.Error(), "embedded") {

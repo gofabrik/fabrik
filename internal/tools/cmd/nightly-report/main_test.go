@@ -37,8 +37,12 @@ func TestLoadFreshness(t *testing.T) {
 	}
 }
 
+func testKnown() map[string]bool {
+	return map[string]bool{"github.com/gofabrik/fabrik/forms": true}
+}
+
 func TestClassifyModuleNotRun(t *testing.T) {
-	r := classifyModule(filepath.Join(t.TempDir(), "absent"), "./m")
+	r := classifyModule(filepath.Join(t.TempDir(), "absent"), "./m", testKnown())
 	for _, s := range []nightlyreport.Status{r.Lint, r.Vuln, r.Test, r.Tidy} {
 		if s != nightlyreport.StatusNotRun {
 			t.Errorf("absent module dir: got %q, want not run", s)
@@ -63,7 +67,7 @@ func TestClassifyModuleComplete(t *testing.T) {
 		"tidy.err":     "",
 		"tidy.exit":    "0",
 	})
-	r := classifyModule(dir, "./m")
+	r := classifyModule(dir, "./m", testKnown())
 	if r.Lint != nightlyreport.StatusFindings {
 		t.Errorf("lint = %q, want findings", r.Lint)
 	}
@@ -75,7 +79,7 @@ func TestClassifyModuleComplete(t *testing.T) {
 func TestClassifyModuleRanButOutputsMissing(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "m")
 	write(t, dir, map[string]string{"ran": "ran\n"})
-	r := classifyModule(dir, "./m")
+	r := classifyModule(dir, "./m", testKnown())
 	for _, s := range []nightlyreport.Status{r.Lint, r.Vuln, r.Test, r.Tidy} {
 		if s != nightlyreport.StatusError {
 			t.Errorf("ran but outputs missing: got %q, want error", s)
@@ -90,7 +94,7 @@ func TestClassifyModuleLintOutcomeFailure(t *testing.T) {
 		"lint.json":    `{"Issues":[]}`,
 		"lint.outcome": "failure",
 	})
-	if r := classifyModule(dir, "./m"); r.Lint != nightlyreport.StatusError {
+	if r := classifyModule(dir, "./m", testKnown()); r.Lint != nightlyreport.StatusError {
 		t.Errorf("lint outcome failure = %q, want error", r.Lint)
 	}
 }
@@ -102,7 +106,7 @@ func TestClassifyModuleMalformedExitMarker(t *testing.T) {
 		"vuln.json": `{"config":{"scan_level":"symbol"}}`,
 		"vuln.exit": "not-a-number",
 	})
-	if r := classifyModule(dir, "./m"); r.Vuln != nightlyreport.StatusError {
+	if r := classifyModule(dir, "./m", testKnown()); r.Vuln != nightlyreport.StatusError {
 		t.Errorf("malformed vuln.exit = %q, want error", r.Vuln)
 	}
 }
@@ -114,11 +118,40 @@ func TestClassifyModuleErrorDetailUsesStderr(t *testing.T) {
 		"vuln.err":  "govulncheck: loading packages failed\n",
 		"vuln.exit": "1",
 	})
-	r := classifyModule(dir, "./m")
+	r := classifyModule(dir, "./m", testKnown())
 	if r.Vuln != nightlyreport.StatusError {
 		t.Fatalf("vuln = %q, want error", r.Vuln)
 	}
 	if r.VulnDetail != "govulncheck: loading packages failed\n" {
 		t.Errorf("error detail should be the stderr, got %q", r.VulnDetail)
+	}
+}
+
+func TestKnownModulePaths(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, module string) {
+		dir := filepath.Join(root, rel)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module "+module+"\n\ngo 1.27\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("assets", "github.com/gofabrik/fabrik/assets")
+	write("examples/demo", "demo")
+
+	known := knownModulePaths(root, "./assets, ./examples/demo, ./missing, ")
+	if !known["github.com/gofabrik/fabrik/assets"] {
+		t.Fatalf("declared module path missing: %v", known)
+	}
+	if !known["demo"] {
+		t.Fatalf("demo's real module path missing: %v", known)
+	}
+	if known["github.com/gofabrik/fabrik/examples/demo"] {
+		t.Fatal("directory-derived phantom path present")
+	}
+	if len(known) != 2 {
+		t.Fatalf("unreadable module contributed an entry: %v", known)
 	}
 }

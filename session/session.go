@@ -4,8 +4,8 @@
 //		Name string
 //	}
 //
-//	sessions, err := session.New[Session](session.Config{
-//		Store:          session.NewMemoryStore(),
+//	sessions, err := session.New(session.Config{
+//		Store:          session.NewMemoryStore(session.MemoryOptions{}),
 //		Token:          session.Cookie{Name: "session", HttpOnly: true},
 //		AbsoluteExpiry: 24 * time.Hour,
 //		IdleExpiry:     time.Hour,
@@ -13,7 +13,7 @@
 //
 //	handler := sessions.Middleware(mux)
 //
-//	s, err := sessions.Get(r.Context())
+//	s, err := sessions.Get[Session](r.Context())
 //	s.Name = "alice"
 //	err = sessions.Save(r.Context(), s)
 //
@@ -21,17 +21,17 @@
 // response-start commit. [Manager.Update] writes immediately with CAS
 // retry. [Manager.Promote] is login and [Manager.Destroy] is logout.
 //
-// The package ships an in-memory store ([MemoryStore]), a SQLite
-// store ([SQLiteStore]), and cookie and bearer token transports
-// ([Cookie], [Bearer], [Multi]). Stores declare optional
-// capabilities via interfaces ([TTLBumper], [UserIndexer],
+// The package ships an in-memory store ([MemoryStore]), database-backed
+// stores in the sqlite, postgres, and mysql subpackages, and cookie and
+// bearer token transports ([Cookie], [Bearer], [Multi]). Stores declare
+// optional capabilities via interfaces ([TTLBumper], [UserIndexer],
 // [Scanner], [Sweeper]); the storetest subpackage is the
 // conformance suite every store implementation runs.
 //
 // # For libraries
 //
-// A reusable library that needs private session data declares a typed
-// [Key] and registers it with [Use] against [Registry].
+// A reusable library that needs private session data calls [Use] with its
+// cell name and payload type against the [Registry].
 //
 // The library is standalone: net/http and any mux, no framework
 // required.
@@ -107,7 +107,7 @@ type TTLBumper interface {
 
 // UserIndexer is implemented by stores that maintain a secondary
 // index from user ID to session IDs. Required for
-// [Manager.ListForUser] and [Manager.RevokeAllForUser].
+// [Manager.ListByUser] and [Manager.RevokeByUser].
 //
 // Implementations keep the index current on Save and Delete.
 // ListByUser returns only live sessions; RevokeByUser deletes every

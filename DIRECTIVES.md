@@ -11,7 +11,7 @@ makes new keys backwards-compatible additions.
 
 **`//fabrik:assets [dir=assets]`**
 
-Declared on an exported `embed.FS` variable: the sources compile in memory at startup - hash-addressed URLs, JS / CSS references rewritten to hashed names, importmap rendering - and serve under `/assets/`. Template sets gain the `asset` and `importmap` helpers automatically. `dir=` names the subdirectory inside the FS. Use `all:<dir>`: plain patterns silently drop `_`-prefixed and dot-prefixed files. Several packages may declare trees; they union into one namespace, and a path provided twice is an error. An `importmap.json` at the top of one tree maps bare module specifiers; edits to assets or the importmap never require a rewire. Every tree is compile-checked at generation time. Declaring `type AssetsConfig = assetmapper.Options` under `//fabrik:config assets` switches construction on the `assets.kind` value - `source` serves straight from the source trees (run from the module root), `compiled` embeds as before - and binds `assetmapper.Server` instead of `*assetmapper.Compiled`.
+Declared on an exported `embed.FS` variable: the sources compile in memory at startup - hash-addressed URLs, JS / CSS references rewritten to hashed names, importmap rendering - and serve under `/assets/`. Template sets gain the `asset` and `importmap` helpers automatically. `dir=` names the subdirectory inside the FS. Use `all:<dir>`: plain patterns silently drop `_`-prefixed and dot-prefixed files. Several packages may declare trees; they union into one namespace, and a path provided twice is an error. An `importmap.json` at the top of one tree maps bare module specifiers; edits to assets or the importmap never require a rewire. Every tree is compile-checked at generation time. Declaring `type AssetsConfig = assets.Options` under `//fabrik:config assets` switches construction on the `assets.kind` value - `source` serves straight from the source trees (run from the module root), `compiled` embeds as before - and binds `assets.Server` instead of `*assets.Compiled`.
 
 ```go
 //fabrik:assets
@@ -136,9 +136,9 @@ Options:
 
 ## fabrik:cli:middleware
 
-**`//fabrik:cli:middleware name=<token>`**
+**`//fabrik:cli:middleware name=<token> [requires=a,b]`**
 
-Declared on an exported `func(cli.Handler) cli.Handler`: registers the function under a name that `middleware=` chains on `//fabrik:cli:command`, `//fabrik:cli:group`, and `//fabrik:cli:root` reference. Chains attach in declaration order; the cli library applies root middleware outermost, then each ancestor, then the command's own. Unreferenced declarations warn.
+Declared on an exported `func(cli.Handler) cli.Handler`: registers the function under a name that `middleware=` chains on `//fabrik:cli:command`, `//fabrik:cli:group`, and `//fabrik:cli:root` reference. Chains attach in declaration order; the cli library applies root middleware outermost, then each ancestor, then the command's own. `requires=` lists middleware that must run earlier through the root, an ancestor group or command, or an earlier entry in the same `middleware=` list; unmet requirements fail wiring. Unreferenced declarations warn.
 
 ```go
 //fabrik:cli:middleware name=confirm
@@ -148,6 +148,7 @@ func Confirm(next cli.Handler) cli.Handler { ... }
 Options:
 
 - `name=`
+- `requires=`
 
 ## fabrik:cli:root
 
@@ -283,7 +284,7 @@ Options:
 
 **`//fabrik:http:methodnotallowed`**
 
-Sets the handler for requests whose path matches a route under a different method. One per app. The Allow header is set before it runs and the response defaults to 405.
+Sets the handler for requests whose path matches a route under a different method. One per app, exclusive with `//fabrik:web:methodnotallowed`. The Allow header is set before it runs and the response defaults to 405.
 
 ```go
 //fabrik:http:methodnotallowed
@@ -292,16 +293,18 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request) { ... }
 
 ## fabrik:http:middleware
 
-**`//fabrik:http:middleware [name=NAME]`**
+**`//fabrik:http:middleware [name=NAME] [global=true] [requires=...] [after=...] [before=...]`**
 
-Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. Bare middleware is global, including 404/405. With `name=`, routes and groups opt in through their `middleware=` chain.
+Direct form: `func(next http.Handler) http.Handler`, referenced in place. Constructor form: binding-resolved parameters returning `func(http.Handler) http.Handler` or `router.Middleware`, optionally with a trailing error; it is built once before route registration. `global=true` attaches the middleware to every route, including 404/405; every global runs before any route middleware. `name=` is identity: routes and groups opt in through their `middleware=` chain, and ordering options reference names. A declaration with neither is a generation error.
+
+Ordering the global stack: `requires=x` is hard (x must exist and run earlier; on route middleware it instead requires x to be global or listed earlier in the chain); `after=x`/`before=x` order softly when x is a global and stay silent when nothing declares x; `before=*`/`after=*` place the middleware outermost/innermost. Unconstrained globals keep declaration order (file, then line). Contradictory constraints are generation errors.
 
 ```go
 //fabrik:http:middleware name=auth
 func RequireAuth(next http.Handler) http.Handler { ... }
 
-//fabrik:http:middleware
-func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Handler {
+//fabrik:http:middleware name=session global=true
+func SessionMiddleware(m *session.Manager) func(http.Handler) http.Handler {
 	return m.Middleware
 }
 ```
@@ -309,12 +312,16 @@ func SessionMiddleware(m *session.Manager[Session]) func(http.Handler) http.Hand
 Options:
 
 - `name=`
+- `global=` - e.g. true, false
+- `requires=`
+- `after=`
+- `before=`
 
 ## fabrik:http:notfound
 
 **`//fabrik:http:notfound`**
 
-Sets the handler for requests that match no route. One per app. Standard handler signature; the response defaults to 404.
+Sets the handler for requests that match no route. One per app, exclusive with `//fabrik:web:notfound`. Standard handler signature; the response defaults to 404.
 
 ```go
 //fabrik:http:notfound
@@ -448,42 +455,11 @@ Positional arguments:
 
 - `CONFIG-KEY`
 
-## fabrik:templates
-
-**`//fabrik:templates [dir=templates]`**
-
-Declared on an exported `embed.FS` variable: the tree loads at startup into a `*templates.Set`, injectable into handler structs and providers. Templates live in sections; `_default` provides fallback layouts and partials. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own section directories. A section provided twice is an error, and every tree is validated at generation time by loading it.
-
-```go
-//fabrik:templates
-//go:embed all:templates
-var Templates embed.FS
-```
-
-Options:
-
-- `dir=`
-
-## fabrik:templates:func
-
-**`//fabrik:templates:func [name=NAME]`**
-
-Adds a package-level function to the template set's FuncMap, visible to both HTML and text templates. The template-visible name defaults to the function name with a lowered first letter (`HumanizeAge` -> `humanizeAge`); `name=` overrides. The signature must be legal for the template engines: one result, or two with the second an `error`.
-
-```go
-//fabrik:templates:func
-func HumanizeAge(t time.Time) string { ... }
-```
-
-Options:
-
-- `name=`
-
 ## fabrik:web
 
 **`//fabrik:web METHOD /path [middleware=name,name2]`**
 
-Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:templates` is declared, `web.View` responses render through the app's template set.
+Registers a typed-response handler: `func(*web.Request) (web.Response, error)` - request in, response value out, errors centralized in the generated adapter. Same grammar, groups, middleware names, and conflict table as `//fabrik:http`; typed and plain handlers mix freely, even on one struct. When `//fabrik:web:templates` is declared, `web.Template` responses render through the app's template set.
 
 ```go
 //fabrik:web POST /login
@@ -498,3 +474,41 @@ Positional arguments:
 Options:
 
 - `middleware=`
+
+## fabrik:web:methodnotallowed
+
+**`//fabrik:web:methodnotallowed`**
+
+Sets the typed handler for requests whose path matches a route under a different method. One per app, exclusive with `//fabrik:http:methodnotallowed`. The Allow header is set before it runs; a response that sets no status keeps the 405.
+
+```go
+//fabrik:web:methodnotallowed
+func (e *ErrorPages) MethodNotAllowed(req *web.Request) (web.Response, error) { ... }
+```
+
+## fabrik:web:notfound
+
+**`//fabrik:web:notfound`**
+
+Sets the typed handler for requests that match no route. One per app, exclusive with `//fabrik:http:notfound`. The handler renders through the app's adapter; a response that sets no status keeps the 404.
+
+```go
+//fabrik:web:notfound
+func (e *ErrorPages) NotFound(req *web.Request) (web.Response, error) { ... }
+```
+
+## fabrik:web:templates
+
+**`//fabrik:web:templates [dir=templates]`**
+
+Declared on an exported `embed.FS` variable: the tree loads at startup into a `*web.Templates`, injectable into handler structs and providers. Templates live in sections, nested to any depth (`auth/password/login.html` renders as page `auth/password/login`); `_default` provides fallback layouts and partials, and a section's own `_`-files apply only to its own pages. `dir=` names the subdirectory inside the FS. `*.html` files use html/template; non-HTML files are ignored. Use `all:<dir>` so layouts and `_`-prefixed partials are embedded. Several packages may declare trees: shared can own `_default` while each domain package ships its own subtree under a shared prefix. A section path provided twice is an error, and every tree is validated at generation time by loading it.
+
+```go
+//fabrik:web:templates
+//go:embed all:templates
+var Templates embed.FS
+```
+
+Options:
+
+- `dir=`

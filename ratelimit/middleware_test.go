@@ -32,7 +32,7 @@ func TestMiddleware_DenialCarriesQuotaHeaders(t *testing.T) {
 	lim := newLimiter(t, ratelimit.PerMinute(60).WithBurst(2))
 	h := ratelimit.Middleware(lim)(okHandler(t))
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rec := request(h, "203.0.113.7:1234")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("request %d: %d", i+1, rec.Code)
@@ -131,7 +131,7 @@ func TestMiddleware_EmptyKeyPolicy(t *testing.T) {
 	emptyKey := ratelimit.WithKeyFunc(func(*http.Request) string { return "" })
 
 	open := ratelimit.Middleware(lim, emptyKey)(okHandler(t))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if rec := request(open, "203.0.113.7:1"); rec.Code != http.StatusOK {
 			t.Fatal("fail-open must pass degraded requests")
 		}

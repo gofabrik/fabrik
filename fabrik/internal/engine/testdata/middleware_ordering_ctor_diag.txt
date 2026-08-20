@@ -1,0 +1,36 @@
+Ordering cycles do not suppress constructor diagnostics.
+-- go.mod --
+module app
+
+go 1.27
+-- main.go --
+package main
+
+import "os"
+
+func main() { os.Exit(run()) }
+-- web/web.go --
+package web
+
+import "net/http"
+
+type Deps struct{}
+
+//fabrik:http:middleware name=a global=true after=b
+func A(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware name=b global=true after=a
+func B(next http.Handler) http.Handler { return next }
+
+//fabrik:http:middleware global=true
+func NeedsDeps(d *Deps) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return next }
+}
+
+//fabrik:http GET /
+func Index(w http.ResponseWriter, r *http.Request) {}
+-- want/diags --
+error: web/web.go:10:51: middleware ordering cycle: a -> b -> a
+  help: break the cycle by removing a requires= or after=/before= edge
+error: web/web.go:14:16: no provider or binding supplies this middleware constructor parameter
+  help: declare a //fabrik:provider for it

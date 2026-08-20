@@ -359,10 +359,7 @@ func unknownSubcommand(c *Command, attempted string) error {
 // suggestSub returns the closest visible subcommand within the edit-distance limit.
 func suggestSub(c *Command, attempted string) string {
 	best := ""
-	bestDist := len(attempted)
-	if bestDist > 4 {
-		bestDist = 4
-	}
+	bestDist := min(len(attempted), 4)
 	for _, s := range c.Subcommands {
 		if s.Hidden {
 			continue
@@ -407,12 +404,6 @@ func levenshtein(a, b string) int {
 }
 
 func min3(a, b, c int) int {
-	m := a
-	if b < m {
-		m = b
-	}
-	if c < m {
-		m = c
-	}
+	m := min(c, min(b, a))
 	return m
 }

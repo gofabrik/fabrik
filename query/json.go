@@ -2,7 +2,8 @@ package query
 
 import (
 	"database/sql/driver"
-	"encoding/json"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"fmt"
 )
 
@@ -37,12 +38,12 @@ func (j *JSON[T]) Scan(src any) error {
 	// Reset first: json.Unmarshal merges into existing maps and structs.
 	var zero T
 	j.V = zero
-	return json.Unmarshal(data, &j.V)
+	return json.Unmarshal(data, &j.V, jsonv1.DefaultOptionsV1())
 }
 
 // Value implements [database/sql/driver.Valuer].
 func (j JSON[T]) Value() (driver.Value, error) {
-	b, err := json.Marshal(j.V)
+	b, err := json.Marshal(j.V, jsonv1.DefaultOptionsV1())
 	if err != nil {
 		return nil, err
 	}

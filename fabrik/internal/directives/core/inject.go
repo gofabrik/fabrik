@@ -106,8 +106,8 @@ func (i *Inject) Check(n any, t gen.Typed) diag.Diagnostics {
 		sig := obj.Type().(*types.Signature)
 		var names []string
 		found := false
-		for p := range sig.Params().Len() {
-			name := sig.Params().At(p).Name()
+		for v := range sig.Params().Variables() {
+			name := v.Name()
 			if name == nd.selector {
 				found = true
 			}
@@ -128,8 +128,7 @@ func (i *Inject) Check(n any, t gen.Typed) diag.Diagnostics {
 		}
 		var names []string
 		var field *types.Var
-		for f := range st.NumFields() {
-			fv := st.Field(f)
+		for fv := range st.Fields() {
 			if fv.Name() == nd.selector {
 				field = fv
 			}
@@ -228,8 +227,7 @@ func isContextSelector(obj types.Object, selector string) bool {
 	if !ok {
 		return false
 	}
-	for p := range sig.Params().Len() {
-		v := sig.Params().At(p)
+	for v := range sig.Params().Variables() {
 		if v.Name() != selector {
 			continue
 		}

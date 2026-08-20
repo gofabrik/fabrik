@@ -4,21 +4,28 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/gofabrik/fabrik/authn"
 	"github.com/gofabrik/fabrik/cache"
+	sqlitecache "github.com/gofabrik/fabrik/cache/sqlite"
 	"github.com/gofabrik/fabrik/flash"
 	"github.com/gofabrik/fabrik/jobs"
+	sqlitejobs "github.com/gofabrik/fabrik/jobs/sqlite"
 	"github.com/gofabrik/fabrik/mail"
 	mailtemplates "github.com/gofabrik/fabrik/mail/templates"
 	"github.com/gofabrik/fabrik/query"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
+	sqlitesession "github.com/gofabrik/fabrik/session/sqlite"
 	"github.com/gofabrik/fabrik/storage"
+	"github.com/gofabrik/fabrik/web"
 	_ "modernc.org/sqlite"
 )
 
@@ -41,7 +48,7 @@ func NewQueries(db *sql.DB) (*query.DB, error) {
 //fabrik:provider
 func NewJobStore(db *sql.DB) (jobs.Store, error) {
 	// Migrations create the jobs schema before schedule reconciliation.
-	return jobs.NewSQLiteStore(db, jobs.SQLiteOptions{AutoCreate: false})
+	return sqlitejobs.New(db, sqlitejobs.Options{AutoCreate: false})
 }
 
 // NewJobsConfig configures the generated jobs manager.
@@ -53,12 +60,13 @@ func NewJobsConfig() jobs.Config {
 
 //fabrik:inject db name=database
 //fabrik:provider
-func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error) {
-	store, err := session.NewSQLiteStore(db, session.SQLiteOptions{})
+func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager, error) {
+	// Schema creation belongs to migration 0003_sessions.sql.
+	store, err := sqlitesession.New(db, sqlitesession.Options{AutoCreate: false})
 	if err != nil {
 		return nil, err
 	}
-	return session.New[Session](session.Config{
+	return session.New(session.Config{
 		Store:          store,
 		Token:          session.Cookie{Name: "demo_session", HttpOnly: true, Secure: c.CookieSecure, SameSite: http.SameSiteLaxMode},
 		AbsoluteExpiry: 24 * time.Hour,
@@ -67,7 +75,7 @@ func NewSession(db *sql.DB, c *SessionConfig) (*session.Manager[Session], error)
 }
 
 //fabrik:provider
-func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
+func NewFlash(m *session.Manager) (*flash.Flash, error) {
 	return flash.New(m)
 }
 
@@ -75,7 +83,7 @@ func NewFlash(m *session.Manager[Session]) (*flash.Flash, error) {
 //fabrik:provider
 func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 	// Schema creation belongs to migration 0005_cache.sql.
-	store, err := cache.NewSQLiteStore(db, cache.SQLiteOptions{AutoCreate: false})
+	store, err := sqlitecache.New(db, sqlitecache.Options{AutoCreate: false})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -84,9 +92,7 @@ func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ticker := time.NewTicker(time.Hour)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-ticker.C:
@@ -97,7 +103,7 @@ func NewCacheStore(db *sql.DB) (cache.Store, func() error, error) {
 				return
 			}
 		}
-	}()
+	})
 	return store, func() error {
 		ticker.Stop()
 		cancel()
@@ -138,6 +144,9 @@ func JobsWorker(cfg *JobsConfig) jobs.RuntimeConfig {
 //fabrik:provider:select mailer.kind
 type Mailer = mail.Transport
 
+//fabrik:provider case=dev
+func NewDevMailer() *mail.Dev { return &mail.Dev{} }
+
 //fabrik:provider case=log
 func NewLogMailer() *mail.Log { return &mail.Log{} }
 
@@ -169,7 +178,7 @@ func NewRatelimitStore() (*ratelimit.MemoryStore, func() error) {
 		for {
 			select {
 			case <-ticker.C:
-				_ = store.Sweep(context.Background(), time.Now())
+				_, _ = store.Sweep(context.Background(), time.Now())
 			case <-done:
 				return
 			}
@@ -192,4 +201,63 @@ func NewStorage(cfg *StorageConfig) (storage.Storage, func() error, error) {
 		return nil, nil, err
 	}
 	return local, local.Close, nil
+}
+
+// NewTemplateFuncs supplies the app's static template helpers.
+//
+//fabrik:provider
+func NewTemplateFuncs() web.FuncMap {
+	return web.FuncMap{
+		"shout":       strings.ToUpper,
+		"humanizeAge": humanizeAge,
+	}
+}
+
+func humanizeAge(t time.Time) string {
+	d := time.Since(t).Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+}
+
+// NewTemplateRequestFuncs declares the request-scoped values templates may
+// read: the typed session, the pending flash messages, and the auth claims.
+//
+//fabrik:provider
+func NewTemplateRequestFuncs(sessions *session.Manager, fl *flash.Flash) web.RequestFuncs {
+	return web.RequestFuncs{
+		"session": func(r *http.Request) any {
+			return func() (Session, error) { return sessions.Get[Session](r.Context()) }
+		},
+		"flashes": func(r *http.Request) any {
+			ctx := r.Context()
+			var taken []flash.Message
+			var consumed bool
+			return func() ([]flash.Message, error) {
+				// Cache the result so repeated calls consume flashes only once.
+				if !consumed {
+					msgs, err := fl.Take(ctx)
+					if err != nil {
+						return nil, err
+					}
+					taken, consumed = msgs, true
+				}
+				return taken, nil
+			}
+		},
+		"auth": func(r *http.Request) any {
+			return func() *authn.ClaimSet {
+				c, _ := authn.Claims(r.Context())
+				if c == nil {
+					return &authn.ClaimSet{}
+				}
+				return c
+			}
+		},
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -296,12 +297,7 @@ func generatedFile(path string) bool {
 	if base == "main.gen.go" || base == "fabrik.gen.go" {
 		return true
 	}
-	for _, owned := range genfiles.Owned(filepath.Dir(path)) {
-		if owned == base {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(genfiles.Owned(filepath.Dir(path)), base)
 }
 
 func dirOfPkg(pkg *packages.Package) string {
@@ -411,21 +407,20 @@ func reportPkgErrors(errs []packages.Error, ds *diag.Diagnostics) {
 // errorPosition parses packages.Error positions from the right.
 func errorPosition(e packages.Error) token.Position {
 	pos := token.Position{Filename: e.Pos}
-	rest := e.Pos
-	i := strings.LastIndexByte(rest, ':')
-	if i < 0 {
+	rest, lastStr, found := strings.CutLast(e.Pos, ":")
+	if !found {
 		return pos
 	}
-	last, err := strconv.Atoi(rest[i+1:])
+	last, err := strconv.Atoi(lastStr)
 	if err != nil {
 		return pos
 	}
-	if j := strings.LastIndexByte(rest[:i], ':'); j >= 0 {
-		if line, err := strconv.Atoi(rest[j+1 : i]); err == nil {
-			return token.Position{Filename: rest[:j], Line: line, Column: last}
+	if filename, lineStr, found := strings.CutLast(rest, ":"); found {
+		if line, err := strconv.Atoi(lineStr); err == nil {
+			return token.Position{Filename: filename, Line: line, Column: last}
 		}
 	}
-	return token.Position{Filename: rest[:i], Line: last}
+	return token.Position{Filename: rest, Line: last}
 }
 
 func splitFirst(s string) (head, rest string) {
@@ -492,13 +487,7 @@ func levenshtein(a, b string) int {
 			if a[i-1] == b[j-1] {
 				cost = 0
 			}
-			c := curr[j-1] + 1
-			if prev[j]+1 < c {
-				c = prev[j] + 1
-			}
-			if prev[j-1]+cost < c {
-				c = prev[j-1] + cost
-			}
+			c := min(prev[j-1]+cost, min(prev[j]+1, curr[j-1]+1))
 			curr[j] = c
 		}
 		prev, curr = curr, prev

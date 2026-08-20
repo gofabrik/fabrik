@@ -82,8 +82,8 @@ func TestCookie_CustomPathAndDomainSurviveSetCookie(t *testing.T) {
 func TestCookie_PathScopingViaCookieJar(t *testing.T) {
 	// End-to-end through net/http/cookiejar: a cookie set with
 	// Path=/api must be sent on /api/x but withheld from /other.
-	mgr, err := New[cart](Config{
-		Store:          NewMemoryStore(),
+	mgr, err := New(Config{
+		Store:          NewMemoryStore(MemoryOptions{}),
 		Token:          Cookie{Name: "sid", Path: "/api"},
 		AbsoluteExpiry: time.Hour,
 		IdleExpiry:     time.Minute,

@@ -2,7 +2,7 @@ Directives in package main warn and are ignored; generation continues.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 -- main.go --
 package main
 

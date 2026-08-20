@@ -1,10 +1,10 @@
 A migrate command consuming migrations without the app providing *sql.DB
-and migrations.Dialect gets the standard unresolved-dependency
+and migrations.Driver gets the standard unresolved-dependency
 diagnostics at the command, with recipes for both.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/cli v0.0.0
 
@@ -31,8 +31,8 @@ import (
 )
 
 //fabrik:cli:command
-func MigrateDB(ctx cli.Context, db *sql.DB, d migrations.Dialect, src migrations.Sources) error {
-	return src.Migrate(ctx, db, d)
+func MigrateDB(ctx cli.Context, db *sql.DB, drv migrations.Driver, src migrations.Sources) error {
+	return src.Migrate(ctx, db, drv)
 }
 -- shared/migrations.go --
 package shared
@@ -47,5 +47,5 @@ CREATE TABLE users (id INTEGER PRIMARY KEY);
 -- want/diags --
 error: shared/hooks.go:11:1: no provider for *sql.DB
   help: add a //fabrik:provider returning *sql.DB
-error: shared/hooks.go:11:1: no provider for migrations.Dialect
-  help: add a //fabrik:provider returning migrations.Dialect
+error: shared/hooks.go:11:1: no provider for migrations.Driver
+  help: add a //fabrik:provider returning migrations.Driver

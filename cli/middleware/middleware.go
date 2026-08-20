@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/gofabrik/fabrik/cli"
@@ -64,19 +65,19 @@ func Logging() cli.Middleware {
 		return func(ctx cli.Context) error {
 			start := time.Now()
 			err := next(ctx)
-			path := ""
+			var path strings.Builder
 			for i, p := range ctx.CommandPath() {
 				if i > 0 {
-					path += " "
+					path.WriteString(" ")
 				}
-				path += p
+				path.WriteString(p)
 			}
 			if err != nil {
 				//nolint:errcheck // Logging must preserve the wrapped handler's error instead of replacing it with a stderr failure.
-				fmt.Fprintf(ctx.Stderr(), "%s took %s (err: %v)\n", path, time.Since(start), err)
+				fmt.Fprintf(ctx.Stderr(), "%s took %s (err: %v)\n", path.String(), time.Since(start), err)
 			} else {
 				//nolint:errcheck // Logging has no error result to preserve when its best-effort stderr write fails.
-				fmt.Fprintf(ctx.Stderr(), "%s took %s\n", path, time.Since(start))
+				fmt.Fprintf(ctx.Stderr(), "%s took %s\n", path.String(), time.Since(start))
 			}
 			return err
 		}

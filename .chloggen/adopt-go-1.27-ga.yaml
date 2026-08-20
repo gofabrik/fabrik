@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: Fabrik now uses the released Go 1.27.0 toolchain and updates golangci-lint to v2.13.0, govulncheck to v1.7.0, x/tools to v0.49.0, and x/mod to v0.40.0.
+issues: [0]

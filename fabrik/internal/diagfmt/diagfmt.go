@@ -111,10 +111,7 @@ func (f *Formatter) Emit(d diag.Diagnostic) error {
 		w.printf("  %s %s\n", pad, bar)
 		w.printf("  %s %s %s\n", f.paint(ansiBoldBlue, lineNum), bar, src)
 
-		col := d.Pos.Column - 1
-		if col < 0 {
-			col = 0
-		}
+		col := max(d.Pos.Column-1, 0)
 		caretLen := caretSpanLen(src, col)
 		indent := strings.Repeat(" ", col)
 		carets := strings.Repeat("^", caretLen)
@@ -196,9 +193,6 @@ func caretSpanLen(src string, col int) int {
 	for end < len(src) && !unicode.IsSpace(rune(src[end])) {
 		end++
 	}
-	n := end - col
-	if n < 1 {
-		n = 1
-	}
+	n := max(end-col, 1)
 	return n
 }

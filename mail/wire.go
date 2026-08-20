@@ -87,7 +87,7 @@ func addressHeader(b *strings.Builder, name string, addrs []string) error {
 // is valid RFC 5322 folding when the first word does not fit.
 func foldHeader(b *strings.Builder, name, value string) {
 	line := name + ":"
-	for _, word := range strings.Split(value, " ") {
+	for word := range strings.SplitSeq(value, " ") {
 		if len(line)+1+len(word) > 78 {
 			b.WriteString(line)
 			b.WriteString("\r\n")
@@ -109,7 +109,7 @@ func writeAlternative(b *strings.Builder, m *Message) error {
 	if err := mw.Close(); err != nil {
 		return fmt.Errorf("mail: close alternative MIME body: %w", err)
 	}
-	b.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=%q\r\n\r\n", mw.Boundary()))
+	fmt.Fprintf(b, "Content-Type: multipart/alternative; boundary=%q\r\n\r\n", mw.Boundary())
 	b.Write(body.Bytes())
 	return nil
 }
@@ -196,7 +196,7 @@ func writeMixed(b *strings.Builder, m *Message) error {
 	if err := outer.Close(); err != nil {
 		return fmt.Errorf("mail: close mixed MIME body: %w", err)
 	}
-	b.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q\r\n\r\n", outer.Boundary()))
+	fmt.Fprintf(b, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", outer.Boundary())
 	b.Write(body.Bytes())
 	return nil
 }

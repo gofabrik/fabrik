@@ -51,6 +51,45 @@ rate; call `Sweep` periodically to reclaim expired entries. Use
 `WithNamespace` lets several limiters share a store without sharing
 buckets. `WithClock` provides a deterministic time source for tests.
 
+### Database-backed stores
+
+Three leaf packages back rate-limit entries in a shared database,
+surviving restarts and serving all replicas under the same limit:
+
+```go
+// SQLite
+s, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
+
+// PostgreSQL
+s, err := postgres.New(db, postgres.Options{AutoCreate: true})
+
+// MySQL or MariaDB
+s, err := mysql.New(db, mysql.Options{AutoCreate: true})
+```
+
+All three satisfy `ratelimit.Store` and `ratelimit.Sweeper`. Pass the
+returned store directly to `ratelimit.New`.
+
+#### Key-length contract
+
+| Backend    | Maximum key length |
+|------------|--------------------|
+| SQLite     | no enforced limit  |
+| PostgreSQL | ~2704 bytes (B-tree index limit for incompressible keys) |
+| MySQL/MariaDB | 3072 bytes (`VARBINARY(3072)` primary key) |
+
+Keys exceeding the backend limit are rejected by the database. Rate-limit
+keys are typically short identifiers such as IP addresses or user IDs.
+
+#### MySQL/MariaDB notes
+
+The `key` column is `VARBINARY(3072)`, so keys compare byte-for-byte.
+Keys are arbitrary bytes on every backend, including NUL and invalid UTF-8.
+
+`SetIfAbsent` and `CompareAndSwap` use row locks because MySQL reports zero
+affected rows both for no match and for an unchanged match. The library
+does not require `CLIENT_FOUND_ROWS`.
+
 ## HTTP middleware
 
 ```go

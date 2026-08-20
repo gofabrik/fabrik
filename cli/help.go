@@ -247,10 +247,7 @@ func hasVisibleSubcommands(subs []*Command) bool {
 
 // printWrapped aligns continuation lines with text and keeps at least 20 columns available.
 func printWrapped(w io.Writer, prefix string, width int, text string) {
-	avail := width - len(prefix)
-	if avail < 20 {
-		avail = 20
-	}
+	avail := max(width-len(prefix), 20)
 	if text == "" {
 		writeHelpLine(w, prefix)
 		return

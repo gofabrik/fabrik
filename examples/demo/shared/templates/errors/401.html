@@ -1,0 +1,7 @@
+{{ define "title" }}Unauthorized{{ end }}
+
+{{ define "content" }}
+  <h1>{{ .Status }}</h1>
+  <p>You must be logged in to view this page.</p>
+  <p><a href="/login">Log in</a></p>
+{{ end }}

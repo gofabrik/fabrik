@@ -6,7 +6,7 @@ constructor warns and is not built.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require github.com/gofabrik/fabrik/router v0.0.0
 
@@ -31,7 +31,7 @@ type Limiter struct{}
 //fabrik:provider
 func NewLimiter() *Limiter { return &Limiter{} }
 
-//fabrik:http:middleware
+//fabrik:http:middleware global=true
 func Sessions(l *Limiter) (func(http.Handler) http.Handler, error) {
 	return func(next http.Handler) http.Handler { return next }, nil
 }
@@ -88,6 +88,7 @@ func run() int {
 		if err != nil {
 			return err
 		}
+		// unconstrained (file order)
 		r.Use(sessionsMW)
 		authMW := shared.RequireAuth(sharedLimiter)
 
@@ -104,4 +105,4 @@ func run() int {
 }
 -- want/diags --
 warning: shared/mw.go:27:1: middleware "unused" is never referenced
-  help: list it in a middleware= chain, or drop name= to make it global
+  help: list it in a middleware= chain, or add global=true to run it everywhere

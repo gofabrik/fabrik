@@ -7,39 +7,46 @@ import (
 	"log/slog"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// core is the non-generic session controller.
-type core struct {
+// Manager persists an application's session data per visitor. The first typed
+// app-data accessor pins its struct type, and app data uses encoding/json.
+// Manager also implements [Registry] for library-owned session cells.
+type Manager struct {
 	cfg        Config
 	now        func() time.Time
 	newSID     func() (string, error)
 	maxRetries int
 	ctxKey     *managerKey
 
-	regMu    sync.Mutex
-	registry map[string]reflect.Type // cell key -> registered type
+	regMu sync.Mutex
+	cells map[string]reflect.Type
+
+	// appT caches the pinned app-cell type without taking regMu.
+	appT atomic.Pointer[reflect.Type]
 }
 
-// managerKey is per-core, so managers do not share request state.
+// managerKey prevents managers from sharing request state.
 type managerKey struct{ _ byte }
 
-// newCore validates cfg and builds the engine.
-func newCore(cfg Config) (*core, error) {
+// New validates all configuration fields and returns a Manager; the first typed
+// app-data accessor pins its struct type.
+func New(cfg Config) (*Manager, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	m := &core{
+	m := &Manager{
 		cfg:        cfg,
 		now:        cfg.Now,
 		newSID:     cfg.NewSID,
 		maxRetries: cfg.MaxRetries,
 		ctxKey:     &managerKey{},
-		registry:   make(map[string]reflect.Type),
+		cells:      make(map[string]reflect.Type),
 	}
 	if m.now == nil {
 		m.now = time.Now
@@ -56,23 +63,31 @@ func newCore(cfg Config) (*core, error) {
 	return m, nil
 }
 
+// registry seals [Registry] to Manager values.
+func (m *Manager) registry() *Manager {
+	if m == nil {
+		return nil
+	}
+	return m
+}
+
 // register adds one (key, type) pair. Repeat registration is idempotent.
-func (m *core) register(key string, t reflect.Type) error {
+func (m *Manager) register(key string, t reflect.Type) error {
 	m.regMu.Lock()
 	defer m.regMu.Unlock()
-	if prev, ok := m.registry[key]; ok {
+	if prev, ok := m.cells[key]; ok {
 		if prev != t {
-			return fmt.Errorf("session: cell key %q is already registered with type %s (this registration: %s)",
+			return fmt.Errorf("session: cell name %q is already registered with type %s (this registration: %s)",
 				key, typeLabel(prev), typeLabel(t))
 		}
 		return nil
 	}
-	m.registry[key] = t
+	m.cells[key] = t
 	return nil
 }
 
 // mintSID rejects empty generator output before it reaches the Store.
-func (m *core) mintSID() (string, error) {
+func (m *Manager) mintSID() (string, error) {
 	sid, err := m.newSID()
 	if err != nil {
 		return "", fmt.Errorf("session: generate sid: %w", err)
@@ -124,7 +139,7 @@ type state struct {
 type cellRaw = []byte
 
 // stateFromCtx retrieves the per-request state attached by middleware.
-func (m *core) stateFromCtx(ctx context.Context, op string) (*state, error) {
+func (m *Manager) stateFromCtx(ctx context.Context, op string) (*state, error) {
 	st, ok := ctx.Value(m.ctxKey).(*state)
 	if !ok {
 		return nil, fmt.Errorf("session.%s: %w", op, ErrNoSession)
@@ -133,7 +148,7 @@ func (m *core) stateFromCtx(ctx context.Context, op string) (*state, error) {
 }
 
 // ensureLoaded loads on first session API call. Callers hold st.mu.
-func (m *core) ensureLoaded(ctx context.Context, st *state) error {
+func (m *Manager) ensureLoaded(ctx context.Context, st *state) error {
 	if st.loaded {
 		return nil
 	}
@@ -190,8 +205,14 @@ func (st *state) pendingMint() bool {
 	return false
 }
 
-// SID returns the SID the request arrived with.
-func (m *core) SID(ctx context.Context) (string, error) {
+// Has reports whether app session data exists, including staged writes.
+func (m *Manager) Has(ctx context.Context) (bool, error) { return m.cellHas(ctx, appKey) }
+
+// Clear stages removal of the app data without ending the session.
+func (m *Manager) Clear(ctx context.Context) error { return m.cellClear(ctx, appKey) }
+
+// SID returns the session ID the request arrived with.
+func (m *Manager) SID(ctx context.Context) (string, error) {
 	st, err := m.stateFromCtx(ctx, "SID")
 	if err != nil {
 		return "", err
@@ -205,7 +226,7 @@ func (m *core) SID(ctx context.Context) (string, error) {
 }
 
 // UserID returns the request-current session user ID.
-func (m *core) UserID(ctx context.Context) (string, error) {
+func (m *Manager) UserID(ctx context.Context) (string, error) {
 	st, err := m.stateFromCtx(ctx, "UserID")
 	if err != nil {
 		return "", err
@@ -224,8 +245,10 @@ func (m *core) UserID(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// Renew stages SID rotation without extending absolute expiry.
-func (m *core) Renew(ctx context.Context) error {
+// Renew stages a SID rotation without extending absolute expiry.
+// Failure to revoke the old SID is logged through [Config.Logger] and does
+// not fail rotation; the old SID remains valid until expiry.
+func (m *Manager) Renew(ctx context.Context) error {
 	st, err := m.stateFromCtx(ctx, "Renew")
 	if err != nil {
 		return err
@@ -246,7 +269,9 @@ func (m *core) Renew(ctx context.Context) error {
 }
 
 // Promote stages login and rotates the SID, even for the same userID.
-func (m *core) Promote(ctx context.Context, userID string) error {
+// Failure to revoke the old SID is logged through [Config.Logger] and does
+// not fail rotation; the old SID remains valid until expiry.
+func (m *Manager) Promote(ctx context.Context, userID string) error {
 	st, err := m.stateFromCtx(ctx, "Promote")
 	if err != nil {
 		return err
@@ -268,7 +293,7 @@ func (m *core) Promote(ctx context.Context, userID string) error {
 }
 
 // Destroy stages deletion and leaves the request sessionless.
-func (m *core) Destroy(ctx context.Context) error {
+func (m *Manager) Destroy(ctx context.Context) error {
 	st, err := m.stateFromCtx(ctx, "Destroy")
 	if err != nil {
 		return err
@@ -298,25 +323,32 @@ func (m *core) Destroy(ctx context.Context) error {
 	return nil
 }
 
-// DestroySID revokes one session out of band. Missing sessions succeed.
-func (m *core) DestroySID(ctx context.Context, sid string) error {
+// ClearSID removes app data by SID without ending the session.
+func (m *Manager) ClearSID(ctx context.Context, sid string) error {
+	return m.clearCellSID(ctx, sid, appKey)
+}
+
+// DestroySID revokes one session. Revocation is idempotent.
+func (m *Manager) DestroySID(ctx context.Context, sid string) error {
 	return m.cfg.Store.Delete(ctx, sid)
 }
 
-// ListForUser returns live SIDs for userID.
-func (m *core) ListForUser(ctx context.Context, userID string) ([]string, error) {
+// ListByUser returns the SIDs of every live session belonging to
+// userID. Requires a store with the [UserIndexer] capability.
+func (m *Manager) ListByUser(ctx context.Context, userID string) ([]string, error) {
 	idx, ok := m.cfg.Store.(UserIndexer)
 	if !ok {
-		return nil, fmt.Errorf("session.ListForUser: %w", ErrCapabilityMissing)
+		return nil, fmt.Errorf("session.ListByUser: %w", ErrCapabilityMissing)
 	}
 	return idx.ListByUser(ctx, userID)
 }
 
-// RevokeAllForUser deletes live sessions for userID except listed SIDs.
-func (m *core) RevokeAllForUser(ctx context.Context, userID string, except ...string) (int, error) {
+// RevokeByUser deletes every live session for userID except the
+// optional SIDs.
+func (m *Manager) RevokeByUser(ctx context.Context, userID string, except ...string) (int, error) {
 	idx, ok := m.cfg.Store.(UserIndexer)
 	if !ok {
-		return 0, fmt.Errorf("session.RevokeAllForUser: %w", ErrCapabilityMissing)
+		return 0, fmt.Errorf("session.RevokeByUser: %w", ErrCapabilityMissing)
 	}
 	return idx.RevokeByUser(ctx, userID, except...)
 }

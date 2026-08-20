@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 )
 
 // checkStageable reports ErrAlreadyCommitted before data validation.
-func (m *core) checkStageable(ctx context.Context, op string) error {
+func (m *Manager) checkStageable(ctx context.Context, op string) error {
 	st, err := m.stateFromCtx(ctx, op)
 	if err != nil {
 		return err
@@ -21,7 +22,7 @@ func (m *core) checkStageable(ctx context.Context, op string) error {
 }
 
 // cellGet returns the request-current raw value of one cell.
-func (m *core) cellGet(ctx context.Context, key string) (cellRaw, bool, error) {
+func (m *Manager) cellGet(ctx context.Context, key string) (cellRaw, bool, error) {
 	st, err := m.stateFromCtx(ctx, "Get")
 	if err != nil {
 		return nil, false, err
@@ -45,7 +46,7 @@ func (m *core) cellGet(ctx context.Context, key string) (cellRaw, bool, error) {
 }
 
 // cellHas reports request-current existence.
-func (m *core) cellHas(ctx context.Context, key string) (bool, error) {
+func (m *Manager) cellHas(ctx context.Context, key string) (bool, error) {
 	st, err := m.stateFromCtx(ctx, "Has")
 	if err != nil {
 		return false, err
@@ -66,7 +67,7 @@ func (m *core) cellHas(ctx context.Context, key string) (bool, error) {
 }
 
 // cellSave stages one whole-cell overwrite without decoding old cell bytes.
-func (m *core) cellSave(ctx context.Context, key string, raw cellRaw) error {
+func (m *Manager) cellSave(ctx context.Context, key string, raw cellRaw) error {
 	st, err := m.stateFromCtx(ctx, "Save")
 	if err != nil {
 		return err
@@ -89,7 +90,7 @@ func (m *core) cellSave(ctx context.Context, key string, raw cellRaw) error {
 }
 
 // cellClear stages removal of one cell and never mints a session.
-func (m *core) cellClear(ctx context.Context, key string) error {
+func (m *Manager) cellClear(ctx context.Context, key string) error {
 	st, err := m.stateFromCtx(ctx, "Clear")
 	if err != nil {
 		return err
@@ -132,7 +133,7 @@ func (st *state) stage(key string, raw cellRaw) {
 
 // cellUpdate is the immediate read-modify-write path. The closure
 // runs outside st.mu; store CAS serializes concurrent updates.
-func (m *core) cellUpdate(ctx context.Context, key string, fn func(prev cellRaw) (cellRaw, error)) error {
+func (m *Manager) cellUpdate(ctx context.Context, key string, fn func(prev cellRaw) (cellRaw, error)) error {
 	st, err := m.stateFromCtx(ctx, "Update")
 	if err != nil {
 		return err
@@ -176,9 +177,7 @@ func (m *core) cellUpdate(ctx context.Context, key string, fn func(prev cellRaw)
 		}
 
 		merged := make(map[string]cellRaw, len(st.cells)+1)
-		for k, v := range st.cells {
-			merged[k] = v
-		}
+		maps.Copy(merged, st.cells)
 		merged[key] = out
 		payload, err := encodeEnvelope(merged)
 		if err != nil {
@@ -210,7 +209,7 @@ func (m *core) cellUpdate(ctx context.Context, key string, fn func(prev cellRaw)
 }
 
 // reloadCells refreshes state after a CAS conflict. Callers hold st.mu.
-func (m *core) reloadCells(ctx context.Context, st *state) error {
+func (m *Manager) reloadCells(ctx context.Context, st *state) error {
 	fresh, err := m.cfg.Store.Load(ctx, st.record.SID)
 	if err != nil {
 		return err
@@ -240,7 +239,7 @@ func (st *state) updateBase(key string) (base cellRaw, stagedBase bool, seq int,
 
 // mintForUpdate creates the session a pre-commit Update needs now.
 // Callers hold st.mu.
-func (m *core) mintForUpdate(ctx context.Context, st *state, key string, out cellRaw) error {
+func (m *Manager) mintForUpdate(ctx context.Context, st *state, key string, out cellRaw) error {
 	if st.destroyed && st.destroyedSID != "" {
 		if err := m.cfg.Store.Delete(ctx, st.destroyedSID); err != nil {
 			return err
@@ -289,7 +288,7 @@ func freshPayload(rec Record) []byte {
 }
 
 // loadCell reads one cell out of band without bumping idle TTL.
-func (m *core) loadCell(ctx context.Context, sid, key string) (cellRaw, bool, error) {
+func (m *Manager) loadCell(ctx context.Context, sid, key string) (cellRaw, bool, error) {
 	rec, err := m.cfg.Store.Load(ctx, sid)
 	if err != nil {
 		return nil, false, err
@@ -303,7 +302,7 @@ func (m *core) loadCell(ctx context.Context, sid, key string) (cellRaw, bool, er
 }
 
 // mutateCellsSID is the out-of-band CAS loop shared by update and clear.
-func (m *core) mutateCellsSID(ctx context.Context, sid string, mutate func(cells map[string]cellRaw) (bool, error)) error {
+func (m *Manager) mutateCellsSID(ctx context.Context, sid string, mutate func(cells map[string]cellRaw) (bool, error)) error {
 	for attempt := 0; ; attempt++ {
 		rec, err := m.cfg.Store.Load(ctx, sid)
 		if err != nil {
@@ -336,7 +335,7 @@ func (m *core) mutateCellsSID(ctx context.Context, sid string, mutate func(cells
 }
 
 // updateCellSID updates one cell out of band without minting.
-func (m *core) updateCellSID(ctx context.Context, sid, key string, fn func(prev cellRaw) (cellRaw, error)) error {
+func (m *Manager) updateCellSID(ctx context.Context, sid, key string, fn func(prev cellRaw) (cellRaw, error)) error {
 	return m.mutateCellsSID(ctx, sid, func(cells map[string]cellRaw) (bool, error) {
 		out, err := fn(cells[key])
 		if err != nil {
@@ -348,7 +347,7 @@ func (m *core) updateCellSID(ctx context.Context, sid, key string, fn func(prev 
 }
 
 // clearCellSID removes one cell out of band.
-func (m *core) clearCellSID(ctx context.Context, sid, key string) error {
+func (m *Manager) clearCellSID(ctx context.Context, sid, key string) error {
 	return m.mutateCellsSID(ctx, sid, func(cells map[string]cellRaw) (bool, error) {
 		if _, ok := cells[key]; !ok {
 			return false, nil

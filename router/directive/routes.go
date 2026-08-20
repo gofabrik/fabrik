@@ -150,8 +150,8 @@ func (h *Host) registerRouterFieldBinding(g *gen.Gen, t types.Type) {
 	if !ok {
 		return
 	}
-	for i := 0; i < st.NumFields(); i++ {
-		ft := st.Field(i).Type()
+	for field := range st.Fields() {
+		ft := field.Type()
 		if types.TypeString(types.Unalias(ft), nil) != "*"+routerPath+".Router" {
 			continue
 		}

@@ -5,7 +5,15 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/gofabrik/fabrik/session/internal/sessionutil"
 )
+
+// MemoryOptions configures a [MemoryStore].
+type MemoryOptions struct {
+	// Now overrides the store's clock. nil means time.Now.
+	Now func() time.Time
+}
 
 // MemoryStore is a process-local [Store] backed by a map.
 //
@@ -16,15 +24,19 @@ type MemoryStore struct {
 	records   map[string]Record
 	userIndex map[string]map[string]struct{}
 
-	now func() time.Time // injectable for tests
+	now func() time.Time
 }
 
 // NewMemoryStore returns a ready-to-use in-memory store.
-func NewMemoryStore() *MemoryStore {
+func NewMemoryStore(opts MemoryOptions) *MemoryStore {
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &MemoryStore{
 		records:   make(map[string]Record),
 		userIndex: make(map[string]map[string]struct{}),
-		now:       time.Now,
+		now:       now,
 	}
 }
 
@@ -47,7 +59,7 @@ func (s *MemoryStore) Load(ctx context.Context, sid string) (Record, error) {
 		s.mu.Unlock()
 		return Record{}, ErrNotFound
 	}
-	rec.Payload = clonePayload(rec.Payload)
+	rec.Payload = sessionutil.ClonePayload(rec.Payload)
 	return rec, nil
 }
 
@@ -75,7 +87,7 @@ func (s *MemoryStore) Save(ctx context.Context, rec Record) (Record, error) {
 
 	stored := rec
 	stored.Version++
-	stored.Payload = clonePayload(rec.Payload)
+	stored.Payload = sessionutil.ClonePayload(rec.Payload)
 	s.records[rec.SID] = stored
 
 	// Keep the user index in sync with UserID changes.
@@ -87,7 +99,7 @@ func (s *MemoryStore) Save(ctx context.Context, rec Record) (Record, error) {
 	}
 
 	out := stored
-	out.Payload = clonePayload(stored.Payload)
+	out.Payload = sessionutil.ClonePayload(stored.Payload)
 	return out, nil
 }
 
@@ -239,14 +251,4 @@ func (s *MemoryStore) userIndexRemoveLocked(userID, sid string) {
 	if len(set) == 0 {
 		delete(s.userIndex, userID)
 	}
-}
-
-// clonePayload copies payload bytes across the store boundary.
-func clonePayload(p []byte) []byte {
-	if p == nil {
-		return nil
-	}
-	out := make([]byte, len(p))
-	copy(out, p)
-	return out
 }

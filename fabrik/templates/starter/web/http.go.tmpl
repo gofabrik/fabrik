@@ -18,8 +18,6 @@ type HomePage struct {
 	Started  time.Time
 }
 
-func (HomePage) Template() string { return "web/home" }
-
 type Handlers struct {
 	Greeter Greeter
 }
@@ -31,7 +29,7 @@ func (h *Handlers) Index(req *web.Request) (web.Response, error) {
 		name = "world"
 	}
 	slog.InfoContext(req.Context(), "greeting", "name", name)
-	return web.View(HomePage{Greeting: h.Greeter.Greet(name), Started: started}), nil
+	return web.Template("web/home", HomePage{Greeting: h.Greeter.Greet(name), Started: started}), nil
 }
 
 //fabrik:http:group /api

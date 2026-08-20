@@ -1,13 +1,13 @@
-Circular asset graphs are valid and generate normal wiring; the assetmapper
+Circular asset graphs are valid and generate normal wiring; the assets
 build handles strongly connected component hashing at application startup.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
-require github.com/gofabrik/fabrik/assetmapper v0.0.0
+require github.com/gofabrik/fabrik/assets v0.0.0
 
-replace github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+replace github.com/gofabrik/fabrik/assets => ASSETSDIR
 -- main.go --
 package main
 
@@ -36,7 +36,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/router"
 
 	"app/web"
@@ -46,7 +46,7 @@ func run() int {
 	if err := func() (err error) {
 		// Providers
 		r := router.New()
-		assetCompiled, err := assetmapper.Build([]assetmapper.Root{
+		assetCompiled, err := assets.Build([]assets.Root{
 			{FS: web.Assets, Dir: "assets"},
 		}, nil)
 		if err != nil {

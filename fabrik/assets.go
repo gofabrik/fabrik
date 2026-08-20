@@ -5,13 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/fabrik/internal/diagfmt"
 	"github.com/gofabrik/fabrik/fabrik/internal/engine"
 )
@@ -35,19 +36,19 @@ func assetsCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	imPath := filepath.Join(dir, assetmapper.ImportmapFilename)
+	imPath := filepath.Join(dir, assets.ImportmapFilename)
 	im, err := loadOrEmptyImportmap(imPath)
 	if err != nil {
 		return err
 	}
-	resolver := assetmapper.NewJSPMResolver(nil)
+	resolver := assets.NewJSPMResolver(nil)
 	resolver.BaseURL = *jspm
 	resolver.AllowHTTP = *allowHTTP
 	resolver.AllowPrivateNetwork = *allowPrivate
 	resolver.AllowCrossHostRedirects = *allowCrossHost
-	v := &assetmapper.Vendor{
+	v := &assets.Vendor{
 		Resolver:      resolver,
-		VendorDir:     filepath.Join(dir, assetmapper.VendorDir),
+		VendorDir:     filepath.Join(dir, assets.VendorDir),
 		Importmap:     im,
 		ImportmapFile: imPath,
 	}
@@ -59,10 +60,10 @@ func assetsCmd(args []string) error {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		requests := make([]assetmapper.PackageRequest, 0, fs.NArg())
+		requests := make([]assets.PackageRequest, 0, fs.NArg())
 		for _, arg := range fs.Args() {
 			pkg, version := splitPackageVersion(arg)
-			requests = append(requests, assetmapper.PackageRequest{Name: pkg, Version: version})
+			requests = append(requests, assets.PackageRequest{Name: pkg, Version: version})
 		}
 		before := copyAssetEntries(im)
 		if err := v.RequirePackages(ctx, requests); err != nil {
@@ -142,7 +143,7 @@ func assetTreeDir() (string, error) {
 	var carrying []string
 	for _, t := range trees {
 		dir := filepath.Join(t.SrcDir, t.Dir)
-		if _, err := os.Stat(filepath.Join(dir, assetmapper.ImportmapFilename)); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, assets.ImportmapFilename)); err == nil {
 			carrying = append(carrying, dir)
 		}
 	}
@@ -164,27 +165,25 @@ func assetTreeDir() (string, error) {
 
 // splitPackageVersion keeps scoped-package prefixes intact.
 func splitPackageVersion(s string) (pkg, version string) {
-	if at := strings.LastIndex(s, "@"); at > 0 {
-		return s[:at], s[at+1:]
+	if before, after, found := strings.CutLast(s, "@"); found && before != "" {
+		return before, after
 	}
 	return s, ""
 }
 
-func loadOrEmptyImportmap(path string) (*assetmapper.Importmap, error) {
-	im, err := assetmapper.LoadImportmap(path)
+func loadOrEmptyImportmap(path string) (*assets.Importmap, error) {
+	im, err := assets.LoadImportmap(path)
 	if err == nil {
 		return im, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return assetmapper.NewImportmap(), nil
+		return assets.NewImportmap(), nil
 	}
 	return nil, err
 }
 
-func copyAssetEntries(im *assetmapper.Importmap) map[string]assetmapper.ImportmapEntry {
-	entries := make(map[string]assetmapper.ImportmapEntry, len(im.Entries))
-	for specifier, entry := range im.Entries {
-		entries[specifier] = entry
-	}
+func copyAssetEntries(im *assets.Importmap) map[string]assets.ImportmapEntry {
+	entries := make(map[string]assets.ImportmapEntry, len(im.Entries))
+	maps.Copy(entries, im.Entries)
 	return entries
 }

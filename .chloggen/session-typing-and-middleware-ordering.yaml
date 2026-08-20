@@ -1,0 +1,4 @@
+change_type: breaking
+component: fabrik
+note: Move session typing from Manager construction to generic accessors, and replace implicit global middleware and insert= placement with global=true and declarative ordering visible in generated code, graphs, and editor completions.
+issues: [0]

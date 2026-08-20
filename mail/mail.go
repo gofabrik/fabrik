@@ -107,7 +107,7 @@ func validMessageID(id string) error {
 }
 
 func dotAtom(s string) bool {
-	for _, run := range strings.Split(s, ".") {
+	for run := range strings.SplitSeq(s, ".") {
 		if run == "" {
 			return false
 		}

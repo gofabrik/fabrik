@@ -209,8 +209,7 @@ func (s *Local) List(ctx context.Context, prefix string) iter.Seq2[Info, error] 
 
 // pathErr maps path-prefix conflicts to ErrNotExist and unwraps fs.PathError.
 func pathErr(err error) error {
-	var pe *fs.PathError
-	if errors.As(err, &pe) {
+	if pe, ok := errors.AsType[*fs.PathError](err); ok {
 		err = pe.Err
 	}
 	if errors.Is(err, syscall.ENOTDIR) {

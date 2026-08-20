@@ -1,0 +1,8 @@
+{{ define "title" }}Live{{ end }}
+
+{{ define "content" }}
+  {{ template "_nav.html" . }}
+  <h1>Live</h1>
+  <ul id="ticker"></ul>
+  <script type="module" src="{{ asset "live.js" }}"></script>
+{{ end }}

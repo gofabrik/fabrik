@@ -37,8 +37,7 @@ func buildStruct(g *Gen, fset *token.FileSet, named *types.Named) (string, diag.
 
 	var ds diag.Diagnostics
 	var fields []Field
-	for i := 0; i < st.NumFields(); i++ {
-		f := st.Field(i)
+	for f := range st.Fields() {
 		owner := g.TypeExpr(named)
 		if !f.Exported() {
 			// Private state stays zero-valued unless a binding makes injection likely.

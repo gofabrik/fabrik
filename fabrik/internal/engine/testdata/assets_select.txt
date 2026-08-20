@@ -1,20 +1,20 @@
-Declaring assetmapper.Options emits a source/compiled switch with module-root-relative
-source paths and binds consumers through assetmapper.Server.
+Declaring assets.Options emits a source/compiled switch with module-root-relative
+source paths and binds consumers through assets.Server.
 -- go.mod --
 module app
 
-go 1.26
+go 1.27
 
 require (
-	github.com/gofabrik/fabrik/assetmapper v0.0.0
+	github.com/gofabrik/fabrik/assets v0.0.0
 	github.com/gofabrik/fabrik/config v0.0.0
-	github.com/gofabrik/fabrik/templates v0.0.0
+	github.com/gofabrik/fabrik/web v0.0.0
 )
 
 replace (
-	github.com/gofabrik/fabrik/assetmapper => ASSETSDIR
+	github.com/gofabrik/fabrik/assets => ASSETSDIR
 	github.com/gofabrik/fabrik/config => CONFIGDIR
-	github.com/gofabrik/fabrik/templates => TEMPLATEDIR
+	github.com/gofabrik/fabrik/web => WEBDIR
 )
 -- main.go --
 package main
@@ -28,7 +28,7 @@ package web
 import (
 	"embed"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 )
 
 //fabrik:assets
@@ -36,7 +36,7 @@ import (
 var Assets embed.FS
 
 //fabrik:config assets
-type AssetsConfig = assetmapper.Options
+type AssetsConfig = assets.Options
 -- web/assets/app.css --
 body {}
 -- web/templates.go --
@@ -44,7 +44,7 @@ package web
 
 import "embed"
 
-//fabrik:templates
+//fabrik:web:templates
 //go:embed all:templates
 var Templates embed.FS
 -- web/templates/_default/_layout.html --
@@ -57,13 +57,13 @@ package web
 import (
 	"net/http"
 
-	"github.com/gofabrik/fabrik/assetmapper"
-	"github.com/gofabrik/fabrik/templates"
+	"github.com/gofabrik/fabrik/assets"
+	fabrikweb "github.com/gofabrik/fabrik/web"
 )
 
 type Handlers struct {
-	Assets    assetmapper.Server
-	Templates *templates.Set
+	Assets    assets.Server
+	Templates *fabrikweb.Templates
 }
 
 //fabrik:http GET /{$}
@@ -78,10 +78,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
+	web2 "github.com/gofabrik/fabrik/web"
 
 	"app/web"
 )
@@ -110,7 +110,7 @@ func run() int {
 			configOpts = append(configOpts, config.FileOptional("config.local.yaml"))
 		}
 		configOpts = append(configOpts, config.KnownSections("assets"))
-		assetmapperOptions, err := config.Load[assetmapper.Options](append(configOpts,
+		assetsOptions, err := config.Load[assets.Options](append(configOpts,
 			config.Section("assets"),
 		)...)
 		if err != nil {
@@ -119,25 +119,26 @@ func run() int {
 
 		// Providers
 		r := router.New()
-		assetKind, err := assetmapperOptions.Mode()
+		assetKind, err := assetsOptions.Mode()
 		if err != nil {
 			return err
 		}
-		var assetServer assetmapper.Server
+		var assetServer assets.Server
 		switch assetKind {
-		case assetmapper.KindSource:
-			assetServer, err = assetmapper.NewSource([]assetmapper.Root{
+		case assets.KindSource:
+			assetServer, err = assets.NewSource([]assets.Root{
 				{FS: os.DirFS("web/assets")},
 			}, nil)
-		case assetmapper.KindCompiled:
-			assetServer, err = assetmapper.Build([]assetmapper.Root{
+		case assets.KindCompiled:
+			assetServer, err = assets.Build([]assets.Root{
 				{FS: web.Assets, Dir: "assets"},
 			}, nil)
 		}
 		if err != nil {
 			return err
 		}
-		webTemplates, err := templates.Load(web.Templates, "templates", assetServer.FuncMap())
+		requestFuncs := web2.DefaultRequestFuncs()
+		webTemplates, err := web2.LoadTemplates(web.Templates, "templates", web2.FuncMap(assetServer.FuncMap()), requestFuncs.Stubs())
 		if err != nil {
 			return err
 		}

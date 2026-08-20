@@ -23,9 +23,9 @@ func TestLoadRejectsPublishedNotInWorkspace(t *testing.T) {
 	write(t, root, "versions.yaml",
 		"module-sets:\n  fabrik:\n    version: v0.1.0\n    modules:\n"+
 			"      - example.com/a\n      - example.com/b\n")
-	write(t, root, "go.work", "go 1.26\n\nuse (\n\t./a\n)\n")
-	write(t, root, "a/go.mod", "module example.com/a\n\ngo 1.26\n")
-	write(t, root, "b/go.mod", "module example.com/b\n\ngo 1.26\n")
+	write(t, root, "go.work", "go 1.27\n\nuse (\n\t./a\n)\n")
+	write(t, root, "a/go.mod", "module example.com/a\n\ngo 1.27\n")
+	write(t, root, "b/go.mod", "module example.com/b\n\ngo 1.27\n")
 
 	_, err := Load(root)
 	if err == nil || !strings.Contains(err.Error(), "example.com/b") {
@@ -37,8 +37,8 @@ func TestLoadOK(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "versions.yaml",
 		"module-sets:\n  fabrik:\n    version: v0.1.0\n    modules:\n      - example.com/a\n")
-	write(t, root, "go.work", "go 1.26\n\nuse (\n\t./a\n)\n")
-	write(t, root, "a/go.mod", "module example.com/a\n\ngo 1.26\n")
+	write(t, root, "go.work", "go 1.27\n\nuse (\n\t./a\n)\n")
+	write(t, root, "a/go.mod", "module example.com/a\n\ngo 1.27\n")
 
 	cfg, err := Load(root)
 	if err != nil {

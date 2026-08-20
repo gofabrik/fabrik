@@ -52,7 +52,7 @@ func TestMemoryStoreExpiredReadDoesNotDisplaceFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Repeated expired reads must not refresh recency.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if _, _, err := s.Get(ctx, "dead", now); err != nil {
 			t.Fatalf("expired read %d: %v", i, err)
 		}

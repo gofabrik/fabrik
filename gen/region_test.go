@@ -134,16 +134,17 @@ type B struct{}
 	wrapA := types.NewPointer(pkg.Scope().Lookup("A").Type())
 	wrapB := types.NewPointer(pkg.Scope().Lookup("B").Type())
 	for name, tt := range map[string]types.Type{"A": wrapA, "B": wrapB} {
-		name, tt := name, tt
 		g.BindLazy(tt, "", func() (string, diag.Diagnostics) {
 			cache, ds, ok := g.Instance(w.cache, "")
 			if !ok {
 				return "", ds
 			}
 			v := g.Var("wrap" + name)
-			g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire}, Var: v,
 				Fn: g.Import("example.com/wrap") + ".New" + name, Args: []string{cache},
-				Err: ErrReturn, Type: tt})
+				Err: ErrReturn, Type: tt,
+			})
 			return v, ds
 		})
 	}
@@ -177,8 +178,10 @@ type Q struct{}
 	p, x, q := tOf("P"), tOf("X"), tOf("Q")
 	g.BindLazy(p, "seed", func() (string, diag.Diagnostics) {
 		v := g.Var("p")
-		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
-			Fn: g.Import("example.com/mix") + ".NewP", Err: ErrReturn, Type: p})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire}, Var: v,
+			Fn: g.Import("example.com/mix") + ".NewP", Err: ErrReturn, Type: p,
+		})
 		return v, nil
 	})
 	g.BindLazy(x, "", func() (string, diag.Diagnostics) {
@@ -187,9 +190,11 @@ type Q struct{}
 			return "", ds
 		}
 		v := g.Var("x")
-		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire}, Var: v,
 			Fn: g.Import("example.com/mix") + ".NewX", Args: []string{pv},
-			Err: ErrReturn, Type: x})
+			Err: ErrReturn, Type: x,
+		})
 		return v, ds
 	})
 	g.BindLazy(q, "", func() (string, diag.Diagnostics) {
@@ -198,15 +203,19 @@ type Q struct{}
 			return "", ds
 		}
 		v := g.Var("q")
-		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire}, Var: v,
 			Fn: g.Import("example.com/mix") + ".NewQ", Args: []string{xv},
-			Err: ErrReturn, Type: q})
+			Err: ErrReturn, Type: q,
+		})
 		return v, ds
 	})
 	addCmd := func(name string, roots ...ScopeRoot) {
 		s := g.AddScope("build"+upperFirst(name), token.Position{}, roots...)
-		g.AddCommandFunc(CommandFunc{Name: name,
-			Fn: g.Import("example.com/mix") + ".Run" + upperFirst(name), Scope: s})
+		g.AddCommandFunc(CommandFunc{
+			Name: name,
+			Fn:   g.Import("example.com/mix") + ".Run" + upperFirst(name), Scope: s,
+		})
 	}
 	// Demand propagation groups p with x while leaving the single-node q inline.
 	addCmd("alpha", ScopeRoot{Type: p, Name: "seed"}, ScopeRoot{Type: q})
@@ -373,12 +382,13 @@ type E struct{}
 	base := tOf("A")
 	g.BindLazy(base, "hub", func() (string, diag.Diagnostics) {
 		v := g.Var("a")
-		g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
-			Fn: g.Import("example.com/wide") + ".NewA", Err: ErrReturn, Type: base})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire}, Var: v,
+			Fn: g.Import("example.com/wide") + ".NewA", Err: ErrReturn, Type: base,
+		})
 		return v, nil
 	})
 	for _, name := range []string{"B", "C", "D", "E"} {
-		name := name
 		tt := tOf(name)
 		g.BindLazy(tt, "", func() (string, diag.Diagnostics) {
 			a, ds, ok := g.Instance(base, "hub")
@@ -386,9 +396,11 @@ type E struct{}
 				return "", ds
 			}
 			v := g.Var(strings.ToLower(name))
-			g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire}, Var: v,
 				Fn: g.Import("example.com/wide") + ".New" + name, Args: []string{a},
-				Err: ErrReturn, Type: tt})
+				Err: ErrReturn, Type: tt,
+			})
 			return v, ds
 		})
 	}
@@ -435,8 +447,10 @@ type Adapter struct{}
 					&Assign{Base: Base{Phase: PhaseWire}, Var: "inner", Expr: "app.New()"},
 					&Assign{Base: Base{Phase: PhaseWire}, Var: "inner", Expr: "app.New()"},
 				},
-				Result: Call{Base: Base{Phase: PhaseWire}, Var: "picker", Fn: "app.Pick",
-					Args: []string{"inner"}, Err: ErrNone},
+				Result: Call{
+					Base: Base{Phase: PhaseWire}, Var: "picker", Fn: "app.Pick",
+					Args: []string{"inner"}, Err: ErrNone,
+				},
 			}},
 		})
 		return "picker", nil
@@ -488,15 +502,19 @@ type Sink struct{}
 	g.BindLazy(ta, "", func() (string, diag.Diagnostics) {
 		v := g.Var("late")
 		cl := g.Var(v + "Close")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "z.go", Line: 2}}},
-			Var: v, Fn: g.Import("example.com/app") + ".NewA", Err: ErrReturn, Cleanup: cl, Type: ta})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "z.go", Line: 2}}},
+			Var:  v, Fn: g.Import("example.com/app") + ".NewA", Err: ErrReturn, Cleanup: cl, Type: ta,
+		})
 		return v, nil
 	})
 	g.BindLazy(tb, "", func() (string, diag.Diagnostics) {
 		v := g.Var("early")
 		cl := g.Var(v + "Close")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "a.go", Line: 2}}},
-			Var: v, Fn: g.Import("example.com/app") + ".NewB", Err: ErrReturn, Cleanup: cl, Type: tb})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "a.go", Line: 2}}},
+			Var:  v, Fn: g.Import("example.com/app") + ".NewB", Err: ErrReturn, Cleanup: cl, Type: tb,
+		})
 		return v, nil
 	})
 	g.BindLazy(sink, "seed", func() (string, diag.Diagnostics) {
@@ -510,8 +528,10 @@ type Sink struct{}
 			return "", ds
 		}
 		v := g.Var("joined")
-		g.Node(&Call{Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "m.go", Line: 2}}},
-			Var: v, Fn: g.Import("example.com/app") + ".Join", Args: []string{av, bv}, Err: ErrReturn, Type: sink})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseWire, Origin: Origin{Pos: token.Position{Filename: "m.go", Line: 2}}},
+			Var:  v, Fn: g.Import("example.com/app") + ".Join", Args: []string{av, bv}, Err: ErrReturn, Type: sink,
+		})
 		return v, ds
 	})
 	for _, name := range []string{"alpha", "beta"} {
@@ -519,13 +539,21 @@ type Sink struct{}
 		g.AddCommandFunc(CommandFunc{Name: name, Fn: "app.Run" + upperFirst(name), Scope: s})
 	}
 	src := renderRegions(t, g)
-	body := src[strings.Index(src, "func buildSeed"):]
+	idx := strings.Index(src, "func buildSeed")
+	if idx < 0 {
+		t.Fatal("func buildSeed not found in rendered output")
+	}
+	body := src[idx:]
 	emitA := strings.Index(body, "app.NewA")
 	emitB := strings.Index(body, "app.NewB")
 	if emitB > emitA {
 		t.Fatalf("layout kept store order; the regression needs reordering:\n%s", body)
 	}
-	cleanup := body[strings.Index(body, "cleanup := func()"):]
+	cidx := strings.Index(body, "cleanup := func()")
+	if cidx < 0 {
+		t.Fatal("cleanup := func() not found in rendered output")
+	}
+	cleanup := body[cidx:]
 	relA := strings.Index(cleanup, "lateClose()")
 	relB := strings.Index(cleanup, "earlyClose()")
 	if relA < 0 || relB < 0 || relA > relB {
@@ -592,11 +620,15 @@ type Db struct{}
 	chain := func(tt types.Type, ctor string) {
 		g.BindLazy(tt, "", func() (string, diag.Diagnostics) {
 			v := g.Var(strings.ToLower(ctor))
-			g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v,
-				Fn: g.Import("example.com/app") + ".New" + ctor, Err: ErrReturn, Type: tt})
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire}, Var: v,
+				Fn: g.Import("example.com/app") + ".New" + ctor, Err: ErrReturn, Type: tt,
+			})
 			v2 := g.Var(strings.ToLower(ctor) + "Ping")
-			g.Node(&Call{Base: Base{Phase: PhaseWire}, Var: v2,
-				Fn: g.Import("example.com/app") + ".Ping" + ctor, Args: []string{v}, Err: ErrNone, Type: tt})
+			g.Node(&Call{
+				Base: Base{Phase: PhaseWire}, Var: v2,
+				Fn: g.Import("example.com/app") + ".Ping" + ctor, Args: []string{v}, Err: ErrNone, Type: tt,
+			})
 			return v, nil
 		})
 	}
@@ -691,8 +723,10 @@ type Marker struct{}
 	g.SetModule("demo")
 	g.EmbeddedOutput("appwire")
 	g.BindLazy(marker, "", func() (string, diag.Diagnostics) {
-		g.Node(&Call{Base: Base{Phase: PhaseSetup},
-			Fn: g.Import("example.com/app") + ".Warm", Args: []string{g.Context()}, Err: ErrInline})
+		g.Node(&Call{
+			Base: Base{Phase: PhaseSetup},
+			Fn:   g.Import("example.com/app") + ".Warm", Args: []string{g.Context()}, Err: ErrInline,
+		})
 		return "nil", nil
 	})
 	s := g.AddScope("buildWarm", token.Position{}, ScopeRoot{Type: marker})

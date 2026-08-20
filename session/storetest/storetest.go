@@ -2,7 +2,7 @@
 // implementations.
 //
 //	func TestMyStore(t *testing.T) {
-//		storetest.Run(t, func() session.Store { return NewMyStore() })
+//		storetest.Run(t, func(t *testing.T) session.Store { return NewMyStore() })
 //	}
 //
 // Run asserts CAS semantics, expiry filtering, Delete idempotency,
@@ -10,28 +10,42 @@
 package storetest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gofabrik/fabrik/session"
 )
 
-// Run executes the conformance suite against fresh stores.
-func Run(t *testing.T, newStore func() session.Store) {
+// Run executes the conformance suite with a fresh store per subtest.
+func Run(t *testing.T, newStore func(t *testing.T) session.Store) {
 	t.Helper()
-	t.Run("LoadMissing", func(t *testing.T) { testLoadMissing(t, newStore()) })
-	t.Run("InsertAndRoundTrip", func(t *testing.T) { testInsertRoundTrip(t, newStore()) })
-	t.Run("CAS", func(t *testing.T) { testCAS(t, newStore()) })
-	t.Run("Expiry", func(t *testing.T) { testExpiry(t, newStore()) })
-	t.Run("DeleteIdempotent", func(t *testing.T) { testDeleteIdempotent(t, newStore()) })
-	t.Run("ByteCopyIsolation", func(t *testing.T) { testByteIsolation(t, newStore()) })
-	t.Run("TTLBumper", func(t *testing.T) { testTTLBumper(t, newStore()) })
-	t.Run("UserIndexer", func(t *testing.T) { testUserIndexer(t, newStore()) })
-	t.Run("Scanner", func(t *testing.T) { testScanner(t, newStore()) })
-	t.Run("Sweeper", func(t *testing.T) { testSweeper(t, newStore()) })
+	t.Run("LoadMissing", func(t *testing.T) { testLoadMissing(t, newStore(t)) })
+	t.Run("InsertAndRoundTrip", func(t *testing.T) { testInsertRoundTrip(t, newStore(t)) })
+	t.Run("CAS", func(t *testing.T) { testCAS(t, newStore(t)) })
+	t.Run("SamePayloadReSave", func(t *testing.T) { testSamePayloadReSave(t, newStore(t)) })
+	t.Run("Expiry", func(t *testing.T) { testExpiry(t, newStore(t)) })
+	t.Run("DeleteIdempotent", func(t *testing.T) { testDeleteIdempotent(t, newStore(t)) })
+	t.Run("ByteCopyIsolation", func(t *testing.T) { testByteIsolation(t, newStore(t)) })
+	t.Run("LargePayload", func(t *testing.T) { testLargePayload(t, newStore(t)) })
+	t.Run("CaseDistinctSIDs", func(t *testing.T) { testCaseDistinctSIDs(t, newStore(t)) })
+	t.Run("TrailingSpaceSIDs", func(t *testing.T) { testTrailingSpaceSIDs(t, newStore(t)) })
+	t.Run("BoundaryLengthSID", func(t *testing.T) { testBoundaryLengthSID(t, newStore(t)) })
+	t.Run("TTLBumper", func(t *testing.T) { testTTLBumper(t, newStore(t)) })
+	t.Run("TTLBumperMatchedButUnchanged", func(t *testing.T) { testTTLBumperMatchedButUnchanged(t, newStore(t)) })
+	t.Run("TTLBumperConcurrentMatchedButUnchanged", func(t *testing.T) { testTTLBumperConcurrentMatchedButUnchanged(t, newStore(t)) })
+	t.Run("BumpTTLInsertRace", func(t *testing.T) { testBumpTTLInsertRace(t, newStore(t)) })
+	t.Run("UserIndexer", func(t *testing.T) { testUserIndexer(t, newStore(t)) })
+	t.Run("UserIndexerByteExactIDs", func(t *testing.T) { testUserIndexerByteExactIDs(t, newStore(t)) })
+	t.Run("BinarySafeIdentifiers", func(t *testing.T) { testBinarySafeIdentifiers(t, newStore(t)) })
+	t.Run("Scanner", func(t *testing.T) { testScanner(t, newStore(t)) })
+	t.Run("Sweeper", func(t *testing.T) { testSweeper(t, newStore(t)) })
 }
 
 func live(sid, userID string, payload []byte) session.Record {
@@ -103,6 +117,26 @@ func testCAS(t *testing.T, s session.Store) {
 	}
 	if _, err := s.Save(ctx, again); !errors.Is(err, session.ErrVersionConflict) {
 		t.Fatalf("save after delete: %v, want ErrVersionConflict", err)
+	}
+}
+
+func testSamePayloadReSave(t *testing.T, s session.Store) {
+	// Saving an unchanged record still increments its version.
+	ctx := context.Background()
+	stored := mustSave(t, s, live("a", "u1", []byte(`{"k":"v"}`)))
+	again, err := s.Save(ctx, stored)
+	if err != nil {
+		t.Fatalf("same-payload re-Save: %v", err)
+	}
+	if again.Version != stored.Version+1 {
+		t.Fatalf("version = %d, want %d", again.Version, stored.Version+1)
+	}
+	got, err := s.Load(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != again.Version || string(got.Payload) != `{"k":"v"}` {
+		t.Fatalf("load after same-payload re-Save = %+v", got)
 	}
 }
 
@@ -191,6 +225,58 @@ func testByteIsolation(t *testing.T, s session.Store) {
 	}
 }
 
+func testLargePayload(t *testing.T, s session.Store) {
+	ctx := context.Background()
+	large := bytes.Repeat([]byte("x"), 65537)
+	mustSave(t, s, live("a", "", large))
+	got, err := s.Load(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Payload, large) {
+		t.Fatalf("large payload did not round-trip (len got=%d want=%d)", len(got.Payload), len(large))
+	}
+}
+
+func testCaseDistinctSIDs(t *testing.T, s session.Store) {
+	ctx := context.Background()
+	mustSave(t, s, live("Sid", "", []byte("upper")))
+	mustSave(t, s, live("sid", "", []byte("lower")))
+	got, err := s.Load(ctx, "Sid")
+	if err != nil || string(got.Payload) != "upper" {
+		t.Fatalf("Load 'Sid' = %q %v", got.Payload, err)
+	}
+	got, err = s.Load(ctx, "sid")
+	if err != nil || string(got.Payload) != "lower" {
+		t.Fatalf("Load 'sid' = %q %v", got.Payload, err)
+	}
+}
+
+func testTrailingSpaceSIDs(t *testing.T, s session.Store) {
+	ctx := context.Background()
+	mustSave(t, s, live("a", "", []byte("no-space")))
+	mustSave(t, s, live("a ", "", []byte("trailing-space")))
+	got, err := s.Load(ctx, "a")
+	if err != nil || string(got.Payload) != "no-space" {
+		t.Fatalf("Load 'a' = %q %v", got.Payload, err)
+	}
+	got, err = s.Load(ctx, "a ")
+	if err != nil || string(got.Payload) != "trailing-space" {
+		t.Fatalf("Load 'a ' = %q %v", got.Payload, err)
+	}
+}
+
+// testBoundaryLengthSID verifies the portable limit without compression.
+func testBoundaryLengthSID(t *testing.T, s session.Store) {
+	ctx := context.Background()
+	sid := IncompressibleKey(2048)
+	mustSave(t, s, live(sid, "", []byte("v")))
+	got, err := s.Load(ctx, sid)
+	if err != nil || string(got.Payload) != "v" {
+		t.Fatalf("Load boundary sid = %q %v", got.Payload, err)
+	}
+}
+
 func testTTLBumper(t *testing.T, s session.Store) {
 	bumper, ok := s.(session.TTLBumper)
 	if !ok {
@@ -215,6 +301,146 @@ func testTTLBumper(t *testing.T, s session.Store) {
 	}
 	if err := bumper.BumpTTL(ctx, "missing", until); !errors.Is(err, session.ErrNotFound) {
 		t.Fatalf("bump missing: %v, want ErrNotFound", err)
+	}
+}
+
+// testTTLBumperMatchedButUnchanged requires an unchanged live bump to succeed.
+func testTTLBumperMatchedButUnchanged(t *testing.T, s session.Store) {
+	bumper, ok := s.(session.TTLBumper)
+	if !ok {
+		t.Skip("store does not implement TTLBumper")
+	}
+	ctx := context.Background()
+	until := time.Now().Add(2 * time.Hour)
+	rec := live("a", "", []byte("{}"))
+	rec.IdleExpiry = until
+	stored := mustSave(t, s, rec)
+
+	if err := bumper.BumpTTL(ctx, "a", until); err != nil {
+		t.Fatalf("bump to the already-stored expiry: %v", err)
+	}
+	got, err := s.Load(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IdleExpiry.Equal(until) {
+		t.Fatalf("idle expiry = %v, want %v", got.IdleExpiry, until)
+	}
+	if got.Version != stored.Version {
+		t.Fatalf("matched-but-unchanged bump changed version: %d -> %d", stored.Version, got.Version)
+	}
+}
+
+// testTTLBumperConcurrentMatchedButUnchanged requires every live bump to succeed.
+func testTTLBumperConcurrentMatchedButUnchanged(t *testing.T, s session.Store) {
+	bumper, ok := s.(session.TTLBumper)
+	if !ok {
+		t.Skip("store does not implement TTLBumper")
+	}
+	ctx := context.Background()
+	until := time.Now().Add(2 * time.Hour)
+	rec := live("a", "", []byte("{}"))
+	rec.IdleExpiry = until
+	mustSave(t, s, rec)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := bumper.BumpTTL(ctx, "a", until); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent matched-but-unchanged bump: %v", err)
+	}
+}
+
+// testBumpTTLInsertRace requires a successful bump to be visible after insertion.
+func testBumpTTLInsertRace(t *testing.T, s session.Store) {
+	bumper, ok := s.(session.TTLBumper)
+	if !ok {
+		t.Skip("store does not implement TTLBumper")
+	}
+	ctx := context.Background()
+	bumpTo := time.Now().Add(3 * time.Hour).Truncate(time.Nanosecond)
+	insertAt := time.Now().Add(1 * time.Hour).Truncate(time.Nanosecond)
+	for i := range 50 {
+		sid := "race-" + strconv.Itoa(i)
+		start := make(chan struct{})
+		var bumpErr error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			bumpErr = bumper.BumpTTL(ctx, sid, bumpTo)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			rec := live(sid, "", []byte("{}"))
+			rec.IdleExpiry = insertAt
+			if _, err := s.Save(ctx, rec); err != nil {
+				t.Error(err)
+			}
+		}()
+		close(start)
+		wg.Wait()
+		if bumpErr != nil && !errors.Is(bumpErr, session.ErrNotFound) {
+			t.Fatalf("bump: %v", bumpErr)
+		}
+		rec, err := s.Load(ctx, sid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bumpErr == nil && !rec.IdleExpiry.Equal(bumpTo) {
+			t.Fatalf("iteration %d: bump reported success but idle expiry is %v, want %v", i, rec.IdleExpiry, bumpTo)
+		}
+	}
+}
+
+// testBinarySafeIdentifiers verifies NUL and invalid UTF-8 identifiers.
+func testBinarySafeIdentifiers(t *testing.T, s session.Store) {
+	ctx := context.Background()
+	sid := "sid\xff\xfe"
+	rec := live(sid, "u\x00id", []byte("{}"))
+	mustSave(t, s, rec)
+	got, err := s.Load(ctx, sid)
+	if err != nil || got.UserID != "u\x00id" {
+		t.Fatalf("binary sid load: %+v err=%v", got, err)
+	}
+	if idx, ok := s.(session.UserIndexer); ok {
+		sids, err := idx.ListByUser(ctx, "u\x00id")
+		if err != nil || len(sids) != 1 || sids[0] != sid {
+			t.Fatalf("ListByUser binary id = %v %v", sids, err)
+		}
+	}
+}
+
+// testUserIndexerByteExactIDs requires byte-exact user ID indexing.
+func testUserIndexerByteExactIDs(t *testing.T, s session.Store) {
+	idx, ok := s.(session.UserIndexer)
+	if !ok {
+		t.Skip("store does not implement UserIndexer")
+	}
+	ctx := context.Background()
+	mustSave(t, s, live("s1", "User", []byte("{}")))
+	mustSave(t, s, live("s2", "user", []byte("{}")))
+	mustSave(t, s, live("s3", "user ", []byte("{}")))
+	for id, want := range map[string]string{"User": "s1", "user": "s2", "user ": "s3"} { //nolint:gocritic // deliberate whitespace variant pins byte-exact IDs
+		sids, err := idx.ListByUser(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sids) != 1 || sids[0] != want {
+			t.Fatalf("ListByUser(%q) = %v, want [%s]", id, sids, want)
+		}
 	}
 }
 
@@ -346,4 +572,17 @@ func testScanner(t *testing.T, s session.Store) {
 	if calls != 1 {
 		t.Fatalf("scan after false = %d calls, want 1", calls)
 	}
+}
+
+// IncompressibleKey returns deterministic data that resists compression.
+func IncompressibleKey(n int) string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	var b strings.Builder
+	b.Grow(n)
+	state := uint64(0x9E3779B97F4A7C15)
+	for range n {
+		state = state*6364136223846793005 + 1442695040888963407
+		b.WriteByte(alphabet[state>>58])
+	}
+	return b.String()
 }

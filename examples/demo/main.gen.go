@@ -12,18 +12,18 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gofabrik/fabrik/assetmapper"
+	"github.com/gofabrik/fabrik/assets"
 	"github.com/gofabrik/fabrik/cli"
 	"github.com/gofabrik/fabrik/config"
 	"github.com/gofabrik/fabrik/httpserver"
 	"github.com/gofabrik/fabrik/jobs"
 	"github.com/gofabrik/fabrik/migrations"
 	"github.com/gofabrik/fabrik/router"
-	"github.com/gofabrik/fabrik/templates"
-	web2 "github.com/gofabrik/fabrik/web"
+	"github.com/gofabrik/fabrik/web"
 
+	"demo/auth"
 	"demo/shared"
-	"demo/web"
+	web2 "demo/web"
 )
 
 func run() int {
@@ -240,17 +240,17 @@ func buildDatabase(configOpts []config.Option) (*sql.DB, func() error, error) {
 
 func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*httpserver.Server, *jobs.Manager, func() error, error) {
 	var err error
-	var sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
+	var sharedRatelimitMemoryStoreClose, sharedCacheStoreClose, sharedStorageClose func() error
 	cleanup := func() error {
 		var errs []error
 		if sharedStorageClose != nil {
 			errs = append(errs, sharedStorageClose())
 		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			errs = append(errs, sharedRatelimitMemoryStoreClose())
-		}
 		if sharedCacheStoreClose != nil {
 			errs = append(errs, sharedCacheStoreClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			errs = append(errs, sharedRatelimitMemoryStoreClose())
 		}
 		return errors.Join(errs...)
 	}
@@ -265,7 +265,13 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 
-	assetmapperOptions, err := config.Load[assetmapper.Options](append(configOpts,
+	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
+		config.Section("session"),
+	)...)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	assetsOptions, err := config.Load[assets.Options](append(configOpts,
 		config.Section("assets"),
 	)...)
 	if err != nil {
@@ -277,13 +283,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	sharedSessionConfig, err := config.Load[shared.SessionConfig](append(configOpts,
-		config.Section("session"),
-	)...)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	webGreeterConfig, err := config.Load[web.GreeterConfig](append(configOpts,
+	webGreeterConfig, err := config.Load[web2.GreeterConfig](append(configOpts,
 		config.Section("greeter"),
 	)...)
 	if err != nil {
@@ -303,62 +303,86 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}
 
 	// Providers
-	assetKind, err := assetmapperOptions.Mode()
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	var assetServer assetmapper.Server
-	switch assetKind {
-	case assetmapper.KindSource:
-		assetServer, err = assetmapper.NewSource([]assetmapper.Root{
-			{FS: os.DirFS("shared/assets")},
-			{FS: os.DirFS("web/assets")},
-		}, nil)
-	case assetmapper.KindCompiled:
-		assetServer, err = assetmapper.Build([]assetmapper.Root{
-			{FS: shared.Assets, Dir: "assets"},
-			{FS: web.Assets, Dir: "assets"},
-		}, nil)
-	}
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	appTemplates, err := templates.LoadSources([]templates.Source{
-		{FS: shared.Templates, Dir: "templates"},
-		{FS: web.Templates, Dir: "templates"},
-	}, assetServer.FuncMap(), templates.FuncMap{
-		"humanizeAge": shared.HumanizeAge,
-		"shout":       shared.Shout,
-	})
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
-	sharedErrorPages := &shared.ErrorPages{
-		Templates: appTemplates,
-	}
-	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
-	if err != nil {
-		return nil, nil, nil, unwind(err)
-	}
 	sharedSessionManager, err := shared.NewSession(sharedSqlDBDatabase, sharedSessionConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	// web.Greeter, selected by greeter.kind
-	var webGreeter web.Greeter
-	switch webGreeterConfig.Kind {
-	case "goodbye":
-		webGreeter = web.NewGoodbyeGreeter()
-	case "hello":
-		webGreeter = web.NewHelloGreeter()
-	default:
-		return nil, nil, nil, unwind(fmt.Errorf("no web.Greeter implementation for %q", webGreeterConfig.Kind))
-	}
-	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
+	authSessionAuth, err := auth.NewSessionAuth(sharedSessionManager)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+	authPasswordVerifier, err := auth.NewPasswordVerifier()
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
+	authRatelimitLimiter, err := auth.NewLoginLimiter(sharedRatelimitMemoryStore)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	authRatelimitLimiterLoginip, err := auth.NewLoginIPLimiter(sharedRatelimitMemoryStore)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	authHandlers := &auth.Handlers{
+		Auth:      authSessionAuth,
+		Verifier:  authPasswordVerifier,
+		Limiter:   authRatelimitLimiter,
+		IPLimiter: authRatelimitLimiterLoginip,
+	}
+	assetKind, err := assetsOptions.Mode()
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	var assetServer assets.Server
+	switch assetKind {
+	case assets.KindSource:
+		assetServer, err = assets.NewSource([]assets.Root{
+			{FS: os.DirFS("shared/assets")},
+			{FS: os.DirFS("web/assets")},
+		}, nil)
+	case assets.KindCompiled:
+		assetServer, err = assets.Build([]assets.Root{
+			{FS: shared.Assets, Dir: "assets"},
+			{FS: web2.Assets, Dir: "assets"},
+		}, nil)
+	}
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedWebFuncMap := shared.NewTemplateFuncs()
+
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedWebRequestFuncs := shared.NewTemplateRequestFuncs(sharedSessionManager, sharedFlash)
+	requestFuncs := web.MergeRequestFuncs(web.DefaultRequestFuncs(), sharedWebRequestFuncs)
+	appTemplates, err := web.LoadTemplateSources([]web.TemplateSource{
+		{FS: auth.Templates, Dir: "templates"},
+		{FS: shared.Templates, Dir: "templates"},
+		{FS: web2.Templates, Dir: "templates"},
+	}, web.FuncMap(assetServer.FuncMap()), sharedWebFuncMap, requestFuncs.Stubs())
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	adapter := web.NewAdapter(web.WithRenderer(appTemplates), web.WithRequestFuncs(requestFuncs))
+	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedErrorPages := &shared.ErrorPages{}
+	// web2.Greeter, selected by greeter.kind
+	var webGreeter web2.Greeter
+	switch webGreeterConfig.Kind {
+	case "goodbye":
+		webGreeter = web2.NewGoodbyeGreeter()
+	case "hello":
+		webGreeter = web2.NewHelloGreeter()
+	default:
+		return nil, nil, nil, unwind(fmt.Errorf("no web2.Greeter implementation for %q", webGreeterConfig.Kind))
+	}
+	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -375,6 +399,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	// shared.Mailer, selected by mailer.kind
 	var mailTransport shared.Mailer
 	switch sharedMailerConfig.Kind {
+	case "dev":
+		mailTransport = shared.NewDevMailer()
 	case "log":
 		mailTransport = shared.NewLogMailer()
 	case "smtp":
@@ -390,11 +416,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	webCache, err := web.NewGreetingCache(sharedCacheStore)
+	webCache, err := web2.NewGreetingCache(sharedCacheStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	webHandlers := &web.Handlers{
+	webHandlers := &web2.Handlers{
 		Greeter: webGreeter,
 		Queries: sharedQueryDB,
 		Session: sharedSessionManager,
@@ -402,68 +428,89 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-	adapter := web2.NewAdapter(web2.WithRenderer(appTemplates))
-	webStatus := &web.Status{
+	webStatus := &web2.Status{
 		Templates: appTemplates,
+		Funcs:     sharedWebRequestFuncs,
 	}
-	webAPI := &web.API{
+	webAPI := &web2.API{
 		Greeter: webGreeter,
+	}
+	webGreetings := &web2.Greetings{
+		Session: sharedSessionManager,
+		Flash:   sharedFlash,
+		Queries: sharedQueryDB,
+		Jobs:    jobsManager,
+		Cache:   webCache,
 	}
 
 	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
 
 	r := router.New()
 
-	webGreetings := &web.Greetings{
-		Session: sharedSessionManager,
-		Flash:   sharedFlash,
-		Queries: sharedQueryDB,
-		Jobs:    jobsManager,
-		Cache:   webCache,
-	}
-	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
-	webDocs := &web.Docs{
+	webDocs := &web2.Docs{
 		Router: r,
 	}
 	sharedStorage, sharedStorageClose, err := shared.NewStorage(sharedStorageConfig)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	webFiles := &web.Files{
+	webFiles := &web2.Files{
 		Store: sharedStorage,
+	}
+	webOverview := &web2.Overview{
+		Queries: sharedQueryDB,
+		Store:   sharedStorage,
+	}
+	webGreetingsList := &web2.GreetingsList{
+		Queries: sharedQueryDB,
+	}
+	webGreetingEditor := &web2.GreetingEditor{
+		Queries: sharedQueryDB,
+	}
+	webLive := &web2.Live{
+		Queries: sharedQueryDB,
 	}
 
 	// Middleware
-	r.Use(shared.Logged)
-	r.Use(shared.Recovered)
+	authenticatedMW := auth.Authenticated(adapter)
+	adminMW := auth.Admin(adapter)
+	// before=*
+	r.Use(shared.LogAndRecover)
 	secureHeadersMiddlewareMW := shared.SecureHeadersMiddleware(assetServer)
+	// unconstrained (file order)
 	r.Use(secureHeadersMiddlewareMW)
 	crossOriginMiddlewareMW := shared.CrossOriginMiddleware(sharedHttpCrossOriginProtection)
+	// unconstrained (file order)
 	r.Use(crossOriginMiddlewareMW)
-	sessionMiddlewareMW := shared.SessionMiddleware(sharedSessionManager)
-	r.Use(sessionMiddlewareMW)
-	greetlimitMW, err := web.GreetRateLimited(sharedRatelimitMemoryStore)
+	sessionMW := shared.SessionMiddleware(sharedSessionManager)
+	// before sessionauth
+	r.Use(sessionMW)
+	sessionauthMW := auth.SessionAuthMiddleware(authSessionAuth)
+
+	// requires=session
+	r.Use(sessionauthMW)
+	greetlimitMW, err := web2.GreetRateLimited(sharedRatelimitMemoryStore)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 
 	// Register
+	r.Method("GET", "/login", adapter.Wrap(authHandlers.ShowLogin), shared.NoStore)
+	r.Method("POST", "/login", adapter.Wrap(authHandlers.Login), shared.NoStore)
+	r.Method("POST", "/logout", adapter.Wrap(authHandlers.Logout))
+	r.Method("GET", "/private", adapter.Wrap(authHandlers.Private), shared.NoStore, authenticatedMW)
+	r.Method("GET", "/admin", adapter.Wrap(authHandlers.Admin), shared.NoStore, authenticatedMW, adminMW)
 	r.Handle("/assets/", assetServer.Handler())
-	r.NotFound(sharedErrorPages.NotFound)
-	r.MethodNotAllowed(sharedErrorPages.MethodNotAllowed)
+	r.NotFound(adapter.Wrap(sharedErrorPages.NotFound))
+	r.MethodNotAllowed(adapter.Wrap(sharedErrorPages.MethodNotAllowed))
 	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
 	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
-	r.Method("GET", "/uptime", webStatus.Uptime)
-	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
-	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
-	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update), greetlimitMW)
-	r.Method("GET", "/routes", webDocs.List)
 
 	// Jobs
 	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	if err := jobs.Register[web.Visit](jobsManager, "web.Visit"); err != nil {
+	if err := jobs.Register[web2.Visit](jobsManager, "web.Visit"); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 	if err := jobs.On[shared.GreetingNotification](jobsManager, "SendGreetingNotification", func(c jobs.Context, m shared.GreetingNotification) error {
@@ -471,19 +518,31 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	}); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	if err := jobs.On[web.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web.Visit) error {
-		return web.RecordVisit(c, sharedQueryDB, m)
+	if err := jobs.On[web2.Visit](jobsManager, "RecordVisit", func(c jobs.Context, m web2.Visit) error {
+		return web2.RecordVisit(c, sharedQueryDB, m)
 	}); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 	if err := jobs.RegisterCron(jobsManager, "purge-greetings", "*/5 * * * *", func(c jobs.Context) error {
-		return web.PurgeGreetings(c, sharedQueryDB)
+		return web2.PurgeGreetings(c, sharedQueryDB)
 	}); err != nil {
 		return nil, nil, nil, unwind(err)
 	}
 
+	r.Method("GET", "/uptime", webStatus.Uptime)
+	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
+	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
+	r.Method("POST", "/greet", adapter.Wrap(webGreetings.Update), greetlimitMW)
+	r.Method("GET", "/routes", webDocs.List)
 	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
+	r.Method("GET", "/overview", adapter.Wrap(webOverview.Show))
+	r.Method("GET", "/greetings", adapter.Wrap(webGreetingsList.Show))
+	r.Method("GET", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Edit))
+
+	r.Method("POST", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Update))
+	r.Method("GET", "/live", adapter.Wrap(webLive.Show))
+	r.Method("GET", "/live/events", adapter.Wrap(webLive.Events))
 	r.Method("GET", "/files/{key...}", webFiles.Serve)
 
 	return httpserver.New(r, sharedHttpServer), jobsManager, cleanup, nil

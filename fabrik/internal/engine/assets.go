@@ -1,7 +1,7 @@
 package engine
 
 import (
-	assetsdir "github.com/gofabrik/fabrik/assetmapper/directive"
+	assetsdir "github.com/gofabrik/fabrik/assets/directive"
 	"github.com/gofabrik/fabrik/diag"
 	"github.com/gofabrik/fabrik/fabrik/internal/load"
 )
