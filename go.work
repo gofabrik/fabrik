@@ -39,7 +39,9 @@ use (
 	./router/bench
 	./router/directive
 	./session
-	./session/dbtest
+	./session/mysql/dbtest
+	./session/postgres/dbtest
+	./session/sqlite/dbtest
 	./storage
 	./validation
 	./web

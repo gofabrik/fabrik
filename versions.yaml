@@ -46,6 +46,8 @@ excluded-modules:
   - github.com/gofabrik/fabrik/ratelimit/postgres/dbtest
   - github.com/gofabrik/fabrik/ratelimit/sqlite/dbtest
   - github.com/gofabrik/fabrik/router/bench
-  - github.com/gofabrik/fabrik/session/dbtest
+  - github.com/gofabrik/fabrik/session/mysql/dbtest
+  - github.com/gofabrik/fabrik/session/postgres/dbtest
+  - github.com/gofabrik/fabrik/session/sqlite/dbtest
   # Release tools are pinned separately and never tagged.
   - github.com/gofabrik/fabrik/internal/tools
