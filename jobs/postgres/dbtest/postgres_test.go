@@ -1,3 +1,4 @@
+// Package dbtest runs store conformance against a PostgreSQL-backed store.
 package dbtest
 
 import (
@@ -16,6 +17,15 @@ import (
 	"github.com/gofabrik/fabrik/jobs/storetest"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func testDSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("TEST_POSTGRES_DSN not set")
+	}
+	return dsn
+}
 
 func waitReady(t *testing.T, db *sql.DB) {
 	t.Helper()
@@ -38,10 +48,7 @@ var pgSchemaCounter atomic.Int64
 // openPostgres isolates each test through its connection search path.
 func openPostgres(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("TEST_POSTGRES_DSN not set")
-	}
+	dsn := testDSN(t)
 	admin, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)

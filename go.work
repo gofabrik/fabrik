@@ -24,6 +24,7 @@ use (
 	./jobs
 	./jobs/dbtest
 	./jobs/directive
+	./jobs/postgres/dbtest
 	./jobs/sqlite/dbtest
 	./mail
 	./migrations
