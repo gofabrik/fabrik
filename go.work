@@ -22,8 +22,8 @@ use (
 	./gen
 	./httpserver
 	./jobs
-	./jobs/dbtest
 	./jobs/directive
+	./jobs/mysql/dbtest
 	./jobs/postgres/dbtest
 	./jobs/sqlite/dbtest
 	./mail

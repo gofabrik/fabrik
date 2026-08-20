@@ -1,4 +1,4 @@
-module github.com/gofabrik/fabrik/jobs/dbtest
+module github.com/gofabrik/fabrik/jobs/mysql/dbtest
 
 go 1.27
 
@@ -12,4 +12,4 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 )
 
-replace github.com/gofabrik/fabrik/jobs => ..
+replace github.com/gofabrik/fabrik/jobs => ../..
