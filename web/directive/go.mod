@@ -10,4 +10,4 @@ require (
 	github.com/gofabrik/fabrik/web v0.1.0
 )
 
-require golang.org/x/tools v0.47.0 // indirect
+require golang.org/x/tools v0.49.0 // indirect

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"demo/shared"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"time"
-
-	"demo/shared"
 
 	"github.com/gofabrik/fabrik/cache"
 	"github.com/gofabrik/fabrik/flash"

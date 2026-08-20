@@ -129,6 +129,7 @@ type failingStore struct{}
 func (failingStore) Load(context.Context, string) (Record, error) {
 	return Record{}, errors.New("store down")
 }
+
 func (failingStore) Save(context.Context, Record) (Record, error) {
 	return Record{}, errors.New("store down")
 }

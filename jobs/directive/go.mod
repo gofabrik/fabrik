@@ -8,4 +8,4 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 )
 
-require golang.org/x/tools v0.47.0 // indirect
+require golang.org/x/tools v0.49.0 // indirect

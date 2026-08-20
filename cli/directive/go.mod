@@ -9,5 +9,5 @@ require (
 
 require (
 	github.com/gofabrik/fabrik/cli v0.1.0
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 )
