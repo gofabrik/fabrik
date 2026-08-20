@@ -213,7 +213,7 @@ func TestClassifyTidy(t *testing.T) {
 		"go: downloading github.com/gofabrik/fabrik/mail v0.1.0\n" +
 		"go: downloading github.com/mattn/go-isatty v0.0.20\n" +
 		"go: downloading github.com/ncruces/go-strftime v1.0.0\n" +
-		"go: downloading golang.org/x/tools v0.47.0\n" +
+		"go: downloading golang.org/x/tools v0.49.0\n" +
 		"go: demo imports\n" +
 		"\tgithub.com/gofabrik/fabrik/cli: reading github.com/gofabrik/fabrik/cli/go.mod at revision cli/v0.1.0: unknown revision cli/v0.1.0\n" +
 		"go: demo imports\n" +
@@ -450,10 +450,10 @@ func TestRenderSummaryFreshnessAndDetail(t *testing.T) {
 		{Module: "./gone", Lint: StatusNotRun, Vuln: StatusNotRun, Test: StatusNotRun, Tidy: StatusNotRun},
 	}
 	updates := []Update{{Path: "golang.org/x/text", From: "v0.36.0", To: "v0.38.0"}}
-	out := Render(results, StatusFindings, updates, Meta{Toolchain: "go1.26.0"}, 1<<20)
+	out := Render(results, StatusFindings, updates, Meta{Toolchain: "go1.27.0"}, 1<<20)
 
 	for _, want := range []string{
-		"go1.26.0", "./diag", "./gone", "findings", "not run", "error",
+		"go1.27.0", "./diag", "./gone", "findings", "not run", "error",
 		"diag lint output", "build failed here", "golang.org/x/text", "v0.38.0",
 		"| Dependencies |", "Dependency freshness",
 	} {

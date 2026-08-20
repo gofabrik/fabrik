@@ -433,7 +433,7 @@ func testUserIndexerByteExactIDs(t *testing.T, s session.Store) {
 	mustSave(t, s, live("s1", "User", []byte("{}")))
 	mustSave(t, s, live("s2", "user", []byte("{}")))
 	mustSave(t, s, live("s3", "user ", []byte("{}")))
-	for id, want := range map[string]string{"User": "s1", "user": "s2", "user ": "s3"} {
+	for id, want := range map[string]string{"User": "s1", "user": "s2", "user ": "s3"} { //nolint:gocritic // deliberate whitespace variant pins byte-exact IDs
 		sids, err := idx.ListByUser(ctx, id)
 		if err != nil {
 			t.Fatal(err)

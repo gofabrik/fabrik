@@ -194,7 +194,7 @@ func (e *Engine) ListByUser(ctx context.Context, userID string) ([]string, error
 
 // RevokeByUser implements session.UserIndexer. SIDs in except are preserved.
 func (e *Engine) RevokeByUser(ctx context.Context, userID string, except ...string) (int, error) {
-	query := fmt.Sprintf(`DELETE FROM sessions WHERE user_id = %s`, e.d.Placeholder(1)) // #nosec G202
+	query := fmt.Sprintf(`DELETE FROM sessions WHERE user_id = %s`, e.d.Placeholder(1)) // #nosec G201
 	args := []any{e.keyArg(userID)}
 	if len(except) > 0 {
 		placeholders := make([]string, len(except))

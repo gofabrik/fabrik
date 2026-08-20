@@ -49,6 +49,7 @@ type Codec interface {
 type jsonCodec struct{}
 
 func (jsonCodec) Marshal(v any) ([]byte, error) { return json.Marshal(v, jsonv1.DefaultOptionsV1()) }
+
 func (jsonCodec) Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v, jsonv1.DefaultOptionsV1())
 }

@@ -2,8 +2,6 @@ module github.com/gofabrik/fabrik/config
 
 go 1.27
 
-toolchain go1.27rc2
-
 require gopkg.in/yaml.v3 v3.0.1
 
 require (

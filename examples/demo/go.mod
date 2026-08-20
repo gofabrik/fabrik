@@ -2,8 +2,6 @@ module demo
 
 go 1.27
 
-toolchain go1.27rc2
-
 require (
 	github.com/gofabrik/fabrik/assets v0.1.0
 	github.com/gofabrik/fabrik/authn v0.1.0
@@ -42,7 +40,7 @@ require (
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

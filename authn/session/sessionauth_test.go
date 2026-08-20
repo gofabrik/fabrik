@@ -51,7 +51,7 @@ func serve(t *testing.T, m *session.Manager, sid string, h http.HandlerFunc) *ht
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	if sid != "" {
-		req.AddCookie(&http.Cookie{Name: "sid", Value: sid})
+		req.AddCookie(&http.Cookie{Name: "sid", Value: sid}) //nolint:gosec // test-only cookie, security attributes irrelevant
 	}
 	rr := httptest.NewRecorder()
 	m.Middleware(h).ServeHTTP(rr, req)
@@ -257,7 +257,7 @@ func TestReadFailureStaysAnError(t *testing.T) {
 
 	fs.fail = true
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "sid", Value: sid})
+	req.AddCookie(&http.Cookie{Name: "sid", Value: sid}) //nolint:gosec // test-only cookie, security attributes irrelevant
 	rr = httptest.NewRecorder()
 	m.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Direct authentication preserves the store error.
@@ -331,7 +331,7 @@ func TestMiddlewareDefaultLoggerLogsReadFailure(t *testing.T) {
 	fs.fail = true
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "sid", Value: sid})
+	req.AddCookie(&http.Cookie{Name: "sid", Value: sid}) //nolint:gosec // test-only cookie, security attributes irrelevant
 	m.Middleware(a.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))).
 		ServeHTTP(httptest.NewRecorder(), req)
 

@@ -112,7 +112,7 @@ func TestEnvelopeEncodeSortsCellKeys(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 	s := string(out)
-	if !(strings.Index(s, `"alpha"`) < strings.Index(s, `"mid"`) && strings.Index(s, `"mid"`) < strings.Index(s, `"zeta"`)) {
+	if strings.Index(s, `"alpha"`) >= strings.Index(s, `"mid"`) || strings.Index(s, `"mid"`) >= strings.Index(s, `"zeta"`) {
 		t.Fatalf("cell keys not sorted: %s", s)
 	}
 }

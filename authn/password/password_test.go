@@ -136,9 +136,9 @@ func TestUnknownEmailBurnsDecoyCompare(t *testing.T) {
 	counting := &countingStore{}
 	vb := newVerifier(t, Config{Store: counting, Hasher: h})
 	base = h.compares.Load()
-	vb.Authenticate(t.Context(), "alice@example.com", strings.Repeat("a", MaxPasswordLen+1))
-	vb.Authenticate(t.Context(), "", "pw")
-	vb.Authenticate(t.Context(), strings.Repeat("a", MaxEmailLen+1), "pw")
+	_, _ = vb.Authenticate(t.Context(), "alice@example.com", strings.Repeat("a", MaxPasswordLen+1))
+	_, _ = vb.Authenticate(t.Context(), "", "pw")
+	_, _ = vb.Authenticate(t.Context(), strings.Repeat("a", MaxEmailLen+1), "pw")
 	if got := h.compares.Load() - base; got != 0 {
 		t.Fatalf("input-bound failures ran %d compares, want 0", got)
 	}
@@ -455,7 +455,7 @@ func TestMaxConcurrentBoundsHashing(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			v.Authenticate(context.Background(), fmt.Sprintf("u%d@example.com", i), "pw")
+			_, _ = v.Authenticate(context.Background(), fmt.Sprintf("u%d@example.com", i), "pw")
 		}(i)
 	}
 	// Allow calls to queue behind the hashing slots.
@@ -521,7 +521,7 @@ func TestQueuedCancellation(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		v.Authenticate(context.Background(), "alice@example.com", "open sesame")
+		_, _ = v.Authenticate(context.Background(), "alice@example.com", "open sesame")
 	}()
 	// The first call holds the only hashing slot.
 	<-h.entered
@@ -536,5 +536,7 @@ func TestQueuedCancellation(t *testing.T) {
 	wg.Wait()
 }
 
-var _ Store = (*MemoryStore)(nil)
-var _ Rehasher = (*MemoryStore)(nil)
+var (
+	_ Store    = (*MemoryStore)(nil)
+	_ Rehasher = (*MemoryStore)(nil)
+)

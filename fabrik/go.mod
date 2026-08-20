@@ -2,8 +2,6 @@ module github.com/gofabrik/fabrik/fabrik
 
 go 1.27
 
-toolchain go1.27rc2
-
 require (
 	github.com/gofabrik/fabrik/assets v0.1.0
 	github.com/gofabrik/fabrik/assets/directive v0.1.0
@@ -16,8 +14,8 @@ require (
 	github.com/gofabrik/fabrik/router/directive v0.1.0
 	github.com/gofabrik/fabrik/web/directive v0.1.0
 	github.com/gofabrik/t v0.26.0
-	golang.org/x/mod v0.37.0
-	golang.org/x/tools v0.47.0
+	golang.org/x/mod v0.40.0
+	golang.org/x/tools v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
