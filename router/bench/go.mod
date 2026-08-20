@@ -2,8 +2,6 @@ module github.com/gofabrik/fabrik/router/bench
 
 go 1.27
 
-toolchain go1.27rc2
-
 require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/gofabrik/fabrik/router v0.1.0

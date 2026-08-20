@@ -2,8 +2,6 @@ module github.com/gofabrik/fabrik/internal/tools
 
 go 1.27
 
-toolchain go1.27rc2
-
 require (
 	golang.org/x/mod v0.37.0
 	gopkg.in/yaml.v3 v3.0.1

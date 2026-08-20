@@ -2,8 +2,6 @@ module github.com/gofabrik/fabrik/query/dbtest
 
 go 1.27
 
-toolchain go1.27rc2
-
 require (
 	github.com/gofabrik/fabrik/query v0.1.0
 	github.com/jackc/pgx/v5 v5.10.0

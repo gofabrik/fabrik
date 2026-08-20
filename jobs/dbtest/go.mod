@@ -2,8 +2,6 @@ module github.com/gofabrik/fabrik/jobs/dbtest
 
 go 1.27
 
-toolchain go1.27rc2
-
 require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/gofabrik/fabrik/jobs v0.1.0
