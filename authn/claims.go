@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -119,4 +120,27 @@ func (d *NumericDate) UnmarshalJSON(data []byte) error {
 	}
 	*d = NumericDate(f)
 	return nil
+}
+
+// Clone returns a deep copy. A nil receiver returns nil.
+func (c *ClaimSet) Clone() *ClaimSet {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.Audience = slices.Clone(c.Audience)
+	out.Roles = slices.Clone(c.Roles)
+	out.Groups = slices.Clone(c.Groups)
+	out.Entitlements = slices.Clone(c.Entitlements)
+	cloneDate := func(d *NumericDate) *NumericDate {
+		if d == nil {
+			return nil
+		}
+		v := *d
+		return &v
+	}
+	out.Expiry = cloneDate(c.Expiry)
+	out.NotBefore = cloneDate(c.NotBefore)
+	out.IssuedAt = cloneDate(c.IssuedAt)
+	return &out
 }

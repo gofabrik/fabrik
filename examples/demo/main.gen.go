@@ -240,17 +240,17 @@ func buildDatabase(configOpts []config.Option) (*sql.DB, func() error, error) {
 
 func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*httpserver.Server, *jobs.Manager, func() error, error) {
 	var err error
-	var sharedCacheStoreClose, sharedRatelimitMemoryStoreClose, sharedStorageClose func() error
+	var sharedRatelimitMemoryStoreClose, sharedCacheStoreClose, sharedStorageClose func() error
 	cleanup := func() error {
 		var errs []error
 		if sharedStorageClose != nil {
 			errs = append(errs, sharedStorageClose())
 		}
-		if sharedRatelimitMemoryStoreClose != nil {
-			errs = append(errs, sharedRatelimitMemoryStoreClose())
-		}
 		if sharedCacheStoreClose != nil {
 			errs = append(errs, sharedCacheStoreClose())
+		}
+		if sharedRatelimitMemoryStoreClose != nil {
+			errs = append(errs, sharedRatelimitMemoryStoreClose())
 		}
 		return errors.Join(errs...)
 	}
@@ -311,8 +311,24 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+	authPasswordVerifier, err := auth.NewPasswordVerifier()
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
+	authRatelimitLimiter, err := auth.NewLoginLimiter(sharedRatelimitMemoryStore)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	authRatelimitLimiterLoginip, err := auth.NewLoginIPLimiter(sharedRatelimitMemoryStore)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	authHandlers := &auth.Handlers{
-		Auth: authSessionAuth,
+		Auth:      authSessionAuth,
+		Verifier:  authPasswordVerifier,
+		Limiter:   authRatelimitLimiter,
+		IPLimiter: authRatelimitLimiterLoginip,
 	}
 	assetKind, err := assetsOptions.Mode()
 	if err != nil {
@@ -335,6 +351,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 	sharedWebFuncMap := shared.NewTemplateFuncs()
+
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -349,11 +366,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-
-	r := router.New()
-
 	adapter := web.NewAdapter(web.WithRenderer(appTemplates), web.WithRequestFuncs(requestFuncs))
 	sharedHttpCrossOriginProtection, err := shared.NewCrossOrigin(sharedCrossOriginConfig)
 	if err != nil {
@@ -378,6 +390,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
 	sharedJobsConfig := shared.NewJobsConfig()
 	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
@@ -399,7 +412,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
 	sharedCacheStore, sharedCacheStoreClose, err := shared.NewCacheStore(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -430,7 +442,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-	sharedRatelimitMemoryStore, sharedRatelimitMemoryStoreClose := shared.NewRatelimitStore()
+
+	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
+	r := router.New()
+
 	webDocs := &web2.Docs{
 		Router: r,
 	}
@@ -441,7 +457,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	webFiles := &web2.Files{
 		Store: sharedStorage,
 	}
-
 	webOverview := &web2.Overview{
 		Queries: sharedQueryDB,
 		Store:   sharedStorage,

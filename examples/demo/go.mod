@@ -7,6 +7,7 @@ toolchain go1.27rc2
 require (
 	github.com/gofabrik/fabrik/assets v0.1.0
 	github.com/gofabrik/fabrik/authn v0.1.0
+	github.com/gofabrik/fabrik/authn/password v0.1.0
 	github.com/gofabrik/fabrik/authn/session v0.1.0
 	github.com/gofabrik/fabrik/cache v0.1.0
 	github.com/gofabrik/fabrik/cli v0.1.0
@@ -38,6 +39,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.6.1 // indirect
+	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect

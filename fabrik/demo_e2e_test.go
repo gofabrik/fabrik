@@ -229,6 +229,7 @@ END;`
 		time.Sleep(50 * time.Millisecond)
 	}
 	errorPagesFlow(t, base)
+	loginFlow(t, port)
 	sessionFlow(t, port)
 	crossOriginFlow(t, port)
 	formsFlow(t, port)
@@ -903,6 +904,149 @@ func assertBaselineHeaders(t *testing.T, kind string, h http.Header) {
 	}
 	if h.Get("Strict-Transport-Security") != "" {
 		t.Fatalf("%s response carries HSTS on plain HTTP", kind)
+	}
+}
+
+func loginFlow(t *testing.T, port string) {
+	t.Helper()
+	base := "http://localhost:" + port
+
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	postLogin := func(client *http.Client, email, password string) (int, string) {
+		t.Helper()
+		resp, err := client.PostForm(base+"/login", url.Values{"email": {email}, "password": {password}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := readResponse(t, resp)
+		return resp.StatusCode, string(b)
+	}
+
+	// Shared jars retain login cookies while no-follow clients expose the 303s.
+	adminJar, _ := cookiejar.New(nil)
+	adminNoFollow := &http.Client{Jar: adminJar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	adminClient := &http.Client{Jar: adminJar}
+	if code, _ := postLogin(adminNoFollow, "admin@example.com", "admin"); code != http.StatusSeeOther {
+		t.Fatalf("admin login: want 303, got %d", code)
+	}
+
+	viewerJar, _ := cookiejar.New(nil)
+	viewerNoFollow := &http.Client{Jar: viewerJar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	viewerClient := &http.Client{Jar: viewerJar}
+	if code, _ := postLogin(viewerNoFollow, "viewer@example.com", "viewer"); code != http.StatusSeeOther {
+		t.Fatalf("viewer login: want 303, got %d", code)
+	}
+
+	// Guard GETs do not consume login IP slots.
+	get := func(client *http.Client, path string) (int, string) {
+		t.Helper()
+		resp, err := client.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := readResponse(t, resp)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := get(adminClient, "/admin"); code != http.StatusOK || !strings.Contains(body, "admin access") {
+		t.Fatalf("admin /admin: want 200 with admin access, got %d:\n%s", code, body)
+	}
+	if code, body := get(adminClient, "/private"); code != http.StatusOK || !strings.Contains(body, "admin") {
+		t.Fatalf("admin /private: want 200, got %d:\n%s", code, body)
+	}
+	if code, body := get(viewerClient, "/private"); code != http.StatusOK || !strings.Contains(body, "viewer") {
+		t.Fatalf("viewer /private: want 200, got %d:\n%s", code, body)
+	}
+	if code, body := get(viewerClient, "/admin"); code != http.StatusForbidden || !strings.Contains(body, "permission") {
+		t.Fatalf("viewer /admin: want 403, got %d:\n%s", code, body)
+	}
+	if code, body := get(http.DefaultClient, "/private"); code != http.StatusUnauthorized || !strings.Contains(body, "logged in") {
+		t.Fatalf("anon /private: want 401, got %d:\n%s", code, body)
+	}
+	if code, body := get(http.DefaultClient, "/admin"); code != http.StatusUnauthorized || !strings.Contains(body, "logged in") {
+		t.Fatalf("anon /admin: want 401, got %d:\n%s", code, body)
+	}
+
+	// Slot usage: IP=2; account admin=1, viewer=1.
+
+	// Validation runs after IP limiting but before account limiting.
+	if code, body := postLogin(noFollow, "", "admin"); code != http.StatusUnprocessableEntity || !strings.Contains(body, "is required") {
+		t.Fatalf("blank email: want 422 with 'is required', got %d:\n%s", code, body)
+	}
+	if code, body := postLogin(noFollow, "not-an-address", "admin"); code != http.StatusUnprocessableEntity || strings.Contains(body, "invalid credentials") {
+		t.Fatalf("malformed email: want validation 422, got %d:\n%s", code, body)
+	}
+	if code, body := postLogin(noFollow, strings.Repeat("a", 250)+"@example.com", "admin"); code != http.StatusUnprocessableEntity || strings.Contains(body, "invalid credentials") {
+		t.Fatalf("overlong email: want validation 422, got %d:\n%s", code, body)
+	}
+
+	// Email validation rejects surrounding whitespace before normalization.
+	if code, body := postLogin(noFollow, "  viewer@example.com  ", "viewer"); code != http.StatusUnprocessableEntity || strings.Contains(body, "invalid credentials") {
+		t.Fatalf("whitespace-wrapped email: want validation 422, got %d:\n%s", code, body)
+	}
+
+	// Slot usage: IP=6; account admin=1, viewer=1.
+
+	// Four case variants share and exhaust admin's remaining account slots.
+	badCreds := []string{"ADMIN@EXAMPLE.COM", "Admin@Example.com", "admin@EXAMPLE.COM", "ADMIN@example.com"}
+	for _, email := range badCreds {
+		if code, body := postLogin(noFollow, email, "wrong"); code != http.StatusUnprocessableEntity || !strings.Contains(body, "invalid credentials") {
+			t.Fatalf("bad cred %q: want 422 with 'invalid credentials', got %d:\n%s", email, code, body)
+		}
+	}
+
+	// Slot usage: IP=10; account admin=5, viewer=1.
+
+	// A correct password cannot bypass the exhausted account bucket.
+	if code, body := postLogin(noFollow, "admin@example.com", "admin"); code != http.StatusTooManyRequests || !strings.Contains(body, "too many attempts") {
+		t.Fatalf("admin rate-limited: want 429 with 'too many attempts', got %d:\n%s", code, body)
+	}
+
+	// Slot usage: IP=11; account admin=5, viewer=1.
+
+	// Admin's exhausted bucket does not affect viewer.
+	if code, _ := postLogin(noFollow, "viewer@example.com", "viewer"); code != http.StatusSeeOther {
+		t.Fatalf("viewer isolation: want 303, got %d", code)
+	}
+
+	// Viewer case variants share one account bucket.
+	// After this attempt, slot usage is IP=13; account admin=5, viewer=3.
+	if code, _ := postLogin(noFollow, "VIEWER@EXAMPLE.COM", "viewer"); code != http.StatusSeeOther {
+		t.Fatalf("viewer case-variant: want 303, got %d", code)
+	}
+
+	// Exhaust the remaining IP slots with distinct account keys. GCRA refills one
+	// slot every two seconds, so the bound allows slack beyond the 20-slot burst.
+	const maxAttempts = 40
+	tripped := false
+	for i := range maxAttempts {
+		email := "nouser" + strconv.Itoa(i) + "@example.com"
+		resp, err := noFollow.PostForm(base+"/login", url.Values{"email": {email}, "password": {"wrong"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(readResponse(t, resp))
+		if resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(body, "invalid credentials") {
+			continue
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && !strings.Contains(body, "too many attempts") && strings.Contains(body, "too many requests") {
+			if !strings.Contains(body, `name="email"`) {
+				t.Fatalf("IP 429 is not the rendered login form:\n%s", body)
+			}
+			// The denial itself carries the quota headers.
+			for _, hdr := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"} {
+				if resp.Header.Get(hdr) == "" {
+					t.Fatalf("IP 429 missing %s header", hdr)
+				}
+			}
+			tripped = true
+			break
+		}
+		t.Fatalf("exhaust attempt %d: got %d:\n%s", i, resp.StatusCode, body)
+	}
+	if !tripped {
+		t.Fatalf("per-IP limiter never returned 429 with 'too many requests' within %d attempts", maxAttempts)
 	}
 }
 
