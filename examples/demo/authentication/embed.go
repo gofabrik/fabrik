@@ -1,0 +1,7 @@
+package authentication
+
+import "embed"
+
+//fabrik:web:templates
+//go:embed all:templates
+var Templates embed.FS

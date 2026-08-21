@@ -45,7 +45,7 @@ func TestDemoEndToEnd(t *testing.T) {
 	tmp := t.TempDir()
 	// Local replacements make the copied demo use this checkout's modules.
 	src := copyDemoWithLocalReplaces(t, demoDir, repoRoot)
-	poison := filepath.Join(src, "shared", "migrations", "0006_cache_poison.sql")
+	poison := filepath.Join(src, "shared", "migrations", "0007_cache_poison.sql")
 	// RAISE(FAIL) preserves the disarming update, so only the first
 	// sentinel deletion fails.
 	trigger := `CREATE TABLE IF NOT EXISTS cache_poison_armed (armed INTEGER NOT NULL);

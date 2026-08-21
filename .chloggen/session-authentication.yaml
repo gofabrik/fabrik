@@ -1,4 +1,4 @@
 change_type: new_component
-component: authn
+component: auth
 note: Add standalone authentication claims, request predicates, and route guards, plus session-backed login, logout, and request authentication. Extend the demo with session login and protected routes.
 issues: [0]

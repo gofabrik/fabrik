@@ -136,7 +136,7 @@ together by the CLI:
 - [storage](storage/README.md) - blob storage by key over pluggable backends (memory, local directory, S3-compatible).
 - [session](session/README.md) - typed HTTP sessions with pluggable stores and tokens.
 - [flash](flash/README.md) - one-shot messages stored in sessions.
-- [authn](authn/README.md) - authentication claims, request predicates, and route guards.
-- [authn/session](authn/session/README.md) - session-backed login, logout, and request authentication.
+- [auth](auth/README.md) - authentication claims, request predicates, and route guards.
+- [auth/session](auth/session/README.md) - session-backed login, logout, and request authentication.
 - [validation](validation/README.md) - code-based input validation with field-keyed errors.
 - [forms](forms/README.md) - HTTP request binding into typed structs, validated.

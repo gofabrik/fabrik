@@ -1,0 +1,4 @@
+change_type: new_component
+component: auth
+note: Add the auth/store module for identity and password credential storage, with memory, SQLite, PostgreSQL, and MySQL/MariaDB implementations and a shared conformance suite. Each implementation works directly with an auth/password verifier.
+issues: [0]
