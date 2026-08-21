@@ -121,6 +121,35 @@ func TestServer_DefaultsToPort8080WhenServerNil(t *testing.T) {
 	}
 }
 
+func TestDefaultServer_Fields(t *testing.T) {
+	srv := DefaultServer()
+	if srv.Addr != ":8080" {
+		t.Errorf("Addr: want :8080, got %q", srv.Addr)
+	}
+	if srv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout: want 10s, got %v", srv.ReadHeaderTimeout)
+	}
+}
+
+func TestHttpServer_NilUsesDefaultServer(t *testing.T) {
+	want := DefaultServer()
+	got := New(nil, nil).httpServer()
+	if got.Addr != want.Addr {
+		t.Errorf("nil path Addr: want %q, got %q", want.Addr, got.Addr)
+	}
+	if got.ReadHeaderTimeout != want.ReadHeaderTimeout {
+		t.Errorf("nil path ReadHeaderTimeout: want %v, got %v", want.ReadHeaderTimeout, got.ReadHeaderTimeout)
+	}
+}
+
+func TestDefaultServer_CustomizePreservesReadHeaderTimeout(t *testing.T) {
+	srv := DefaultServer()
+	srv.Addr = ":9000"
+	if srv.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout: want 10s after mutating Addr, got %v", srv.ReadHeaderTimeout)
+	}
+}
+
 func TestServer_ReturnsListenError(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

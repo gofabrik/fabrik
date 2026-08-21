@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -441,8 +442,11 @@ func (w *Worker) run(row ClaimedJob, rs *runState) {
 		w.manager.safeHook("OnAttemptStart", func() { w.manager.config.Hooks.OnAttemptStart(runCtx, start) })
 	}
 	started := w.manager.now()
-	runErr := safeRun(jc, entry.invoke, msg)
+	runErr, panicStack := safeRun(jc, entry.invoke, msg)
 	finished := w.manager.now()
+	if panicStack != nil {
+		logger.Error("jobs: handler panic recovered", "error", runErr, "stack", string(panicStack))
+	}
 
 	// Quiesce the heartbeat before reading cancelByUser.
 	hbStop()
@@ -614,12 +618,12 @@ func (w *Worker) heartbeat(ctx context.Context, jobID string, cancel context.Can
 	}
 }
 
-// safeRun converts handler panics to errors.
-func safeRun(ctx Context, invoke func(Context, any) error, msg any) (err error) {
+func safeRun(ctx Context, invoke func(Context, any) error, msg any) (err error, stack []byte) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic: %v", r)
+			stack = debug.Stack()
 		}
 	}()
-	return invoke(ctx, msg)
+	return invoke(ctx, msg), nil
 }

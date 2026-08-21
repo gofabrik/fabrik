@@ -1,11 +1,14 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -861,6 +864,178 @@ func TestClaimFilterSkipsUnrunnable(t *testing.T) {
 			t.Fatalf("unrunnable job should stay available, got %s", st)
 		}
 	})
+}
+
+func panicHandler(_ Context, _ Email) error { panic("boom") }
+
+type logSink struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *logSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *logSink) records(t *testing.T) []map[string]any {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(s.buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("unparseable log line %q: %v", line, err)
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func startPanicWorker(t *testing.T, m *Manager) {
+	t.Helper()
+	w, err := NewWorker(m, WorkerConfig{
+		PollInterval:      5 * time.Millisecond,
+		LeaseDuration:     150 * time.Millisecond,
+		HeartbeatInterval: 30 * time.Millisecond,
+		SweepInterval:     20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = w.Start(context.Background()) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		w.Stop(ctx) //nolint:errcheck
+	})
+}
+
+func TestPanicHandlerLogsStack(t *testing.T) {
+	sink := &logSink{}
+	store := NewMemoryStore()
+	var eventErr atomic.Value
+	m, err := New(store, Config{
+		Logger:         slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		DefaultBackoff: ExponentialBackoff{Base: time.Millisecond, Max: 5 * time.Millisecond},
+		Hooks: Hooks{
+			OnAttemptFinish: func(_ context.Context, e AttemptFinishEvent) {
+				if e.Err != nil {
+					eventErr.Store(e.Err.Error())
+				}
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoError(t, Handle[Email](m, "email", panicHandler))
+	startPanicWorker(t, m)
+	id, _ := m.Enqueue(context.Background(), Email{}, MaxAttempts(1))
+	eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "panic -> discarded")
+
+	panicRecord := func(rec map[string]any) bool {
+		return rec["msg"] == "jobs: handler panic recovered"
+	}
+	eventually(t, func() bool {
+		for _, rec := range sink.records(t) {
+			if panicRecord(rec) {
+				return true
+			}
+		}
+		return false
+	}, "panic log record written")
+
+	var matches []map[string]any
+	for _, rec := range sink.records(t) {
+		if panicRecord(rec) {
+			matches = append(matches, rec)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("want exactly one panic log record, got %d", len(matches))
+	}
+	rec := matches[0]
+	if rec["level"] != "ERROR" {
+		t.Fatalf("panic record level = %v, want ERROR", rec["level"])
+	}
+	if rec["error"] != "panic: boom" {
+		t.Fatalf("panic record error = %v, want %q", rec["error"], "panic: boom")
+	}
+	stack, _ := rec["stack"].(string)
+	if !strings.Contains(stack, "panicHandler") {
+		t.Fatalf("panic record stack does not name the panic site: %q", stack)
+	}
+
+	info, err := m.GetJob(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Error != "panic: boom" {
+		t.Fatalf("stored error = %q, want %q", info.Error, "panic: boom")
+	}
+	eventually(t, func() bool { _, ok := eventErr.Load().(string); return ok }, "finish hook observed")
+	if got, _ := eventErr.Load().(string); got != "panic: boom" {
+		t.Fatalf("AttemptFinishEvent.Err = %q, want %q", got, "panic: boom")
+	}
+}
+
+func TestPanicHookLogsStack(t *testing.T) {
+	sink := &logSink{}
+	store := NewMemoryStore()
+	m, err := New(store, Config{
+		Logger:         slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		DefaultBackoff: ExponentialBackoff{Base: time.Millisecond, Max: 5 * time.Millisecond},
+		Hooks: Hooks{
+			OnAttemptFinish: func(_ context.Context, _ AttemptFinishEvent) {
+				panic("hook-boom")
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNoError(t, Handle[Email](m, "email", func(Context, Email) error { return nil }))
+	startPanicWorker(t, m)
+	m.Enqueue(context.Background(), Email{}) //nolint:errcheck
+
+	hookRecord := func(rec map[string]any) bool {
+		return rec["msg"] == "jobs: hook panic recovered"
+	}
+	eventually(t, func() bool {
+		for _, rec := range sink.records(t) {
+			if hookRecord(rec) {
+				return true
+			}
+		}
+		return false
+	}, "hook panic log record written")
+
+	var rec map[string]any
+	for _, r := range sink.records(t) {
+		if hookRecord(r) {
+			rec = r
+			break
+		}
+	}
+	if rec["level"] != "ERROR" {
+		t.Fatalf("hook record level = %v, want ERROR", rec["level"])
+	}
+	if rec["hook"] != "OnAttemptFinish" {
+		t.Fatalf("hook record hook = %v, want OnAttemptFinish", rec["hook"])
+	}
+	if rec["panic"] != "hook-boom" {
+		t.Fatalf("hook record panic = %v, want hook-boom", rec["panic"])
+	}
+	stack, _ := rec["stack"].(string)
+	if !strings.Contains(stack, "TestPanicHookLogsStack") {
+		t.Fatalf("hook record stack does not name the panic site: %q", stack)
+	}
 }
 
 func TestOnAttemptFinishCommitted(t *testing.T) {

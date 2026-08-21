@@ -42,12 +42,12 @@ func (s *Local) Put(ctx context.Context, key string, r io.Reader) error {
 		return err
 	}
 	if dir := path.Dir(key); dir != "." {
-		if err := s.root.MkdirAll(dir, 0o755); err != nil {
+		if err := s.root.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("storage: put %q: %w", key, err)
 		}
 	}
 	// The reserved dot namespace prevents .tmp from colliding with keys.
-	if err := s.root.MkdirAll(".tmp", 0o755); err != nil {
+	if err := s.root.MkdirAll(".tmp", 0o700); err != nil {
 		return fmt.Errorf("storage: put %q: %w", key, err)
 	}
 	fail := func(err error) error {
@@ -59,7 +59,7 @@ func (s *Local) Put(ctx context.Context, key string, r io.Reader) error {
 		return fail(err)
 	}
 	tmp := ".tmp/" + suffix
-	f, err := s.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := s.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fail(err)
 	}
@@ -77,7 +77,7 @@ func (s *Local) Put(ctx context.Context, key string, r io.Reader) error {
 	s.mu.RLock()
 	var renameErr error
 	if dir := path.Dir(key); dir != "." {
-		renameErr = s.root.MkdirAll(dir, 0o755)
+		renameErr = s.root.MkdirAll(dir, 0o700)
 	}
 	if renameErr == nil {
 		renameErr = s.root.Rename(tmp, key)
@@ -170,9 +170,22 @@ func (s *Local) List(ctx context.Context, prefix string) iter.Seq2[Info, error] 
 			yield(Info{}, fmt.Errorf("storage: list %q: %w", prefix, err))
 			return
 		}
+		// Walk from the deepest complete directory segment so a partial final segment remains a prefix filter.
+		start := "."
+		if strings.Contains(prefix, "/") {
+			if strings.HasSuffix(prefix, "/") {
+				start = strings.TrimSuffix(prefix, "/")
+			} else {
+				start = prefix[:strings.LastIndex(prefix, "/")]
+			}
+		}
 		var infos []Info
-		err := fs.WalkDir(s.root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		err := fs.WalkDir(s.root.FS(), start, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
+				// Missing start paths and prefixes below blobs are empty listings.
+				if p == start && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)) {
+					return fs.SkipAll
+				}
 				return err
 			}
 			if d.IsDir() {

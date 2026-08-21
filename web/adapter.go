@@ -134,11 +134,7 @@ func (a *Adapter) Wrap(fn func(*Request) (Response, error)) http.HandlerFunc {
 			return
 		}
 		cw := &commitWriter{ResponseWriter: w}
-		var rw http.ResponseWriter = cw
-		if _, ok := w.(http.Flusher); ok {
-			// Preserve Flusher only when the underlying writer supports it.
-			rw = flushWriter{cw}
-		}
+		rw := wrapCommitWriter(cw)
 		// Restore this snapshot on pre-commit response errors.
 		snapshot := make(http.Header, len(cw.Header()))
 		for key, values := range cw.Header() {
@@ -248,14 +244,6 @@ func (c *commitWriter) WriteHeader(code int) {
 func (c *commitWriter) Write(b []byte) (int, error) {
 	c.committed = true
 	return c.ResponseWriter.Write(b)
-}
-
-// flushWriter exposes Flush only when the underlying writer supports it.
-type flushWriter struct{ *commitWriter }
-
-func (f flushWriter) Flush() {
-	f.committed = true
-	f.ResponseWriter.(http.Flusher).Flush()
 }
 
 // Unwrap lets http.ResponseController reach the underlying writer.

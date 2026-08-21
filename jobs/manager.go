@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -516,7 +517,7 @@ func (m *Manager) fireEnqueueHooks(ctx context.Context, results []InsertResult, 
 func (m *Manager) safeHook(name string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
-			m.config.Logger.Error("jobs: hook panic recovered", "hook", name, "panic", r)
+			m.config.Logger.Error("jobs: hook panic recovered", "hook", name, "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 	fn()
