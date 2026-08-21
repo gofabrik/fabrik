@@ -1,10 +1,8 @@
 # auth/store
 
-Package `store` persists identities and their password credentials.
-An identity anchors an account; credentials attach to it per scheme.
-Every implementation satisfies the [password](../password/README.md)
-`Store` and `Rehasher` interfaces through `Lookup` and `UpdateHash`,
-so a store plugs directly into a `password.Verifier`.
+Package `store` persists identities and password credentials through
+an API compatible with [password](../password/README.md) `Store` and
+`Rehasher`.
 
 ```go
 s := store.NewMemoryStore(store.MemoryOptions{})
@@ -19,68 +17,68 @@ claims, err := verifier.Authenticate(ctx, email, submitted)
 
 ## Identities
 
-`CreateIdentity` creates an active identity under a caller-supplied
-opaque id of at most `MaxIdentityIDLen` (191) bytes; ids compare
-byte-exact. `SetIdentityStatus` switches future logins on or off
-without touching live sessions; revoke those through the session
-manager. `DeleteIdentity` is idempotent and removes the identity's
-credentials with it.
+`CreateIdentity` creates an active identity under an opaque ID of at
+most `MaxIdentityIDLen` (191) bytes; IDs compare byte-exact.
 
-Identity claims are the identity-owned authorization data: roles,
-groups, and entitlements. Token and request claims (issuer, audience,
-scope, ...) describe a grant, not a person, and are never persisted.
-`Lookup` composes the returned `password.Credential` with `Subject`
-set to the identity id and only the identity claims filled in.
+`SetIdentityStatus` affects future logins without changing live
+sessions, and `DeleteIdentity` idempotently removes an identity and
+its credentials.
+
+Identity claims persist roles, groups, and entitlements but exclude
+grant-specific token and request claims.
+
+`Lookup` returns a `password.Credential` whose `Subject` is the
+identity ID and whose claims contain only persisted identity claims.
 
 ## Password credentials
 
-`CreatePassword` attaches a credential to an identity that has none;
-it never updates an existing row. `SetPassword` replaces the
-identity's credential, hash and email both. Emails are normalized
-with `password.NormalizeEmail` and compare after normalization; an
-email owned by a different identity is `ErrEmailTaken`, which
-outranks `ErrExists` so create-if-absent seeding fails loudly on a
-misdirected email instead of silently tolerating it.
+`CreatePassword` adds a credential without replacing one, while
+`SetPassword` replaces both its hash and email.
 
-Retry-safe seeding is `CreateIdentity` tolerating `ErrExists`
-followed by `CreatePassword` tolerating `ErrExists` only - an
-interrupted first run recovers on the next run, and nothing can
-overwrite a live credential.
+Emails compare after `password.NormalizeEmail`, and `ErrEmailTaken`
+takes precedence over `ErrExists` when another identity owns the
+email.
 
-## The verifier seam
+For retry-safe seeding, ignore `ErrExists` from `CreateIdentity` and
+`CreatePassword`, but do not ignore `ErrEmailTaken`.
+
+## Password verifier compatibility
 
 `Lookup` and `UpdateHash` treat invalid input and disabled identities
-exactly like unknown emails (`password.ErrNotFound`), preserving the
-verifier's uniform-failure contract. `UpdateHash` compares the stored
-hash byte-exact and returns `password.ErrHashChanged` when it is no
-longer current, so rehashing cannot overwrite a concurrent password
-change.
+like unknown emails by returning `password.ErrNotFound`.
+
+`UpdateHash` uses byte-exact compare-and-swap and returns
+`password.ErrHashChanged` rather than overwriting a concurrent
+password change.
 
 ## Implementations
 
 `MemoryStore` is the process-local reference implementation for
-development, tests, and fixed account sets. `storetest.Run` is the
-conformance suite an implementation must pass.
+development, tests, and fixed account sets.
+
+`storetest.Run` is the conformance suite for other implementations.
 
 ### Database-backed stores
 
-Each leaf exposes `Store`, `Options{AutoCreate, Now}`,
-`New(db, opts)`, `Schema()`, and `SchemaStatements()`. Apply the
-schema through migrations in production, or pass `AutoCreate: true`
-in development and tests; `SchemaStatements()` returns the ordered
-statements for drivers that reject multi-statement text.
+Each database package exposes `Store`, `Options{AutoCreate, Now}`,
+`New(db, opts)`, `Schema()`, and `SchemaStatements()`.
+
+Apply the schema through migrations in production or pass
+`AutoCreate: true` in development and tests; `SchemaStatements()`
+returns ordered statements for drivers that reject multi-statement
+text.
 
 **SQLite** (`store/sqlite`):
 
 ```go
 import "github.com/gofabrik/fabrik/auth/store/sqlite"
 
-db, err := sql.Open("sqlite", "file:app.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate")
+db, err := sql.Open("sqlite", "file:app.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 s, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
 ```
 
-The foreign_keys pragma is required for cascade delete and the
-immediate txlock serializes the store's write transactions.
+The `foreign_keys` pragma is required for cascade delete, and writes
+use `BEGIN IMMEDIATE` independently of the DSN.
 
 **PostgreSQL** (`store/postgres`):
 
@@ -91,6 +89,19 @@ db, err := sql.Open("pgx", "postgres://user:pass@host/db?sslmode=disable")
 s, err := postgres.New(db, postgres.Options{AutoCreate: true})
 ```
 
-Identity ids, emails, and hashes are stored as BYTEA for byte-exact
+Identity IDs, emails, and hashes are stored as BYTEA for byte-exact
 comparison; conflict-checking writes serialize on a
 transaction-scoped advisory lock.
+
+**MySQL / MariaDB** (`store/mysql`):
+
+```go
+import "github.com/gofabrik/fabrik/auth/store/mysql"
+
+db, err := sql.Open("mysql", "user:pass@tcp(host:3306)/db?parseTime=true")
+s, err := mysql.New(db, mysql.Options{AutoCreate: true})
+```
+
+Identity IDs and emails are stored as VARBINARY and hashes as
+LONGBLOB, so no collation can fold case or trailing spaces; write
+races resolve through the server's duplicate-key reporting.
