@@ -311,7 +311,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	authenticationPasswordVerifier, err := authentication.NewPasswordVerifier(sharedSqlDBDatabase)
+	authenticationAccounts, err := authentication.NewAccounts(sharedSqlDBDatabase)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
+	authenticationPasswordVerifier, err := authentication.NewPasswordVerifier(authenticationAccounts)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
@@ -324,16 +328,23 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+	authenticationRatelimitLimiterRegisterip, err := authentication.NewRegisterIPLimiter(sharedRatelimitMemoryStore)
+	if err != nil {
+		return nil, nil, nil, unwind(err)
+	}
 	authenticationHandlers := &authentication.Handlers{
-		Auth:      authenticationSessionAuth,
-		Verifier:  authenticationPasswordVerifier,
-		Limiter:   authenticationRatelimitLimiter,
-		IPLimiter: authenticationRatelimitLimiterLoginip,
+		Auth:            authenticationSessionAuth,
+		Verifier:        authenticationPasswordVerifier,
+		Accounts:        authenticationAccounts,
+		Limiter:         authenticationRatelimitLimiter,
+		IPLimiter:       authenticationRatelimitLimiterLoginip,
+		RegisterLimiter: authenticationRatelimitLimiterRegisterip,
 	}
 	assetKind, err := assetsOptions.Mode()
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
+
 	var assetServer assets.Server
 	switch assetKind {
 	case assets.KindSource:
@@ -351,7 +362,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 	sharedWebFuncMap := shared.NewTemplateFuncs()
-
 	sharedFlash, err := shared.NewFlash(sharedSessionManager)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -382,6 +392,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	default:
 		return nil, nil, nil, unwind(fmt.Errorf("no web2.Greeter implementation for %q", webGreeterConfig.Kind))
 	}
+
 	sharedQueryDB, err := shared.NewQueries(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
@@ -390,7 +401,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-
 	sharedJobsConfig := shared.NewJobsConfig()
 	jobsManager, err := jobs.New(sharedJobsStore, sharedJobsConfig)
 	if err != nil {
@@ -432,6 +442,11 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Templates: appTemplates,
 		Funcs:     sharedWebRequestFuncs,
 	}
+
+	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
+
+	r := router.New()
+
 	webAPI := &web2.API{
 		Greeter: webGreeter,
 	}
@@ -442,11 +457,6 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		Jobs:    jobsManager,
 		Cache:   webCache,
 	}
-
-	sharedHttpServer := shared.NewServer(sharedHTTPConfig)
-
-	r := router.New()
-
 	webDocs := &web2.Docs{
 		Router: r,
 	}
@@ -497,14 +507,14 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	// Register
 	r.Method("GET", "/login", adapter.Wrap(authenticationHandlers.ShowLogin), shared.NoStore)
 	r.Method("POST", "/login", adapter.Wrap(authenticationHandlers.Login), shared.NoStore)
+	r.Method("GET", "/register", adapter.Wrap(authenticationHandlers.ShowRegister), shared.NoStore)
+	r.Method("POST", "/register", adapter.Wrap(authenticationHandlers.Register), shared.NoStore)
 	r.Method("POST", "/logout", adapter.Wrap(authenticationHandlers.Logout))
 	r.Method("GET", "/private", adapter.Wrap(authenticationHandlers.Private), shared.NoStore, authenticatedMW)
 	r.Method("GET", "/admin", adapter.Wrap(authenticationHandlers.Admin), shared.NoStore, authenticatedMW, adminMW)
 	r.Handle("/assets/", assetServer.Handler())
 	r.NotFound(adapter.Wrap(sharedErrorPages.NotFound))
 	r.MethodNotAllowed(adapter.Wrap(sharedErrorPages.MethodNotAllowed))
-	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
-	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
 
 	// Jobs
 	if err := jobs.Register[shared.GreetingNotification](jobsManager, "shared.GreetingNotification"); err != nil {
@@ -529,6 +539,8 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 		return nil, nil, nil, unwind(err)
 	}
 
+	r.Method("GET", "/{$}", adapter.Wrap(webHandlers.Index), shared.NoStore)
+	r.Method("GET", "/about", adapter.Wrap(webHandlers.About))
 	r.Method("GET", "/uptime", webStatus.Uptime)
 	r.Method("GET", "/api/greet/{name}", webAPI.Greet)
 	r.Method("GET", "/greet", adapter.Wrap(webGreetings.Show))
@@ -537,9 +549,9 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	r.Method("GET", "/files", adapter.Wrap(webFiles.Show))
 	r.Method("POST", "/files", adapter.Wrap(webFiles.Upload))
 	r.Method("GET", "/overview", adapter.Wrap(webOverview.Show))
+
 	r.Method("GET", "/greetings", adapter.Wrap(webGreetingsList.Show))
 	r.Method("GET", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Edit))
-
 	r.Method("POST", "/greetings/{id}/edit", adapter.Wrap(webGreetingEditor.Update))
 	r.Method("GET", "/live", adapter.Wrap(webLive.Show))
 	r.Method("GET", "/live/events", adapter.Wrap(webLive.Events))

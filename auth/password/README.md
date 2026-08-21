@@ -48,6 +48,8 @@ constant-time, malformed hashes return `ErrInvalidHash` rather than
   fail the login.
 - `Config.MaxConcurrent` (default 4) bounds hashing, including decoy comparisons.
   Use one verifier per process when the bound must be process-wide.
+- `Hash(ctx, password)` derives credential hashes under the verifier's shared
+  concurrency bound.
 
 Rate limiting stays outside the library. Apply it before `Authenticate` so
 blocked attempts do not reach the hasher. Account keys must use the store's
