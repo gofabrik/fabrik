@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: Improve framework reliability with scoped cookie deletion, complete response-writer capability forwarding, bounded session commits, safer local storage, job panic stack traces, and secure HTTP server defaults.
+issues: [0]
