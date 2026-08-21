@@ -1,0 +1,4 @@
+change_type: enhancement
+component: auth
+note: password.Verifier now provides Hash for creating credential hashes with its configured hasher and concurrency bound. Use it for registration and password changes so hashing shares admission control with authentication.
+issues: [0]
