@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofabrik/fabrik/ratelimit/internal/sqlstore"
+	"github.com/gofabrik/fabrik/ratelimit"
 )
 
 const schema = "CREATE TABLE IF NOT EXISTS ratelimit (\n" +
@@ -35,49 +35,42 @@ type Options struct {
 
 // Store keeps rate-limit entries in a MySQL or MariaDB database.
 type Store struct {
-	eng *sqlstore.Engine
+	db *sql.DB
 }
 
 // New constructs a Store and optionally applies Schema.
 func New(db *sql.DB, opts Options) (*Store, error) {
-	eng, err := sqlstore.New(db, mysqlDialect{}, opts.AutoCreate)
-	if err != nil {
-		return nil, err
+	if db == nil {
+		return nil, errors.New("ratelimit: db is required")
 	}
-	return &Store{eng: eng}, nil
+	if opts.AutoCreate {
+		if _, err := db.Exec(schema); err != nil {
+			return nil, fmt.Errorf("ratelimit: create schema: %w", err)
+		}
+	}
+	return &Store{db: db}, nil
 }
 
 // Get implements ratelimit.Store.
 func (s *Store) Get(ctx context.Context, key string, now time.Time) (int64, bool, error) {
-	return s.eng.Get(ctx, key, now)
+	var value int64
+	err := s.db.QueryRowContext(ctx,
+		"SELECT value FROM ratelimit WHERE `key` = ? AND expires_at > ?",
+		key, now.UnixNano()).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("ratelimit: get %q: %w", key, err)
+	}
+	return value, true, nil
 }
-
-// SetIfAbsent implements ratelimit.Store.
-func (s *Store) SetIfAbsent(ctx context.Context, key string, value int64, now, expiresAt time.Time) (bool, error) {
-	return s.eng.SetIfAbsent(ctx, key, value, now, expiresAt)
-}
-
-// CompareAndSwap implements ratelimit.Store.
-func (s *Store) CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (bool, error) {
-	return s.eng.CompareAndSwap(ctx, key, old, newValue, now, expiresAt)
-}
-
-// Sweep implements ratelimit.Sweeper.
-func (s *Store) Sweep(ctx context.Context, now time.Time) (int64, error) {
-	return s.eng.Sweep(ctx, now)
-}
-
-type mysqlDialect struct{}
-
-func (mysqlDialect) Placeholder(int) string { return "?" }
-func (mysqlDialect) KeyColumn() string      { return "`key`" }
-func (mysqlDialect) Schema() string         { return schema }
 
 // SetIfAbsent inserts directly, then locks an existing row before checking
 // whether it has expired.
-func (mysqlDialect) SetIfAbsent(ctx context.Context, db *sql.DB, key string, value int64, now, expiresAt time.Time) (bool, error) {
+func (s *Store) SetIfAbsent(ctx context.Context, key string, value int64, now, expiresAt time.Time) (bool, error) {
 	// Plain INSERT keeps strict-mode errors fatal instead of truncating keys.
-	_, err := db.ExecContext(ctx,
+	_, err := s.db.ExecContext(ctx,
 		"INSERT INTO ratelimit (`key`, value, expires_at) VALUES (?, ?, ?)",
 		key, value, expiresAt.UnixNano())
 	if err == nil {
@@ -87,7 +80,7 @@ func (mysqlDialect) SetIfAbsent(ctx context.Context, db *sql.DB, key string, val
 		return false, fmt.Errorf("ratelimit: set absent %q: %w", key, err)
 	}
 
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("ratelimit: set absent %q: %w", key, err)
 	}
@@ -125,8 +118,8 @@ func (mysqlDialect) SetIfAbsent(ctx context.Context, db *sql.DB, key string, val
 }
 
 // CompareAndSwap locks the row so an unchanged match still reports success.
-func (mysqlDialect) CompareAndSwap(ctx context.Context, db *sql.DB, key string, old, newValue int64, now, expiresAt time.Time) (bool, error) {
-	tx, err := db.BeginTx(ctx, nil)
+func (s *Store) CompareAndSwap(ctx context.Context, key string, old, newValue int64, now, expiresAt time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("ratelimit: swap %q: %w", key, err)
 	}
@@ -156,7 +149,27 @@ func (mysqlDialect) CompareAndSwap(ctx context.Context, db *sql.DB, key string, 
 	return true, tx.Commit()
 }
 
+// Sweep implements ratelimit.Sweeper.
+func (s *Store) Sweep(ctx context.Context, now time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		"DELETE FROM ratelimit WHERE expires_at <= ?",
+		now.UnixNano())
+	if err != nil {
+		return 0, fmt.Errorf("ratelimit: sweep: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("ratelimit: sweep: %w", err)
+	}
+	return n, nil
+}
+
 // isDuplicateKey recognizes error 1062 without importing a SQL driver.
 func isDuplicateKey(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "Error 1062")
 }
+
+var (
+	_ ratelimit.Store   = (*Store)(nil)
+	_ ratelimit.Sweeper = (*Store)(nil)
+)

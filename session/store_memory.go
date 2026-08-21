@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/gofabrik/fabrik/session/internal/sessionutil"
 )
 
 // MemoryOptions configures a [MemoryStore].
@@ -59,7 +57,7 @@ func (s *MemoryStore) Load(ctx context.Context, sid string) (Record, error) {
 		s.mu.Unlock()
 		return Record{}, ErrNotFound
 	}
-	rec.Payload = sessionutil.ClonePayload(rec.Payload)
+	rec.Payload = clonePayload(rec.Payload)
 	return rec, nil
 }
 
@@ -87,7 +85,7 @@ func (s *MemoryStore) Save(ctx context.Context, rec Record) (Record, error) {
 
 	stored := rec
 	stored.Version++
-	stored.Payload = sessionutil.ClonePayload(rec.Payload)
+	stored.Payload = clonePayload(rec.Payload)
 	s.records[rec.SID] = stored
 
 	// Keep the user index in sync with UserID changes.
@@ -99,7 +97,7 @@ func (s *MemoryStore) Save(ctx context.Context, rec Record) (Record, error) {
 	}
 
 	out := stored
-	out.Payload = sessionutil.ClonePayload(stored.Payload)
+	out.Payload = clonePayload(stored.Payload)
 	return out, nil
 }
 
@@ -251,4 +249,14 @@ func (s *MemoryStore) userIndexRemoveLocked(userID, sid string) {
 	if len(set) == 0 {
 		delete(s.userIndex, userID)
 	}
+}
+
+// clonePayload copies payload bytes across the store boundary.
+func clonePayload(p []byte) []byte {
+	if p == nil {
+		return nil
+	}
+	out := make([]byte, len(p))
+	copy(out, p)
+	return out
 }

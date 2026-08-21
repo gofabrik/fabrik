@@ -36,12 +36,20 @@ module-sets:
 excluded-modules:
   # Test, example, and benchmark modules are built only in the workspace.
   - demo
-  - github.com/gofabrik/fabrik/cache/dbtest
-  - github.com/gofabrik/fabrik/jobs/dbtest
+  - github.com/gofabrik/fabrik/cache/mysql/dbtest
+  - github.com/gofabrik/fabrik/cache/postgres/dbtest
+  - github.com/gofabrik/fabrik/cache/sqlite/dbtest
+  - github.com/gofabrik/fabrik/jobs/mysql/dbtest
+  - github.com/gofabrik/fabrik/jobs/postgres/dbtest
+  - github.com/gofabrik/fabrik/jobs/sqlite/dbtest
   - github.com/gofabrik/fabrik/migrations/dbtest
   - github.com/gofabrik/fabrik/query/dbtest
-  - github.com/gofabrik/fabrik/ratelimit/dbtest
+  - github.com/gofabrik/fabrik/ratelimit/mysql/dbtest
+  - github.com/gofabrik/fabrik/ratelimit/postgres/dbtest
+  - github.com/gofabrik/fabrik/ratelimit/sqlite/dbtest
   - github.com/gofabrik/fabrik/router/bench
-  - github.com/gofabrik/fabrik/session/dbtest
+  - github.com/gofabrik/fabrik/session/mysql/dbtest
+  - github.com/gofabrik/fabrik/session/postgres/dbtest
+  - github.com/gofabrik/fabrik/session/sqlite/dbtest
   # Release tools are pinned separately and never tagged.
   - github.com/gofabrik/fabrik/internal/tools

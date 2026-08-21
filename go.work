@@ -7,7 +7,9 @@ use (
 	./authn/password
 	./authn/session
 	./cache
-	./cache/dbtest
+	./cache/mysql/dbtest
+	./cache/postgres/dbtest
+	./cache/sqlite/dbtest
 	./cli
 	./cli/directive
 	./config
@@ -20,8 +22,10 @@ use (
 	./gen
 	./httpserver
 	./jobs
-	./jobs/dbtest
 	./jobs/directive
+	./jobs/mysql/dbtest
+	./jobs/postgres/dbtest
+	./jobs/sqlite/dbtest
 	./mail
 	./migrations
 	./migrations/dbtest
@@ -30,12 +34,16 @@ use (
 	./query
 	./query/dbtest
 	./ratelimit
-	./ratelimit/dbtest
+	./ratelimit/mysql/dbtest
+	./ratelimit/postgres/dbtest
+	./ratelimit/sqlite/dbtest
 	./router
 	./router/bench
 	./router/directive
 	./session
-	./session/dbtest
+	./session/mysql/dbtest
+	./session/postgres/dbtest
+	./session/sqlite/dbtest
 	./storage
 	./validation
 	./web

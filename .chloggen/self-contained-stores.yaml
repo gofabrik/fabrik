@@ -1,0 +1,4 @@
+change_type: enhancement
+component: fabrik
+note: Make the SQL stores for cache, jobs, rate limiting, and sessions self-contained in each database package, with a dedicated test module for every backend.
+issues: [0]
