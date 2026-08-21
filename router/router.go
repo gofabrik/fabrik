@@ -372,7 +372,7 @@ func (r *Router) freeze() {
 // runErrorHandler defaults body-only error handlers to the routing status.
 func runErrorHandler(w http.ResponseWriter, req *http.Request, code int, h http.HandlerFunc) {
 	dw := &defaultStatusWriter{ResponseWriter: w, code: code}
-	h(dw, req)
+	h(wrapDefaultStatusWriter(dw), req)
 	if !dw.wrote {
 		dw.WriteHeader(code)
 	}
