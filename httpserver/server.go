@@ -19,14 +19,19 @@ func New(handler http.Handler, srv *http.Server) *Server {
 	return &Server{Handler: handler, Server: srv}
 }
 
-func (s *Server) httpServer() *http.Server {
-	if s.Server != nil {
-		return s.Server
-	}
+// DefaultServer returns an HTTP server configured with the package defaults.
+func DefaultServer() *http.Server {
 	return &http.Server{
 		Addr:              ":8080",
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+}
+
+func (s *Server) httpServer() *http.Server {
+	if s.Server != nil {
+		return s.Server
+	}
+	return DefaultServer()
 }
 
 // Run returns listener errors, treats [http.ErrServerClosed] as success, and allows 30 seconds for shutdown after cancellation.
