@@ -134,6 +134,33 @@ func Run(t *testing.T, factory func(t *testing.T) storage.Storage) {
 		}
 	})
 
+	t.Run("ListPrefixShapes", func(t *testing.T) {
+		s := factory(t)
+		for _, k := range []string{"users/1234/a", "users/1234/b", "users/9/x", "other"} {
+			must(t, s.Put(ctx, k, strings.NewReader(k)))
+		}
+		collect := func(prefix string) []string {
+			t.Helper()
+			var got []string
+			for info, err := range s.List(ctx, prefix) {
+				if err != nil {
+					t.Fatalf("List(%q): %v", prefix, err)
+				}
+				got = append(got, info.Key)
+			}
+			return got
+		}
+		if got := collect("users/12"); len(got) != 2 || got[0] != "users/1234/a" || got[1] != "users/1234/b" {
+			t.Fatalf("List(users/12) = %v", got)
+		}
+		if got := collect("nope/"); len(got) != 0 {
+			t.Fatalf("List(nope/) = %v, want empty", got)
+		}
+		if got := collect("users/1234/a/sub/"); len(got) != 0 {
+			t.Fatalf("List(users/1234/a/sub/) = %v, want empty", got)
+		}
+	})
+
 	t.Run("InvalidKeysRejectedEverywhere", func(t *testing.T) {
 		s := factory(t)
 		for _, bad := range []string{"", "/abs", "trail/", "a//b", "../up", "a/../b", ".", ".tmp/x", "a/.hidden", "back\\slash", "control\x00key", "control\x1fkey"} {
