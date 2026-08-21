@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/gofabrik/fabrik/auth"
 	"github.com/gofabrik/fabrik/auth/password"
 	"github.com/gofabrik/fabrik/auth/session"
+	"github.com/gofabrik/fabrik/auth/store"
 	"github.com/gofabrik/fabrik/forms"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/validation"
@@ -42,11 +44,14 @@ type LoginForm struct {
 }
 
 //fabrik:inject IPLimiter name=loginip
+//fabrik:inject RegisterLimiter name=registerip
 type Handlers struct {
-	Auth      *session.Auth
-	Verifier  *password.Verifier
-	Limiter   *ratelimit.Limiter
-	IPLimiter *ratelimit.Limiter
+	Auth            *session.Auth
+	Verifier        *password.Verifier
+	Accounts        *Accounts
+	Limiter         *ratelimit.Limiter
+	IPLimiter       *ratelimit.Limiter
+	RegisterLimiter *ratelimit.Limiter
 }
 
 //fabrik:web GET /login middleware=nocache
@@ -99,6 +104,96 @@ func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 	if err != nil {
 		if errors.Is(err, password.ErrInvalidCredentials) {
 			return web.Template("auth/login", LoginForm{Form: form, Error: "invalid credentials"}).Status(http.StatusUnprocessableEntity), nil
+		}
+		return nil, err
+	}
+
+	if err := h.Auth.Login(req.Context(), claims); err != nil {
+		return nil, err
+	}
+	return web.Redirect("/"), nil
+}
+
+// RegisterInput is the registration form, with maximum lengths measured in
+// bytes and the password minimum measured in characters.
+type RegisterInput struct {
+	Email    string
+	Password string
+	Confirm  string
+}
+
+func (in RegisterInput) Validate() validation.Errors {
+	return validation.Check(
+		validation.Field("email", in.Email, validation.Required(), validation.Email(),
+			validation.By(func(v string) error {
+				if len(v) > password.MaxEmailLen {
+					return fmt.Errorf("must be at most %d bytes", password.MaxEmailLen)
+				}
+				return nil
+			})),
+		validation.Field("password", in.Password, validation.Required(), validation.MinLen(15),
+			validation.By(func(v string) error {
+				if len(v) > password.MaxPasswordLen {
+					return fmt.Errorf("must be at most %d bytes", password.MaxPasswordLen)
+				}
+				return nil
+			})),
+		validation.Field("confirm", in.Confirm, validation.By(func(v string) error {
+			if v != in.Password {
+				return errors.New("passwords do not match")
+			}
+			return nil
+		})),
+	)
+}
+
+// RegisterForm is the registration page's view model.
+type RegisterForm struct {
+	Form  *forms.Form[RegisterInput]
+	Error string
+}
+
+//fabrik:web GET /register middleware=nocache
+func (h *Handlers) ShowRegister(req *web.Request) (web.Response, error) {
+	return web.Template("auth/register", RegisterForm{Form: forms.Empty[RegisterInput]()}), nil
+}
+
+//fabrik:web POST /register middleware=nocache
+func (h *Handlers) Register(req *web.Request) (web.Response, error) {
+	// Missing IP keys and limiter failures fail closed with 503.
+	ip := ratelimit.KeyByIP(req.HTTP())
+	if ip == "" {
+		return web.Template("auth/register", RegisterForm{Form: forms.Empty[RegisterInput](), Error: "temporarily unavailable"}).Status(http.StatusServiceUnavailable), nil
+	}
+	ipResult, err := h.RegisterLimiter.Allow(req.Context(), ip)
+	if err != nil {
+		return web.Template("auth/register", RegisterForm{Form: forms.Empty[RegisterInput](), Error: "temporarily unavailable"}).Status(http.StatusServiceUnavailable), nil
+	}
+	req.SetHeader("RateLimit-Limit", strconv.Itoa(ipResult.Limit))
+	req.SetHeader("RateLimit-Remaining", strconv.Itoa(ipResult.Remaining))
+	req.SetHeader("RateLimit-Reset", strconv.Itoa(int(math.Ceil(ipResult.ResetAfter.Seconds()))))
+	if !ipResult.Allowed {
+		req.SetHeader("Retry-After", strconv.Itoa(int(math.Ceil(ipResult.RetryAfter.Seconds()))))
+		return web.Template("auth/register", RegisterForm{Form: forms.Empty[RegisterInput](), Error: "too many requests"}).Status(http.StatusTooManyRequests), nil
+	}
+
+	form, err := forms.Bind[RegisterInput](req.HTTP())
+	if err != nil {
+		return nil, err
+	}
+	if !form.Valid() {
+		return web.Template("auth/register", RegisterForm{Form: form}).Status(http.StatusUnprocessableEntity), nil
+	}
+
+	hash, err := h.Verifier.Hash(req.Context(), form.Data.Password)
+	if err != nil {
+		return nil, err
+	}
+	email := password.NormalizeEmail(form.Data.Email)
+	claims, err := h.Accounts.Register(req.Context(), email, hash)
+	if err != nil {
+		if errors.Is(err, store.ErrEmailTaken) {
+			return web.Template("auth/register", RegisterForm{Form: form, Error: "that email is already registered"}).Status(http.StatusUnprocessableEntity), nil
 		}
 		return nil, err
 	}
