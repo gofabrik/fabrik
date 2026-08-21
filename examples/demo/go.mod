@@ -29,6 +29,7 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/gofabrik/fabrik/auth/store v0.1.0
 	github.com/gofabrik/t v0.26.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/kr/text v0.2.0 // indirect

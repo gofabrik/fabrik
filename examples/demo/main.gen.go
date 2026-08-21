@@ -311,7 +311,7 @@ func buildServer(configOpts []config.Option, sharedSqlDBDatabase *sql.DB) (*http
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}
-	authenticationPasswordVerifier, err := authentication.NewPasswordVerifier()
+	authenticationPasswordVerifier, err := authentication.NewPasswordVerifier(sharedSqlDBDatabase)
 	if err != nil {
 		return nil, nil, nil, unwind(err)
 	}

@@ -31,7 +31,7 @@ import (
 
 //fabrik:provider name=database
 func NewDB(cfg *DatabaseConfig) (*sql.DB, func() error, error) {
-	db, err := sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", "file:"+cfg.Path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, nil, err
 	}

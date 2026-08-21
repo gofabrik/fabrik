@@ -1,11 +1,16 @@
 package authentication
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"sync"
 	"time"
 
-	"github.com/gofabrik/fabrik/auth"
 	"github.com/gofabrik/fabrik/auth/password"
 	sessionauth "github.com/gofabrik/fabrik/auth/session"
+	"github.com/gofabrik/fabrik/auth/store"
+	storesqlite "github.com/gofabrik/fabrik/auth/store/sqlite"
 	"github.com/gofabrik/fabrik/ratelimit"
 	"github.com/gofabrik/fabrik/session"
 )
@@ -15,30 +20,55 @@ func NewSessionAuth(m *session.Manager) (*sessionauth.Auth, error) {
 	return sessionauth.New(m, sessionauth.Options{})
 }
 
+//fabrik:inject db name=database
 //fabrik:provider
-func NewPasswordVerifier() (*password.Verifier, error) {
-	store := password.NewMemoryStore()
+func NewPasswordVerifier(db *sql.DB) (*password.Verifier, error) {
+	// Migration 0006_auth.sql owns the schema.
+	accounts, err := storesqlite.New(db, storesqlite.Options{})
+	if err != nil {
+		return nil, err
+	}
+	return password.New(password.Config{Store: &seededAccounts{
+		Store: accounts,
+		seed:  sync.OnceValue(func() error { return seedAccounts(context.Background(), accounts) }),
+	}})
+}
+
+// seededAccounts keeps commands that do not authenticate from writing account tables.
+type seededAccounts struct {
+	*storesqlite.Store
+	seed func() error
+}
+
+func (s *seededAccounts) Lookup(ctx context.Context, email string) (password.Credential, error) {
+	if err := s.seed(); err != nil {
+		return password.Credential{}, err
+	}
+	return s.Store.Lookup(ctx, email)
+}
+
+// seedAccounts creates missing demo accounts without replacing existing credentials.
+func seedAccounts(ctx context.Context, accounts *storesqlite.Store) error {
 	hasher := password.Argon2id{}
-
-	adminHash, err := hasher.Hash("admin")
-	if err != nil {
-		return nil, err
+	for _, seed := range []struct {
+		id, email, password string
+		claims              store.IdentityClaims
+	}{
+		{"admin", "admin@example.com", "admin", store.IdentityClaims{Roles: []string{"admin"}}},
+		{"viewer", "viewer@example.com", "viewer", store.IdentityClaims{Roles: []string{"viewer"}}},
+	} {
+		if _, err := accounts.CreateIdentity(ctx, seed.id, seed.claims); err != nil && !errors.Is(err, store.ErrExists) {
+			return err
+		}
+		hash, err := hasher.Hash(seed.password)
+		if err != nil {
+			return err
+		}
+		if err := accounts.CreatePassword(ctx, seed.id, seed.email, hash); err != nil && !errors.Is(err, store.ErrExists) {
+			return err
+		}
 	}
-	store.Put("admin@example.com", password.Credential{
-		Hash:   adminHash,
-		Claims: auth.ClaimSet{Subject: "admin", Roles: []string{"admin"}},
-	})
-
-	viewerHash, err := hasher.Hash("viewer")
-	if err != nil {
-		return nil, err
-	}
-	store.Put("viewer@example.com", password.Credential{
-		Hash:   viewerHash,
-		Claims: auth.ClaimSet{Subject: "viewer", Roles: []string{"viewer"}},
-	})
-
-	return password.New(password.Config{Store: store})
+	return nil
 }
 
 //fabrik:provider
