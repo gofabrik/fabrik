@@ -7,6 +7,7 @@ use (
 	./auth/password
 	./auth/session
 	./auth/store
+	./auth/store/sqlite/dbtest
 	./cache
 	./cache/mysql/dbtest
 	./cache/postgres/dbtest

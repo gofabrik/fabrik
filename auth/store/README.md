@@ -61,3 +61,23 @@ change.
 `MemoryStore` is the process-local reference implementation for
 development, tests, and fixed account sets. `storetest.Run` is the
 conformance suite an implementation must pass.
+
+### Database-backed stores
+
+Each leaf exposes `Store`, `Options{AutoCreate, Now}`,
+`New(db, opts)`, `Schema()`, and `SchemaStatements()`. Apply the
+schema through migrations in production, or pass `AutoCreate: true`
+in development and tests; `SchemaStatements()` returns the ordered
+statements for drivers that reject multi-statement text.
+
+**SQLite** (`store/sqlite`):
+
+```go
+import "github.com/gofabrik/fabrik/auth/store/sqlite"
+
+db, err := sql.Open("sqlite", "file:app.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate")
+s, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
+```
+
+The foreign_keys pragma is required for cascade delete and the
+immediate txlock serializes the store's write transactions.
