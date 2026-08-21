@@ -6,6 +6,7 @@ use (
 	./auth
 	./auth/password
 	./auth/session
+	./auth/store
 	./cache
 	./cache/mysql/dbtest
 	./cache/postgres/dbtest
@@ -56,6 +57,7 @@ replace (
 	github.com/gofabrik/fabrik/auth v0.1.0 => ./auth
 	github.com/gofabrik/fabrik/auth/password v0.1.0 => ./auth/password
 	github.com/gofabrik/fabrik/auth/session v0.1.0 => ./auth/session
+	github.com/gofabrik/fabrik/auth/store v0.1.0 => ./auth/store
 	github.com/gofabrik/fabrik/cache v0.1.0 => ./cache
 	github.com/gofabrik/fabrik/cli v0.1.0 => ./cli
 	github.com/gofabrik/fabrik/cli/directive v0.1.0 => ./cli/directive

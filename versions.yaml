@@ -7,6 +7,7 @@ module-sets:
       - github.com/gofabrik/fabrik/auth
       - github.com/gofabrik/fabrik/auth/password
       - github.com/gofabrik/fabrik/auth/session
+      - github.com/gofabrik/fabrik/auth/store
       - github.com/gofabrik/fabrik/cache
       - github.com/gofabrik/fabrik/cli
       - github.com/gofabrik/fabrik/cli/directive
