@@ -24,6 +24,10 @@ type Config struct {
 	// 0 means the package default; negative disables retries.
 	MaxRetries int
 
+	// CommitTimeout bounds response-time store calls after client cancellation is
+	// detached; zero uses 30s and negative disables the timeout.
+	CommitTimeout time.Duration
+
 	// Logger reports commit failures and rotation warnings. Defaults to slog.Default().
 	Logger *slog.Logger
 

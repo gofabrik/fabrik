@@ -28,7 +28,14 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 		cw := &committingWriter{
 			ResponseWriter: w,
 			commitFn: func(rw http.ResponseWriter) error {
-				return m.commit(commitCtx, st, rw)
+				// The timeout starts with the commit, so it never bounds handler execution.
+				cctx := commitCtx
+				if m.commitTimeout > 0 {
+					var cancel context.CancelFunc
+					cctx, cancel = context.WithTimeout(cctx, m.commitTimeout)
+					defer cancel()
+				}
+				return m.commit(cctx, st, rw)
 			},
 			commitError: func(err error) {
 				m.cfg.Logger.ErrorContext(commitCtx, "session commit failed", "error", err)
@@ -103,7 +110,24 @@ func (cw *committingWriter) flush() {
 	}
 	if f, ok := cw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
+	} else if fe, ok := cw.ResponseWriter.(interface{ FlushError() error }); ok {
+		fe.FlushError() //nolint:errcheck // plain Flush has no error channel
 	}
+}
+
+// Prefer FlushError because http.ResponseController otherwise loses flush errors through http.Flusher.
+func (cw *committingWriter) flushError() error {
+	if !cw.headerWritten {
+		cw.runCommit()
+		cw.headerWritten = true
+	}
+	if fe, ok := cw.ResponseWriter.(interface{ FlushError() error }); ok {
+		return fe.FlushError()
+	}
+	if f, ok := cw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+	return nil
 }
 
 // hijack commits before the connection is taken over. Tokens staged
@@ -147,9 +171,20 @@ func (cw *committingWriter) push(target string, opts *http.PushOptions) error {
 	return http.ErrNotSupported
 }
 
+// FlushError-only writers must still expose http.Flusher through the wrapper.
+func canFlush(w http.ResponseWriter) bool {
+	if _, ok := w.(http.Flusher); ok {
+		return true
+	}
+	_, ok := w.(interface{ FlushError() error })
+	return ok
+}
+
 type flushPart struct{ cw *committingWriter }
 
 func (p flushPart) Flush() { p.cw.flush() }
+
+func (p flushPart) FlushError() error { return p.cw.flushError() }
 
 type hijackPart struct{ cw *committingWriter }
 
@@ -248,7 +283,7 @@ type (
 // wrapWriter preserves the underlying writer's optional interfaces.
 func wrapWriter(cw *committingWriter) http.ResponseWriter {
 	mask := 0
-	if _, ok := cw.ResponseWriter.(http.Flusher); ok {
+	if canFlush(cw.ResponseWriter) {
 		mask |= 1
 	}
 	if _, ok := cw.ResponseWriter.(http.Hijacker); ok {

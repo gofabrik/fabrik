@@ -15,11 +15,12 @@ import (
 // app-data accessor pins its struct type, and app data uses encoding/json.
 // Manager also implements [Registry] for library-owned session cells.
 type Manager struct {
-	cfg        Config
-	now        func() time.Time
-	newSID     func() (string, error)
-	maxRetries int
-	ctxKey     *managerKey
+	cfg           Config
+	now           func() time.Time
+	newSID        func() (string, error)
+	maxRetries    int
+	commitTimeout time.Duration
+	ctxKey        *managerKey
 
 	regMu sync.Mutex
 	cells map[string]reflect.Type
@@ -40,13 +41,18 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	commitTimeout := cfg.CommitTimeout
+	if commitTimeout == 0 {
+		commitTimeout = 30 * time.Second
+	}
 	m := &Manager{
-		cfg:        cfg,
-		now:        cfg.Now,
-		newSID:     cfg.NewSID,
-		maxRetries: cfg.MaxRetries,
-		ctxKey:     &managerKey{},
-		cells:      make(map[string]reflect.Type),
+		cfg:           cfg,
+		now:           cfg.Now,
+		newSID:        cfg.NewSID,
+		maxRetries:    cfg.MaxRetries,
+		commitTimeout: commitTimeout,
+		ctxKey:        &managerKey{},
+		cells:         make(map[string]reflect.Type),
 	}
 	if m.now == nil {
 		m.now = time.Now
