@@ -540,3 +540,105 @@ var (
 	_ Store    = (*MemoryStore)(nil)
 	_ Rehasher = (*MemoryStore)(nil)
 )
+
+func TestHashRoundTrip(t *testing.T) {
+	store := NewMemoryStore()
+	v, err := New(Config{Store: store, Hasher: newCountingHasher()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hash, err := v.Hash(ctx, "fifteen-chars-min")
+	if err != nil {
+		t.Fatalf("Hash: %v", err)
+	}
+	store.Put("a@example.com", Credential{Hash: hash, Claims: auth.ClaimSet{Subject: "a"}})
+	claims, err := v.Authenticate(ctx, "a@example.com", "fifteen-chars-min")
+	if err != nil {
+		t.Fatalf("Authenticate after Hash: %v", err)
+	}
+	if claims.Subject != "a" {
+		t.Fatalf("Subject = %q, want a", claims.Subject)
+	}
+}
+
+// TestHashInputBounds verifies that Hash enforces byte limits before invoking
+// the hasher.
+func TestHashInputBounds(t *testing.T) {
+	h := newCountingHasher()
+	v, err := New(Config{Store: NewMemoryStore(), Hasher: h})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	baseline := h.hashes.Load()
+	if _, err := v.Hash(ctx, ""); err == nil {
+		t.Fatal("empty password accepted")
+	}
+	if _, err := v.Hash(ctx, strings.Repeat("a", MaxPasswordLen+1)); err == nil {
+		t.Fatal("oversized password accepted")
+	}
+	multibyte := strings.Repeat("\U0001F512", MaxPasswordLen/4+1)
+	if _, err := v.Hash(ctx, multibyte); err == nil {
+		t.Fatalf("%d-byte multibyte password accepted (rune-counted bound?)", len(multibyte))
+	}
+	if got := h.hashes.Load() - baseline; got != 0 {
+		t.Fatalf("rejected inputs reached the hasher %d times", got)
+	}
+	if _, err := v.Hash(ctx, "a"); err != nil {
+		t.Fatalf("one-byte password rejected: %v", err)
+	}
+	if _, err := v.Hash(ctx, strings.Repeat("a", MaxPasswordLen)); err != nil {
+		t.Fatalf("boundary-length password rejected: %v", err)
+	}
+}
+
+// TestHashBoundedBySemaphore verifies that Hash shares the verifier's
+// concurrency limit and honors cancellation while waiting.
+func TestHashBoundedBySemaphore(t *testing.T) {
+	h := newCountingHasher()
+	v, err := New(Config{Store: NewMemoryStore(), Hasher: h, MaxConcurrent: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.block = make(chan struct{})
+	h.entered = make(chan struct{}, 4)
+
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := v.Hash(context.Background(), "occupies-a-slot-now"); err != nil {
+				t.Errorf("blocked Hash: %v", err)
+			}
+		}()
+	}
+	<-h.entered
+	<-h.entered
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := v.Hash(ctx, "blocked-behind-the-two")
+		done <- err
+	}()
+	select {
+	case <-h.entered:
+		t.Fatal("third Hash entered the hasher past a full semaphore")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Hash = %v, want context.Canceled", err)
+	}
+
+	close(h.block)
+	wg.Wait()
+	if _, err := v.Hash(context.Background(), "works-after-release"); err != nil {
+		t.Fatalf("Hash after release: %v", err)
+	}
+	if peak := h.peak.Load(); peak > 2 {
+		t.Fatalf("peak concurrent hasher calls = %d, want <= 2", peak)
+	}
+}

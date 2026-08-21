@@ -115,6 +115,21 @@ func New(cfg Config) (*Verifier, error) {
 	}, nil
 }
 
+// Hash derives a storable credential hash under the verifier's concurrency
+// limit and rejects inputs outside 1..MaxPasswordLen bytes.
+func (v *Verifier) Hash(ctx context.Context, password string) (string, error) {
+	if password == "" || len(password) > MaxPasswordLen {
+		return "", fmt.Errorf("password: hash input outside 1..%d bytes", MaxPasswordLen)
+	}
+	select {
+	case v.sem <- struct{}{}:
+	case <-ctx.Done():
+		return "", fmt.Errorf("password: %w", ctx.Err())
+	}
+	defer func() { <-v.sem }()
+	return v.hasher.Hash(password)
+}
+
 // Authenticate verifies email and password and returns cloned claims. Invalid
 // input and credentials return ErrInvalidCredentials. Store, hash, and context
 // errors remain distinct. Rehash failures are best-effort and do not fail login.
