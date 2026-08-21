@@ -81,3 +81,16 @@ s, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
 
 The foreign_keys pragma is required for cascade delete and the
 immediate txlock serializes the store's write transactions.
+
+**PostgreSQL** (`store/postgres`):
+
+```go
+import "github.com/gofabrik/fabrik/auth/store/postgres"
+
+db, err := sql.Open("pgx", "postgres://user:pass@host/db?sslmode=disable")
+s, err := postgres.New(db, postgres.Options{AutoCreate: true})
+```
+
+Identity ids, emails, and hashes are stored as BYTEA for byte-exact
+comparison; conflict-checking writes serialize on a
+transaction-scoped advisory lock.
