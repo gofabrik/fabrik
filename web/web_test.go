@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofabrik/fabrik/web"
 )
@@ -232,6 +233,83 @@ func TestCookieAccessors(t *testing.T) {
 	}
 	if _, ok := req.Cookie("missing"); ok {
 		t.Fatal("missing cookie reported present")
+	}
+}
+
+func TestClearCookieZeroArgUnchanged(t *testing.T) {
+	a := web.NewAdapter()
+	rec := httptest.NewRecorder()
+	a.Wrap(func(req *web.Request) (web.Response, error) {
+		req.ClearCookie("session")
+		return web.Status(http.StatusNoContent), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if sc := rec.Header().Get("Set-Cookie"); sc != "session=; Path=/; Max-Age=0" {
+		t.Fatalf("ClearCookie zero-arg = %q", sc)
+	}
+}
+
+func TestClearCookieCustomPath(t *testing.T) {
+	a := web.NewAdapter()
+	rec := httptest.NewRecorder()
+	a.Wrap(func(req *web.Request) (web.Response, error) {
+		req.ClearCookie("tok", web.CookiePath("/api"))
+		return web.Status(http.StatusNoContent), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if sc := rec.Header().Get("Set-Cookie"); sc != "tok=; Path=/api; Max-Age=0" {
+		t.Fatalf("ClearCookie custom path = %q", sc)
+	}
+}
+
+func TestClearCookieWithDomain(t *testing.T) {
+	a := web.NewAdapter()
+	rec := httptest.NewRecorder()
+	a.Wrap(func(req *web.Request) (web.Response, error) {
+		req.ClearCookie("tok", web.CookieDomain("example.com"))
+		return web.Status(http.StatusNoContent), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if sc := rec.Header().Get("Set-Cookie"); sc != "tok=; Path=/; Domain=example.com; Max-Age=0" {
+		t.Fatalf("ClearCookie with domain = %q", sc)
+	}
+}
+
+func TestCookieDomainOnSetCookie(t *testing.T) {
+	a := web.NewAdapter()
+	rec := httptest.NewRecorder()
+	a.Wrap(func(req *web.Request) (web.Response, error) {
+		req.SetCookie("session", "tok", web.CookieDomain("example.com"))
+		return web.Status(http.StatusNoContent), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if sc := rec.Header().Get("Set-Cookie"); sc != "session=tok; Path=/; Domain=example.com" {
+		t.Fatalf("SetCookie with CookieDomain = %q", sc)
+	}
+}
+
+func TestClearCookieMaxAgeOverriddenByInvariant(t *testing.T) {
+	a := web.NewAdapter()
+	rec := httptest.NewRecorder()
+	a.Wrap(func(req *web.Request) (web.Response, error) {
+		req.ClearCookie("tok", web.CookieMaxAge(24*time.Hour))
+		return web.Status(http.StatusNoContent), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if sc := rec.Header().Get("Set-Cookie"); sc != "tok=; Path=/; Max-Age=0" {
+		t.Fatalf("ClearCookie MaxAge invariant broken: %q", sc)
+	}
+}
+
+func TestClearCookieHostileOptionOverridden(t *testing.T) {
+	hostile := web.CookieOption(func(c *http.Cookie) {
+		c.Name = "hijacked"
+		c.Value = "evil"
+		c.MaxAge = 9999
+	})
+	a := web.NewAdapter()
+	rec := httptest.NewRecorder()
+	a.Wrap(func(req *web.Request) (web.Response, error) {
+		req.ClearCookie("session", hostile)
+		return web.Status(http.StatusNoContent), nil
+	})(rec, httptest.NewRequest("GET", "/", nil))
+	if sc := rec.Header().Get("Set-Cookie"); sc != "session=; Path=/; Max-Age=0" {
+		t.Fatalf("ClearCookie hostile option not fully overridden: %q", sc)
 	}
 }
 

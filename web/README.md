@@ -3,7 +3,8 @@
 Typed HTTP responses for Go handlers: request in, response value out,
 errors centralized. Sectioned HTML templates load into the renderer the
 adapter uses. The request side is a light wrapper; full request typing
-belongs to form binding. Zero dependencies.
+belongs to form binding. Depends on github.com/gofabrik/t for its
+template execution engine.
 
 ## Why
 
@@ -22,7 +23,7 @@ func (h *Handlers) Login(req *web.Request) (web.Response, error) {
 	if user == nil {
 		return web.Template("auth/login", LoginPage{Error: "invalid credentials"}), nil
 	}
-	req.SetCookie("session", token, web.CookieSecure())
+	req.SetCookie("session", token, web.CookieSecure(), web.CookieHTTPOnly(), web.CookieSameSite(http.SameSiteLaxMode))
 	return web.Redirect("/account"), nil
 }
 ```

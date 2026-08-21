@@ -53,7 +53,7 @@ func (r *Request) SetHeader(key, value string) {
 	r.headers[textproto.CanonicalMIMEHeaderKey(key)] = value
 }
 
-// CookieOption adjusts a cookie recorded by SetCookie.
+// CookieOption configures cookies recorded by SetCookie and ClearCookie.
 type CookieOption func(*http.Cookie)
 
 // CookieSecure marks the cookie Secure.
@@ -86,6 +86,12 @@ func CookieSameSite(mode http.SameSite) CookieOption {
 	return func(c *http.Cookie) { c.SameSite = mode }
 }
 
+// CookieDomain sets the cookie domain; use the same domain when clearing a cookie.
+func CookieDomain(domain string) CookieOption {
+	// #nosec G124 -- cookie attributes are caller-configurable
+	return func(c *http.Cookie) { c.Domain = domain }
+}
+
 // SetCookie records a response cookie.
 func (r *Request) SetCookie(name, value string, opts ...CookieOption) {
 	// #nosec G124 -- cookie attributes are caller-configurable
@@ -96,8 +102,18 @@ func (r *Request) SetCookie(name, value string, opts ...CookieOption) {
 	r.cookies = append(r.cookies, c)
 }
 
-// ClearCookie records the named cookie's deletion.
-func (r *Request) ClearCookie(name string) {
+// ClearCookie records the named cookie's deletion. Browsers match by
+// name, domain, and path, so reproduce the CookiePath and CookieDomain
+// the cookie was set with; options cannot override the deletion itself
+// (name, empty value, MaxAge -1).
+func (r *Request) ClearCookie(name string, opts ...CookieOption) {
 	// #nosec G124 -- cookie attributes are caller-configurable
-	r.cookies = append(r.cookies, &http.Cookie{Name: name, Path: "/", MaxAge: -1})
+	c := &http.Cookie{Path: "/"}
+	for _, opt := range opts {
+		opt(c)
+	}
+	c.Name = name
+	c.Value = ""
+	c.MaxAge = -1
+	r.cookies = append(r.cookies, c)
 }
