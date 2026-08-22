@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -1012,5 +1013,218 @@ func TestRotationDeleteFailureIsLogged(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "session rotation: old SID delete failed") {
 		t.Errorf("delete failure not logged; got: %q", logBuf.String())
+	}
+}
+
+// leakingStore embeds the identifier it was given into every failing
+// operation, as a custom Store or a driver echoing bound values
+// might, pinning the commit layer's redaction independent of the
+// store's own wraps.
+type leakingStore struct {
+	inner Store
+
+	failLoad, failSave, failDelete bool
+	conflict                       bool // Save fails with ErrVersionConflict instead of a plain error
+
+	loadCalls int // failLoad only bites the CAS-reload Load, not the request's initial Load
+}
+
+func (l *leakingStore) Load(ctx context.Context, sid string) (Record, error) {
+	l.loadCalls++
+	if l.failLoad && l.loadCalls > 1 {
+		return Record{}, fmt.Errorf("leaking store: load %s: boom", sid)
+	}
+	return l.inner.Load(ctx, sid)
+}
+
+func (l *leakingStore) Save(ctx context.Context, rec Record) (Record, error) {
+	if l.failSave {
+		if l.conflict {
+			return Record{}, fmt.Errorf("leaking store: save %s: %w", rec.SID, ErrVersionConflict)
+		}
+		return Record{}, fmt.Errorf("leaking store: save %s: boom", rec.SID)
+	}
+	return l.inner.Save(ctx, rec)
+}
+
+func (l *leakingStore) Delete(ctx context.Context, sid string) error {
+	if l.failDelete {
+		return fmt.Errorf("leaking store: delete %s: boom", sid)
+	}
+	return l.inner.Delete(ctx, sid)
+}
+
+// TestMintSaveFailureRedactsSID pins insertFresh's Save failure: the
+// freshly minted SID exists only as a local, so only the commit-layer
+// redaction (not a log-site sanitizer) can ever see it.
+func TestMintSaveFailureRedactsSID(t *testing.T) {
+	var logs bytes.Buffer
+	const marker = "leak-mint-sid-marker"
+	store := &leakingStore{inner: NewMemoryStore(MemoryOptions{}), failSave: true}
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.NewSID = func() (string, error) { return marker, nil }
+		c.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	h := appH(m)
+
+	rr := serve(t, m, "", func(w http.ResponseWriter, r *http.Request) {
+		_ = h.Save(r.Context(), appSession{Name: "v"})
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("mint save failure = %d, want 500", rr.Code)
+	}
+	if strings.Contains(logs.String(), marker) {
+		t.Fatalf("mint failure leaked the SID: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), sidPlaceholder) {
+		t.Fatalf("mint failure did not redact: %q", logs.String())
+	}
+}
+
+// TestRotationDeleteFailureRedactsSID pins the rotation path's
+// best-effort delete of the old SID.
+func TestRotationDeleteFailureRedactsSID(t *testing.T) {
+	var logs bytes.Buffer
+	store := &leakingStore{inner: NewMemoryStore(MemoryOptions{})}
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	})
+	h := appH(m)
+	sid := establish(t, m, h, "v")
+
+	store.failDelete = true
+	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
+		if err := m.Renew(r.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if _, ok := sessionCookie(t, rr); !ok {
+		t.Fatal("rotation did not issue a new token despite the delete failure")
+	}
+	if strings.Contains(logs.String(), sid) {
+		t.Fatalf("rotation delete failure leaked the old SID: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), sidPlaceholder) {
+		t.Fatalf("rotation delete failure did not redact: %q", logs.String())
+	}
+}
+
+// TestDirtyCommitSaveFailureRedactsSID pins commitDirty's immediate,
+// non-conflict Save failure.
+func TestDirtyCommitSaveFailureRedactsSID(t *testing.T) {
+	var logs bytes.Buffer
+	store := &leakingStore{inner: NewMemoryStore(MemoryOptions{})}
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	h := appH(m)
+	sid := establish(t, m, h, "v")
+
+	store.failSave = true
+	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = h.Get(r.Context())
+		_ = h.Save(r.Context(), appSession{Name: "x"})
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("dirty commit save failure = %d, want 500", rr.Code)
+	}
+	if strings.Contains(logs.String(), sid) {
+		t.Fatalf("dirty commit save failure leaked the SID: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), sidPlaceholder) {
+		t.Fatalf("dirty commit save failure did not redact: %q", logs.String())
+	}
+}
+
+// TestDirtyCommitExhaustedConflictRedactsSID pins commitDirty's
+// exhausted-conflict return, the final Save error surfaced after
+// MaxRetries reloads.
+func TestDirtyCommitExhaustedConflictRedactsSID(t *testing.T) {
+	var logs bytes.Buffer
+	store := &leakingStore{inner: NewMemoryStore(MemoryOptions{})}
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.MaxRetries = 1
+		c.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	h := appH(m)
+	sid := establish(t, m, h, "v")
+
+	store.failSave = true
+	store.conflict = true
+	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = h.Get(r.Context())
+		_ = h.Save(r.Context(), appSession{Name: "x"})
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("exhausted conflict = %d, want 500", rr.Code)
+	}
+	if strings.Contains(logs.String(), sid) {
+		t.Fatalf("exhausted conflict leaked the SID: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), sidPlaceholder) {
+		t.Fatalf("exhausted conflict did not redact: %q", logs.String())
+	}
+}
+
+// TestCASReloadLoadFailureRedactsSID pins commitDirty's conflict-reload
+// Load failure.
+func TestCASReloadLoadFailureRedactsSID(t *testing.T) {
+	var logs bytes.Buffer
+	store := &leakingStore{inner: NewMemoryStore(MemoryOptions{})}
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.MaxRetries = 1
+		c.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	h := appH(m)
+	sid := establish(t, m, h, "v")
+
+	store.failSave = true
+	store.conflict = true
+	store.failLoad = true
+	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = h.Get(r.Context())
+		_ = h.Save(r.Context(), appSession{Name: "x"})
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("CAS reload failure = %d, want 500", rr.Code)
+	}
+	if strings.Contains(logs.String(), sid) {
+		t.Fatalf("CAS reload failure leaked the SID: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), sidPlaceholder) {
+		t.Fatalf("CAS reload failure did not redact: %q", logs.String())
+	}
+}
+
+// TestLogoutDeleteFailureRedactsSID pins logout's Delete failure, the
+// destroyed SID.
+func TestLogoutDeleteFailureRedactsSID(t *testing.T) {
+	var logs bytes.Buffer
+	store := &leakingStore{inner: NewMemoryStore(MemoryOptions{})}
+	m := newTestManager(t, func(c *Config) {
+		c.Store = store
+		c.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	h := appH(m)
+	sid := establish(t, m, h, "v")
+
+	store.failDelete = true
+	rr := serve(t, m, sid, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = h.Get(r.Context())
+		_ = m.Destroy(r.Context())
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("logout delete failure = %d, want 500", rr.Code)
+	}
+	if strings.Contains(logs.String(), sid) {
+		t.Fatalf("logout delete failure leaked the SID: %q", logs.String())
+	}
+	if !strings.Contains(logs.String(), sidPlaceholder) {
+		t.Fatalf("logout delete failure did not redact: %q", logs.String())
 	}
 }

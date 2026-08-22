@@ -5,8 +5,47 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
+
+// sidPlaceholder replaces a SID redacted from error text.
+const sidPlaceholder = "[redacted]"
+
+// redactSIDs replaces every occurrence of the given SIDs in err's
+// text with sidPlaceholder. A custom Store or a driver echoing bound
+// values can embed a SID it was handed into error text; this runs at
+// every commit-layer call that hands one to the store, so no path
+// reaches the logger unredacted. The result still unwraps to err, so
+// errors.Is and errors.As keep working.
+func redactSIDs(err error, sids ...string) error {
+	if err == nil {
+		return nil
+	}
+	text := err.Error()
+	redacted := text
+	for _, sid := range sids {
+		if sid == "" {
+			continue
+		}
+		redacted = strings.ReplaceAll(redacted, sid, sidPlaceholder)
+	}
+	if redacted == text {
+		return err
+	}
+	return &redactedError{text: redacted, err: err}
+}
+
+// redactedError overrides Error() text while preserving err for
+// Unwrap-based matching.
+type redactedError struct {
+	text string
+	err  error
+}
+
+func (e *redactedError) Error() string { return e.text }
+
+func (e *redactedError) Unwrap() error { return e.err }
 
 // commit finalizes a request's session state at response start.
 func (m *Manager) commit(ctx context.Context, st *state, w http.ResponseWriter) error {
@@ -20,7 +59,7 @@ func (m *Manager) commit(ctx context.Context, st *state, w http.ResponseWriter) 
 	clearNeeded := st.staleToken
 	if st.destroyed && st.destroyedSID != "" {
 		if err := m.cfg.Store.Delete(ctx, st.destroyedSID); err != nil {
-			return err
+			return redactSIDs(err, st.destroyedSID)
 		}
 		st.destroyed = false
 		st.destroyedSID = ""
@@ -100,7 +139,7 @@ func (m *Manager) rotateAtCommit(ctx context.Context, st *state) error {
 	}
 	// Best-effort delete; a stale record expires on its own.
 	if err := m.cfg.Store.Delete(ctx, oldSID); err != nil {
-		m.cfg.Logger.WarnContext(ctx, "session rotation: old SID delete failed", "error", err)
+		m.cfg.Logger.WarnContext(ctx, "session rotation: old SID delete failed", "error", redactSIDs(err, oldSID))
 	}
 	st.record = stored
 	if cells != nil {
@@ -135,11 +174,11 @@ func (m *Manager) commitDirty(ctx context.Context, st *state) error {
 			return nil
 		}
 		if !errors.Is(err, ErrVersionConflict) || attempt >= m.maxRetries {
-			return err
+			return redactSIDs(err, rec.SID)
 		}
 		fresh, lerr := m.cfg.Store.Load(ctx, st.record.SID)
 		if lerr != nil {
-			return lerr
+			return redactSIDs(lerr, st.record.SID)
 		}
 		freshCells, derr := decodeEnvelope(freshPayload(fresh))
 		if derr != nil {
@@ -196,7 +235,7 @@ func (m *Manager) insertFresh(ctx context.Context, rec Record) (Record, error) {
 			return stored, nil
 		}
 		if !errors.Is(err, ErrVersionConflict) || attempt >= m.maxRetries {
-			return Record{}, fmt.Errorf("session: mint: %w", err)
+			return Record{}, fmt.Errorf("session: mint: %w", redactSIDs(err, sid))
 		}
 	}
 }

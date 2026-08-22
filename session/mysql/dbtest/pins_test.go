@@ -14,6 +14,13 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+// markerSID and markerUserID are distinctive enough that a prefix
+// match alone cannot hide their presence elsewhere in the error text.
+const (
+	markerSID    = "closed-db-marker-sid-4e2a"
+	markerUserID = "closed-db-marker-user-7c91"
+)
+
 func openClosedDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("mysql", "closed:closed@tcp(localhost:1)/closed")
@@ -45,36 +52,36 @@ func TestClosedDB_ErrorWraps(t *testing.T) {
 	})
 	t.Run("load", func(t *testing.T) {
 		s := openClosedStore(t)
-		_, err := s.Load(ctx, "k")
-		wantPrefix(t, err, "session: load k: ")
+		_, err := s.Load(ctx, markerSID)
+		wantCredentialFree(t, err, "session: load: ", markerSID)
 	})
 	t.Run("insert", func(t *testing.T) {
 		s := openClosedStore(t)
-		_, err := s.Save(ctx, session.Record{SID: "k"})
-		wantPrefix(t, err, "session: insert k: ")
+		_, err := s.Save(ctx, session.Record{SID: markerSID})
+		wantCredentialFree(t, err, "session: insert: ", markerSID)
 	})
 	t.Run("update", func(t *testing.T) {
 		s := openClosedStore(t)
-		_, err := s.Save(ctx, session.Record{SID: "k", Version: 1})
-		wantPrefix(t, err, "session: update k: ")
+		_, err := s.Save(ctx, session.Record{SID: markerSID, Version: 1})
+		wantCredentialFree(t, err, "session: update: ", markerSID)
 	})
 	t.Run("delete", func(t *testing.T) {
 		s := openClosedStore(t)
-		wantPrefix(t, s.Delete(ctx, "k"), "session: delete k: ")
+		wantCredentialFree(t, s.Delete(ctx, markerSID), "session: delete: ", markerSID)
 	})
 	t.Run("bump", func(t *testing.T) {
 		s := openClosedStore(t)
-		wantPrefix(t, s.BumpTTL(ctx, "k", time.Now().Add(time.Hour)), "session: bump k: ")
+		wantCredentialFree(t, s.BumpTTL(ctx, markerSID, time.Now().Add(time.Hour)), "session: bump: ", markerSID)
 	})
 	t.Run("listUser", func(t *testing.T) {
 		s := openClosedStore(t)
-		_, err := s.ListByUser(ctx, "u")
-		wantPrefix(t, err, "session: list user u: ")
+		_, err := s.ListByUser(ctx, markerUserID)
+		wantCredentialFree(t, err, "session: list user: ", markerUserID)
 	})
 	t.Run("revokeUser", func(t *testing.T) {
 		s := openClosedStore(t)
-		_, err := s.RevokeByUser(ctx, "u")
-		wantPrefix(t, err, "session: revoke user u: ")
+		_, err := s.RevokeByUser(ctx, markerUserID)
+		wantCredentialFree(t, err, "session: revoke user: ", markerUserID)
 	})
 	t.Run("scan", func(t *testing.T) {
 		s := openClosedStore(t)
@@ -91,5 +98,16 @@ func wantPrefix(t *testing.T, err error, prefix string) {
 	t.Helper()
 	if err == nil || !strings.HasPrefix(err.Error(), prefix) {
 		t.Fatalf("want prefix %q, got %v", prefix, err)
+	}
+}
+
+// wantCredentialFree pins both the credential-free prefix and the
+// absence of the marker anywhere in the error text - a prefix match
+// alone would pass "session: load: MARKER: ...".
+func wantCredentialFree(t *testing.T, err error, prefix, marker string) {
+	t.Helper()
+	wantPrefix(t, err, prefix)
+	if strings.Contains(err.Error(), marker) {
+		t.Fatalf("error carries the marker identifier: %v", err)
 	}
 }

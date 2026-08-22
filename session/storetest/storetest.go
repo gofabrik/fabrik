@@ -46,6 +46,7 @@ func Run(t *testing.T, newStore func(t *testing.T) session.Store) {
 	t.Run("BinarySafeIdentifiers", func(t *testing.T) { testBinarySafeIdentifiers(t, newStore(t)) })
 	t.Run("Scanner", func(t *testing.T) { testScanner(t, newStore(t)) })
 	t.Run("Sweeper", func(t *testing.T) { testSweeper(t, newStore(t)) })
+	t.Run("ErrorHygiene", func(t *testing.T) { testErrorHygiene(t, newStore(t)) })
 }
 
 func live(sid, userID string, payload []byte) session.Record {
@@ -571,6 +572,33 @@ func testScanner(t *testing.T, s session.Store) {
 	}
 	if calls != 1 {
 		t.Fatalf("scan after false = %d calls, want 1", calls)
+	}
+}
+
+// testErrorHygiene drives the reachable non-sentinel error paths with a
+// marker SID and asserts the store never interpolates it into error text.
+func testErrorHygiene(t *testing.T, s session.Store) {
+	ctx := context.Background()
+	const marker = "error-hygiene-marker-sid-9f3c1a"
+
+	mustSave(t, s, live(marker, "", []byte("{}")))
+
+	_, err := s.Save(ctx, live(marker, "", []byte("{}")))
+	if !errors.Is(err, session.ErrVersionConflict) {
+		t.Fatalf("insert collision: %v, want ErrVersionConflict", err)
+	}
+	if err != nil && strings.Contains(err.Error(), marker) {
+		t.Fatalf("insert collision error carries the SID: %v", err)
+	}
+
+	stale := live(marker, "", []byte("{}"))
+	stale.Version = 99
+	_, err = s.Save(ctx, stale)
+	if !errors.Is(err, session.ErrVersionConflict) {
+		t.Fatalf("stale CAS write: %v, want ErrVersionConflict", err)
+	}
+	if err != nil && strings.Contains(err.Error(), marker) {
+		t.Fatalf("stale CAS write error carries the SID: %v", err)
 	}
 }
 

@@ -166,6 +166,59 @@ func TestMariaDBForeignKeyCascade(t *testing.T) {
 	testForeignKeyCascade(t, "TEST_MARIADB_DSN")
 }
 
+func testDeleteIdentityWithoutForeignKeys(t *testing.T, envVar string) {
+	ctx := t.Context()
+	db := openMySQL(t, envVar)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	s, err := storemysql.New(db, storemysql.Options{AutoCreate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `SET FOREIGN_KEY_CHECKS = 0`); err != nil {
+		t.Fatal(err)
+	}
+	var foreignKeyChecks int
+	if err := db.QueryRowContext(ctx, `SELECT @@FOREIGN_KEY_CHECKS`).Scan(&foreignKeyChecks); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeyChecks != 0 {
+		t.Fatalf("FOREIGN_KEY_CHECKS = %d, want disabled", foreignKeyChecks)
+	}
+	if _, err := s.CreateIdentity(ctx, "alice", store.IdentityClaims{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreatePassword(ctx, "alice", "alice@example.com", "old-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteIdentity(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	var identities, credentials int
+	if err := db.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM identities),
+		       (SELECT COUNT(*) FROM password_credentials)`).Scan(&identities, &credentials); err != nil {
+		t.Fatal(err)
+	}
+	if identities != 0 || credentials != 0 {
+		t.Fatalf("rows after DeleteIdentity = identities %d, credentials %d; want both zero", identities, credentials)
+	}
+	if _, err := s.CreateIdentity(ctx, "alice", store.IdentityClaims{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lookup(ctx, "alice@example.com"); !errors.Is(err, password.ErrNotFound) {
+		t.Fatalf("Lookup after identity ID reuse = %v, want password.ErrNotFound", err)
+	}
+}
+
+func TestMySQLDeleteIdentityWithoutForeignKeys(t *testing.T) {
+	testDeleteIdentityWithoutForeignKeys(t, "TEST_MYSQL_DSN")
+}
+
+func TestMariaDBDeleteIdentityWithoutForeignKeys(t *testing.T) {
+	testDeleteIdentityWithoutForeignKeys(t, "TEST_MARIADB_DSN")
+}
+
 // Concurrent claims for one email return ErrEmailTaken to the loser.
 func testConcurrentEmailClaim(t *testing.T, envVar string) {
 	ctx := t.Context()

@@ -222,6 +222,9 @@ func (s *Store) DeleteIdentity(ctx context.Context, id string) error {
 		return fmt.Errorf("store: delete identity %s: %w", id, err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
+	if _, err := tx.ExecContext(ctx, `DELETE FROM password_credentials WHERE identity_id = $1`, byteKey(id)); err != nil {
+		return fmt.Errorf("store: delete identity %s: %w", id, err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM identities WHERE id = $1`, byteKey(id)); err != nil {
 		return fmt.Errorf("store: delete identity %s: %w", id, err)
 	}

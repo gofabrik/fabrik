@@ -32,6 +32,9 @@ type Record struct {
 // [Record]. Delete is idempotent: deleting a missing SID succeeds.
 //
 // Stores must copy Payload bytes on Save and Load.
+//
+// Error text returned from any method must not include the SID, the
+// user ID, or any other caller-supplied identifier.
 type Store interface {
 	Load(ctx context.Context, sid string) (Record, error)
 	Save(ctx context.Context, rec Record) (Record, error)

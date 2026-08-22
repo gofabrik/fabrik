@@ -77,8 +77,8 @@ db, err := sql.Open("sqlite", "file:app.db?_pragma=busy_timeout(5000)&_pragma=fo
 s, err := sqlite.New(db, sqlite.Options{AutoCreate: true})
 ```
 
-The `foreign_keys` pragma is required for cascade delete, and writes
-use `BEGIN IMMEDIATE` independently of the DSN.
+The `foreign_keys` pragma enables cascade delete for SQL issued outside
+the store. Store writes use `BEGIN IMMEDIATE` independently of the DSN.
 
 **PostgreSQL** (`store/postgres`):
 
