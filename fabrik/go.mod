@@ -13,7 +13,7 @@ require (
 	github.com/gofabrik/fabrik/migrations/directive v0.1.0
 	github.com/gofabrik/fabrik/router/directive v0.1.0
 	github.com/gofabrik/fabrik/web/directive v0.1.0
-	github.com/gofabrik/t v0.26.0
+	github.com/gofabrik/t v0.27.0
 	golang.org/x/mod v0.40.0
 	golang.org/x/tools v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -21,6 +21,7 @@ require (
 
 require (
 	github.com/gofabrik/fabrik/migrations v0.1.0 // indirect
+	github.com/gofabrik/fabrik/web v0.1.0 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 )
