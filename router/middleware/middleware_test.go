@@ -1,13 +1,56 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
+
+type syncWriter struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (w *syncWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+func (w *syncWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
+
+type hijackWriter struct {
+	*httptest.ResponseRecorder
+	hijacked      bool
+	writeAttempts int
+}
+
+func (h *hijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h.hijacked = true
+	c1, c2 := net.Pipe()
+	c2.Close()
+	rw := bufio.NewReadWriter(bufio.NewReader(c1), bufio.NewWriter(c1))
+	return c1, rw, nil
+}
+
+func (h *hijackWriter) WriteHeader(code int) {
+	if h.hijacked {
+		h.writeAttempts++
+	}
+	h.ResponseRecorder.WriteHeader(code)
+}
 
 func TestRequestID(t *testing.T) {
 	var inCtx string
@@ -79,5 +122,93 @@ func TestLoggerLogsRecoveredPanic(t *testing.T) {
 	}
 	if !strings.Contains(logged, "msg=request") || !strings.Contains(logged, "status=500") {
 		t.Errorf("request line missing or without the recovered status:\n%s", logged)
+	}
+}
+
+// TestRecoverCommittedPanic verifies that a committed panic causes a transport
+// error instead of a successful truncated response.
+func TestRecoverCommittedPanic(t *testing.T) {
+	h := Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("partial")) //nolint:errcheck
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		panic("committed panic")
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("unexpected request error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	_, readErr := io.ReadAll(resp.Body)
+	if !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		t.Errorf("client read error = %v, want io.ErrUnexpectedEOF; truncated body must not arrive as complete success", readErr)
+	}
+}
+
+// TestLoggerRecoverStackedCommittedPanic verifies that Logger emits one request line when Recover aborts after commit.
+func TestLoggerRecoverStackedCommittedPanic(t *testing.T) {
+	prev := slog.Default()
+	defer slog.SetDefault(prev)
+	sw := &syncWriter{}
+	slog.SetDefault(slog.New(slog.NewTextHandler(sw, nil)))
+
+	h := Logger(Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("partial")) //nolint:errcheck
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		panic("committed panic")
+	})))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/")
+	if err == nil {
+		io.ReadAll(resp.Body) //nolint:errcheck
+		resp.Body.Close()
+	}
+
+	logged := sw.String()
+	if n := strings.Count(logged, "msg=request"); n != 1 {
+		t.Errorf("request log line count = %d, want 1:\n%s", n, logged)
+	}
+	if n := strings.Count(logged, "msg=panic"); n != 1 {
+		t.Errorf("panic log line count = %d, want 1:\n%s", n, logged)
+	}
+	if !strings.Contains(logged, "value=\"committed panic\"") || !strings.Contains(logged, "goroutine ") {
+		t.Errorf("panic line missing value or stack trace:\n%s", logged)
+	}
+}
+
+// TestRecoverHijackPanic verifies that a post-hijack panic aborts without writing a 500.
+func TestRecoverHijackPanic(t *testing.T) {
+	hw := &hijackWriter{ResponseRecorder: httptest.NewRecorder()}
+
+	h := Recover(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, err := w.(http.Hijacker).Hijack(); err != nil {
+			t.Errorf("hijack failed: %v", err)
+			return
+		}
+		panic("after hijack")
+	}))
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		h.ServeHTTP(hw, httptest.NewRequest("GET", "/", nil))
+	}()
+
+	if recovered != http.ErrAbortHandler {
+		t.Errorf("recovered %v, want http.ErrAbortHandler", recovered)
+	}
+	if hw.writeAttempts != 0 {
+		t.Errorf("WriteHeader called %d time(s) on hijacked writer, want 0", hw.writeAttempts)
 	}
 }
