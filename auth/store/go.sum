@@ -1,5 +1,7 @@
 github.com/gofabrik/fabrik/auth v0.1.0 h1:8A/Jl1WIKvROFIQubCnXcl+wnvM7bzyX85UUkAJo438=
 github.com/gofabrik/fabrik/auth v0.1.0/go.mod h1:/0AOY1qOQUw0RmUT70VJAfpeSrpMmJOSA5McDo79vXY=
+github.com/gofabrik/fabrik/auth/password v0.1.0 h1:XGJmT3RHCmQEPkCJ6xhhYeIwCPE0w2Bo0mnGHtHo7bU=
+github.com/gofabrik/fabrik/auth/password v0.1.0/go.mod h1:mVApIzsVlF5JepFGcY3L6xXj7ZdDSNWqhMi8d0x/BNE=
 golang.org/x/crypto v0.40.0 h1:r4x+VvoG5Fm+eJcxMaY8CQM7Lb0l1lsmjGBQ6s8BfKM=
 golang.org/x/crypto v0.40.0/go.mod h1:Qr1vMER5WyS2dfPHAlsOj01wgLbsyWtFn/aY+5+ZdxY=
 golang.org/x/sys v0.34.0 h1:H5Y5sJ2L2JRdyv7ROF1he/lPdvFsd0mJHFw2ThKHxLA=
