@@ -278,17 +278,7 @@ func (g *Gen) writeEntrypoint(b *bytes.Buffer, c CommandFunc, name, ctxPkg strin
 			}
 			continue
 		}
-		assign := ":="
-		bound := false
-		for _, l := range lhs {
-			if l != "_" {
-				bound = true
-				break
-			}
-		}
-		if !bound {
-			assign = "="
-		}
+		assign := assignOp(lhs, regionCleanup[reg], needErr)
 		fmt.Fprintf(b, "%s, err %s %s\n", strings.Join(lhs, ", "), assign, call)
 		for _, line := range ec.errReturn() {
 			b.WriteString(line)
@@ -311,4 +301,17 @@ func (g *Gen) writeEntrypoint(b *bytes.Buffer, c CommandFunc, name, ctxPkg strin
 	}
 	rets = append(rets, "nil")
 	b.WriteString("return " + strings.Join(rets, ", ") + "\n}\n")
+}
+
+// assignOp uses := when a consumed output or err is newly declared; cleanup variables are predeclared.
+func assignOp(lhs []string, cleanupVar string, errDeclared bool) string {
+	for _, l := range lhs {
+		if l != "_" && l != cleanupVar {
+			return ":="
+		}
+	}
+	if !errDeclared {
+		return ":="
+	}
+	return "="
 }
