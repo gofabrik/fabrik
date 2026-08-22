@@ -1,0 +1,4 @@
+change_type: enhancement
+component: templates
+note: Update web and mail to template engine v0.27.0 as part of the Go 1.27 dependency refresh.
+issues: [0]
