@@ -7,6 +7,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	sqldriver "database/sql/driver"
 	"fmt"
 	"hash/fnv"
 	"time"
@@ -99,7 +100,7 @@ func (s *session) Apply(ctx context.Context, stream string, m migrations.Migrati
 	return tx.Commit()
 }
 
-// Close releases the advisory lock with a fresh context.
+// Close releases the advisory lock with a fresh context and evicts the connection unless release is confirmed.
 func (s *session) Close() error {
 	if s.closed {
 		return nil
@@ -108,9 +109,18 @@ func (s *session) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var unlockErr error
-	if _, err := s.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", advisoryLockKey); err != nil {
+	var released bool
+	if err := s.c.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", advisoryLockKey).Scan(&released); err != nil {
 		unlockErr = fmt.Errorf("release pg advisory lock: %w", err)
+	} else if !released {
+		unlockErr = fmt.Errorf("release pg advisory lock: not held by this session")
 	}
-	_ = s.c.Close()
+	if unlockErr != nil {
+		// Mark the driver connection bad so sql.Conn.Close discards it.
+		_ = s.c.Raw(func(any) error { return sqldriver.ErrBadConn })
+	}
+	if cerr := s.c.Close(); cerr != nil && unlockErr == nil {
+		return cerr
+	}
 	return unlockErr
 }

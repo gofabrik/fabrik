@@ -129,8 +129,13 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, drv Driver) (rerr erro
 		return err
 	}
 	defer func() {
-		if cerr := sess.Close(); cerr != nil && rerr == nil {
-			rerr = cerr
+		// A close failure may mean the advisory lock remains held, so preserve it with any migration error.
+		if cerr := sess.Close(); cerr != nil {
+			if rerr == nil {
+				rerr = cerr
+			} else {
+				rerr = errors.Join(rerr, cerr)
+			}
 		}
 	}()
 

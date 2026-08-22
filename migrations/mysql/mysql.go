@@ -13,6 +13,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	sqldriver "database/sql/driver"
 	"fmt"
 	"hash/fnv"
 	"time"
@@ -126,7 +127,7 @@ func (s *session) Apply(ctx context.Context, stream string, m migrations.Migrati
 	return tx.Commit()
 }
 
-// Close releases the advisory lock with a fresh context.
+// Close releases the advisory lock with a fresh context and evicts the connection unless release is confirmed.
 func (s *session) Close() error {
 	if s.closed {
 		return nil
@@ -135,9 +136,20 @@ func (s *session) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var unlockErr error
-	if _, err := s.ExecContext(ctx, "SELECT RELEASE_LOCK(?)", s.lock); err != nil {
+	// RELEASE_LOCK returns 1 on release, 0 when held by another session, NULL
+	// when the lock does not exist.
+	var released sql.NullInt64
+	if err := s.c.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", s.lock).Scan(&released); err != nil {
 		unlockErr = fmt.Errorf("release mysql advisory lock: %w", err)
+	} else if !released.Valid || released.Int64 != 1 {
+		unlockErr = fmt.Errorf("release mysql advisory lock %q: not released", s.lock)
 	}
-	_ = s.c.Close()
+	if unlockErr != nil {
+		// Mark the driver connection bad so sql.Conn.Close discards it.
+		_ = s.c.Raw(func(any) error { return sqldriver.ErrBadConn })
+	}
+	if cerr := s.c.Close(); cerr != nil && unlockErr == nil {
+		return cerr
+	}
 	return unlockErr
 }

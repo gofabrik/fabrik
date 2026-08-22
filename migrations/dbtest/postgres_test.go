@@ -145,3 +145,42 @@ func TestPostgres_AdvisoryLockSerializes(t *testing.T) {
 		t.Fatalf("schema_migrations rows = %d, %v; want 2", n, err)
 	}
 }
+
+// TestPostgres_UnlockFailureEvictsConnection verifies that unlock failure evicts the connection and leaves the pool usable.
+func TestPostgres_UnlockFailureEvictsConnection(t *testing.T) {
+	db := openPG(t)
+	ctx := context.Background()
+
+	sess, err := postgres.Driver().OpenSession(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sessPID int
+	rows, err := sess.QueryContext(ctx, "SELECT pg_backend_pid()")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rows.Next() || rows.Scan(&sessPID) != nil {
+		t.Fatal("read session backend pid")
+	}
+	rows.Close() //nolint:errcheck
+	if _, err := sess.ExecContext(ctx, "SELECT pg_advisory_unlock_all()"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Close(); err == nil || !strings.Contains(err.Error(), "not held") {
+		t.Fatalf("Close error = %v, want not-held failure", err)
+	}
+
+	var nextPID int
+	if err := db.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&nextPID); err != nil {
+		t.Fatal(err)
+	}
+	if nextPID == sessPID {
+		t.Fatalf("backend pid %d reused after failed unlock; want the session connection evicted", sessPID)
+	}
+
+	src := fstest.MapFS{"0001_evict.sql": sqlFile(`CREATE TABLE t_evict (id BIGINT PRIMARY KEY)`)}
+	if err := migrations.Migrate(ctx, db, postgres.Driver(), src); err != nil {
+		t.Fatalf("Migrate after tainted close: %v", err)
+	}
+}
