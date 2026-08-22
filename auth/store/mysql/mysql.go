@@ -1,4 +1,6 @@
-// Package mysql implements [store.Store] for MySQL and MariaDB with byte-for-byte comparison of IDs, emails, and hashes.
+// Package mysql implements [store.Store] for MySQL and MariaDB with byte-for-byte
+// comparison of IDs, emails, and hashes. If foreign-key checks are disabled, a
+// credential write racing DeleteIdentity can leave an orphan credential.
 package mysql
 
 import (
@@ -248,7 +250,18 @@ func (s *Store) DeleteIdentity(ctx context.Context, id string) error {
 	if !store.ValidIdentityID(id) {
 		return store.ErrInvalid
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM identities WHERE id = ?`, byteKey(id)); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: delete identity %s: %w", id, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback is best-effort cleanup after commit or an earlier error
+	if _, err := tx.ExecContext(ctx, `DELETE FROM password_credentials WHERE identity_id = ?`, byteKey(id)); err != nil {
+		return fmt.Errorf("store: delete identity %s: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM identities WHERE id = ?`, byteKey(id)); err != nil {
+		return fmt.Errorf("store: delete identity %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: delete identity %s: %w", id, err)
 	}
 	return nil

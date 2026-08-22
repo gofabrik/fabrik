@@ -139,3 +139,48 @@ func TestPostgresForeignKeyCascade(t *testing.T) {
 		t.Fatalf("Lookup after cascade = %v, want password.ErrNotFound", err)
 	}
 }
+
+func TestDeleteIdentityWithoutForeignKeys(t *testing.T) {
+	ctx := t.Context()
+	db := openPostgres(t)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	s, err := storepostgres.New(db, storepostgres.Options{AutoCreate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `SET session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	var replicationRole string
+	if err := db.QueryRowContext(ctx, `SHOW session_replication_role`).Scan(&replicationRole); err != nil {
+		t.Fatal(err)
+	}
+	if replicationRole != "replica" {
+		t.Fatalf("session_replication_role = %q, want replica", replicationRole)
+	}
+	if _, err := s.CreateIdentity(ctx, "alice", store.IdentityClaims{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreatePassword(ctx, "alice", "alice@example.com", "old-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteIdentity(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	var identities, credentials int
+	if err := db.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM identities),
+		       (SELECT COUNT(*) FROM password_credentials)`).Scan(&identities, &credentials); err != nil {
+		t.Fatal(err)
+	}
+	if identities != 0 || credentials != 0 {
+		t.Fatalf("rows after DeleteIdentity = identities %d, credentials %d; want both zero", identities, credentials)
+	}
+	if _, err := s.CreateIdentity(ctx, "alice", store.IdentityClaims{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lookup(ctx, "alice@example.com"); !errors.Is(err, password.ErrNotFound) {
+		t.Fatalf("Lookup after identity ID reuse = %v, want password.ErrNotFound", err)
+	}
+}

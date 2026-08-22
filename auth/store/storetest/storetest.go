@@ -29,6 +29,7 @@ func Run(t *testing.T, newStore Factory) {
 	t.Run("SetIdentityClaims", func(t *testing.T) { testSetIdentityClaims(t, newStore) })
 	t.Run("DeleteIdentityIdempotent", func(t *testing.T) { testDeleteIdentityIdempotent(t, newStore) })
 	t.Run("DeleteIdentityCascades", func(t *testing.T) { testDeleteIdentityCascades(t, newStore) })
+	t.Run("DeleteThenRecreateIdentity", func(t *testing.T) { testDeleteThenRecreateIdentity(t, newStore) })
 	t.Run("CreatePassword", func(t *testing.T) { testCreatePassword(t, newStore) })
 	t.Run("CreatePasswordConflicts", func(t *testing.T) { testCreatePasswordConflicts(t, newStore) })
 	t.Run("CreatePasswordConcurrent", func(t *testing.T) { testCreatePasswordConcurrent(t, newStore) })
@@ -314,6 +315,32 @@ func testDeleteIdentityCascades(t *testing.T, newStore Factory) {
 	}
 	mustCreate(t, s, "bob", store.IdentityClaims{})
 	mustCreatePassword(t, s, "bob", "alice@example.com", testHash(t, "other"))
+}
+
+func testDeleteThenRecreateIdentity(t *testing.T, newStore Factory) {
+	s := newStore(t, nil)
+	ctx := context.Background()
+	const (
+		id           = "alice"
+		email        = "alice@example.com"
+		passwordText = "old-secret"
+	)
+	mustCreate(t, s, id, store.IdentityClaims{})
+	mustCreatePassword(t, s, id, email, testHash(t, passwordText))
+	if err := s.DeleteIdentity(ctx, id); err != nil {
+		t.Fatalf("DeleteIdentity: %v", err)
+	}
+	mustCreate(t, s, id, store.IdentityClaims{})
+	if _, err := s.Lookup(ctx, email); !errors.Is(err, password.ErrNotFound) {
+		t.Fatalf("Lookup after identity ID reuse = %v, want password.ErrNotFound", err)
+	}
+	v, err := password.New(password.Config{Store: s, Hasher: lightHasher()})
+	if err != nil {
+		t.Fatalf("password.New: %v", err)
+	}
+	if _, err := v.Authenticate(ctx, email, passwordText); !errors.Is(err, password.ErrInvalidCredentials) {
+		t.Fatalf("Authenticate with deleted password = %v, want ErrInvalidCredentials", err)
+	}
 }
 
 func testCreatePassword(t *testing.T, newStore Factory) {

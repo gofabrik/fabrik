@@ -1,4 +1,6 @@
-// Package sqlite implements [store.Store] for SQLite; callers must enable foreign keys for cascades and should set a busy timeout because SQLITE_BUSY is not retried.
+// Package sqlite implements [store.Store] for SQLite. Callers should enable
+// foreign keys for cascades issued outside Store and set a busy timeout because
+// SQLITE_BUSY is not retried.
 package sqlite
 
 import (
@@ -200,10 +202,14 @@ func (s *Store) DeleteIdentity(ctx context.Context, id string) error {
 	if !store.ValidIdentityID(id) {
 		return store.ErrInvalid
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM identities WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete identity %s: %w", id, err)
-	}
-	return nil
+	err := s.immediateTx(ctx, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(ctx, `DELETE FROM password_credentials WHERE identity_id = ?`, id); err != nil {
+			return err
+		}
+		_, err := conn.ExecContext(ctx, `DELETE FROM identities WHERE id = ?`, id)
+		return err
+	})
+	return wrapOp("delete identity", id, err)
 }
 
 // immediateTx serializes write transactions with BEGIN IMMEDIATE independent of DSN settings.

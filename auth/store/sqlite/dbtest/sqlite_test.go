@@ -31,6 +31,18 @@ func openDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func openDBWithoutForeignKeys(t *testing.T) *sql.DB {
+	t.Helper()
+	dsn := "file:" + filepath.Join(t.TempDir(), "auth-no-fk.db") +
+		"?_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() }) //nolint:errcheck // test database Close is cleanup
+	return db
+}
+
 func TestSQLiteStoreConformance(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, now func() time.Time) store.Store {
 		s, err := storesqlite.New(openDB(t), storesqlite.Options{AutoCreate: true, Now: now})
@@ -91,5 +103,45 @@ func TestSQLiteForeignKeyCascade(t *testing.T) {
 	}
 	if _, err := s.Lookup(ctx, "alice@example.com"); !errors.Is(err, password.ErrNotFound) {
 		t.Fatalf("Lookup after cascade = %v, want password.ErrNotFound", err)
+	}
+}
+
+func TestDeleteIdentityWithoutForeignKeys(t *testing.T) {
+	ctx := t.Context()
+	db := openDBWithoutForeignKeys(t)
+	var foreignKeys int
+	if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeys != 0 {
+		t.Fatalf("foreign_keys = %d, want disabled", foreignKeys)
+	}
+	s, err := storesqlite.New(db, storesqlite.Options{AutoCreate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateIdentity(ctx, "alice", store.IdentityClaims{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreatePassword(ctx, "alice", "alice@example.com", "old-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteIdentity(ctx, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	var identities, credentials int
+	if err := db.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM identities),
+		       (SELECT COUNT(*) FROM password_credentials)`).Scan(&identities, &credentials); err != nil {
+		t.Fatal(err)
+	}
+	if identities != 0 || credentials != 0 {
+		t.Fatalf("rows after DeleteIdentity = identities %d, credentials %d; want both zero", identities, credentials)
+	}
+	if _, err := s.CreateIdentity(ctx, "alice", store.IdentityClaims{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lookup(ctx, "alice@example.com"); !errors.Is(err, password.ErrNotFound) {
+		t.Fatalf("Lookup after identity ID reuse = %v, want password.ErrNotFound", err)
 	}
 }
