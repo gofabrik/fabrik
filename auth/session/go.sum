@@ -1,2 +1,4 @@
+github.com/gofabrik/fabrik/auth v0.1.0 h1:8A/Jl1WIKvROFIQubCnXcl+wnvM7bzyX85UUkAJo438=
+github.com/gofabrik/fabrik/auth v0.1.0/go.mod h1:/0AOY1qOQUw0RmUT70VJAfpeSrpMmJOSA5McDo79vXY=
 github.com/gofabrik/fabrik/session v0.1.0 h1:6Jp2k0pjYRq10VrsCZK1eMK7qxwyTXEckGT8xfy0kIQ=
 github.com/gofabrik/fabrik/session v0.1.0/go.mod h1:O/XVlX8gmKf3bbwm/i6FfGSFFtwXvzDm1yplfideT90=

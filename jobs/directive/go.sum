@@ -1,7 +1,7 @@
-github.com/gofabrik/fabrik/diag v0.1.0 h1:Tdl3Ot4R3ZBbLkADG8AIjvGt9VCZfLA8i/7jdFbsrrM=
-github.com/gofabrik/fabrik/diag v0.1.0/go.mod h1:Z1kHb+2Fajje45BSL7D1GVbLPzkIrQqfSuwS0QD6b4g=
-github.com/gofabrik/fabrik/gen v0.1.0 h1:6doI7zFatld3xkQ+W4Bc++3KsiBK8XZvAccGYc8KrUI=
-github.com/gofabrik/fabrik/gen v0.1.0/go.mod h1:Cg3vW4mrAUeWOjt8H3Iy3tfTqmySCtsxfejvLnNmvJ0=
+github.com/gofabrik/fabrik/diag v0.1.0 h1:nj3htL2rJ88YS2dz42191LA3xUyoSaJJM2/I1GxK5OU=
+github.com/gofabrik/fabrik/diag v0.1.0/go.mod h1:G/tigowqInUt6gVzNZBqGjpCP73+Kr1NVHIkeXN8jTs=
+github.com/gofabrik/fabrik/gen v0.1.0 h1:mjrQ1f5dAq4S8sRQYBdjQIDgJ11w2G/Nw8PGY0wDSRo=
+github.com/gofabrik/fabrik/gen v0.1.0/go.mod h1:Ob1+ZHQ8AmkE6Wq7jIFMg7JGUyVD+lmlm7X0t9FaLqQ=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=

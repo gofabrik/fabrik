@@ -7,6 +7,7 @@ require (
 	github.com/gofabrik/fabrik/auth v0.1.0
 	github.com/gofabrik/fabrik/auth/password v0.1.0
 	github.com/gofabrik/fabrik/auth/session v0.1.0
+	github.com/gofabrik/fabrik/auth/store v0.1.0
 	github.com/gofabrik/fabrik/cache v0.1.0
 	github.com/gofabrik/fabrik/cli v0.1.0
 	github.com/gofabrik/fabrik/config v0.1.0
@@ -29,8 +30,7 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/gofabrik/fabrik/auth/store v0.1.0
-	github.com/gofabrik/t v0.26.0 // indirect
+	github.com/gofabrik/t v0.27.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
