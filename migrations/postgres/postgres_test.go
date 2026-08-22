@@ -1,4 +1,4 @@
-package mysql
+package postgres
 
 import (
 	"context"
@@ -13,9 +13,9 @@ import (
 
 // fakeState controls advisory-lock responses and tracks connection reuse.
 type fakeState struct {
-	unlockErr    error
-	unlockResult any // int64, or nil for SQL NULL
-	opens        atomic.Int32
+	unlockErr      error
+	unlockReleased bool
+	opens          atomic.Int32
 }
 
 type fakeDriver struct{ st *fakeState }
@@ -34,22 +34,20 @@ func (c *fakeConn) Begin() (sqldriver.Tx, error) { return nil, errors.New("begin
 func (c *fakeConn) Close() error                 { return nil }
 
 func (c *fakeConn) QueryContext(_ context.Context, q string, _ []sqldriver.NamedValue) (sqldriver.Rows, error) {
-	switch {
-	case strings.Contains(q, "DATABASE()"):
-		return &oneValueRows{val: "testdb"}, nil
-	case strings.Contains(q, "GET_LOCK"):
-		return &oneValueRows{val: int64(1)}, nil
-	case strings.Contains(q, "RELEASE_LOCK"):
+	if strings.Contains(q, "pg_advisory_unlock") {
 		if c.st.unlockErr != nil {
 			return nil, c.st.unlockErr
 		}
-		return &oneValueRows{val: c.st.unlockResult}, nil
+		return &oneValueRows{val: c.st.unlockReleased}, nil
 	}
 	return nil, fmt.Errorf("unexpected query %q", q)
 }
 
 func (c *fakeConn) ExecContext(_ context.Context, q string, _ []sqldriver.NamedValue) (sqldriver.Result, error) {
-	if strings.Contains(q, "RELEASE_LOCK") {
+	switch {
+	case strings.Contains(q, "pg_advisory_lock"):
+		return sqldriver.ResultNoRows, nil
+	case strings.Contains(q, "pg_advisory_unlock"):
 		if c.st.unlockErr != nil {
 			return nil, c.st.unlockErr
 		}
@@ -78,7 +76,7 @@ var driverSeq atomic.Int64
 
 func openFake(t *testing.T, st *fakeState) *sql.DB {
 	t.Helper()
-	name := fmt.Sprintf("fake-mysql-%d", driverSeq.Add(1))
+	name := fmt.Sprintf("fake-pg-%d", driverSeq.Add(1))
 	sql.Register(name, fakeDriver{st: st})
 	db, err := sql.Open(name, "")
 	if err != nil {
@@ -86,16 +84,6 @@ func openFake(t *testing.T, st *fakeState) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck
 	return db
-}
-
-func freshOpens(t *testing.T, db *sql.DB, st *fakeState) int32 {
-	t.Helper()
-	c, err := db.Conn(context.Background())
-	if err != nil {
-		t.Fatalf("reacquire: %v", err)
-	}
-	defer c.Close() //nolint:errcheck
-	return st.opens.Load()
 }
 
 func openSession(t *testing.T, db *sql.DB) interface{ Close() error } {
@@ -113,7 +101,7 @@ func TestCloseUnlockErrorEvictsConnection(t *testing.T) {
 	sess := openSession(t, db)
 
 	err := sess.Close()
-	if err == nil || !strings.Contains(err.Error(), "release mysql advisory lock") {
+	if err == nil || !strings.Contains(err.Error(), "release pg advisory lock") {
 		t.Fatalf("Close error = %v, want release failure", err)
 	}
 	if n := freshOpens(t, db, st); n != 2 {
@@ -121,36 +109,22 @@ func TestCloseUnlockErrorEvictsConnection(t *testing.T) {
 	}
 }
 
-func TestCloseNotReleasedEvictsConnection(t *testing.T) {
-	st := &fakeState{unlockResult: int64(0)}
+func TestCloseNotHeldEvictsConnection(t *testing.T) {
+	st := &fakeState{unlockReleased: false}
 	db := openFake(t, st)
 	sess := openSession(t, db)
 
 	err := sess.Close()
-	if err == nil || !strings.Contains(err.Error(), "not released") {
-		t.Fatalf("Close error = %v, want not-released failure", err)
+	if err == nil || !strings.Contains(err.Error(), "not held") {
+		t.Fatalf("Close error = %v, want not-held failure", err)
 	}
 	if n := freshOpens(t, db, st); n != 2 {
-		t.Fatalf("driver opens after reacquire = %d, want 2 (eviction after RELEASE_LOCK returned 0)", n)
-	}
-}
-
-func TestCloseNullResultEvictsConnection(t *testing.T) {
-	st := &fakeState{unlockResult: nil}
-	db := openFake(t, st)
-	sess := openSession(t, db)
-
-	err := sess.Close()
-	if err == nil || !strings.Contains(err.Error(), "not released") {
-		t.Fatalf("Close error = %v, want not-released failure", err)
-	}
-	if n := freshOpens(t, db, st); n != 2 {
-		t.Fatalf("driver opens after reacquire = %d, want 2 (eviction after RELEASE_LOCK returned NULL)", n)
+		t.Fatalf("driver opens after reacquire = %d, want 2 (eviction after pg_advisory_unlock returned false)", n)
 	}
 }
 
 func TestCloseReleasedReturnsConnectionToPool(t *testing.T) {
-	st := &fakeState{unlockResult: int64(1)}
+	st := &fakeState{unlockReleased: true}
 	db := openFake(t, st)
 	sess := openSession(t, db)
 
@@ -162,21 +136,12 @@ func TestCloseReleasedReturnsConnectionToPool(t *testing.T) {
 	}
 }
 
-// TestLockNamePerDatabase pins the advisory-lock scoping: distinct
-// databases get distinct lock names, and every name fits MySQL's
-// 64-character lock-name limit.
-func TestLockNamePerDatabase(t *testing.T) {
-	a, b := lockName("app_one"), lockName("app_two")
-	if a == b {
-		t.Fatalf("lock names collide across databases: %q", a)
+func freshOpens(t *testing.T, db *sql.DB, st *fakeState) int32 {
+	t.Helper()
+	c, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("reacquire: %v", err)
 	}
-	long := lockName(strings.Repeat("d", 300))
-	for _, n := range []string{a, b, long} {
-		if len(n) > 64 {
-			t.Fatalf("lock name %q exceeds MySQL's 64-character limit", n)
-		}
-		if !strings.HasPrefix(n, lockPrefix) {
-			t.Fatalf("lock name %q lost its prefix", n)
-		}
-	}
+	defer c.Close() //nolint:errcheck
+	return st.opens.Load()
 }

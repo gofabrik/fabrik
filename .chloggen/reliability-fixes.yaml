@@ -1,0 +1,4 @@
+change_type: breaking
+component: fabrik
+note: Changes timeout and panic recovery behavior, limits migration identifiers to 191 bytes, and hardens generated entrypoint declarations.
+issues: [0]

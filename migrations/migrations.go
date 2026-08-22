@@ -129,8 +129,13 @@ func (s Sources) Migrate(ctx context.Context, db *sql.DB, drv Driver) (rerr erro
 		return err
 	}
 	defer func() {
-		if cerr := sess.Close(); cerr != nil && rerr == nil {
-			rerr = cerr
+		// A close failure may mean the advisory lock remains held, so preserve it with any migration error.
+		if cerr := sess.Close(); cerr != nil {
+			if rerr == nil {
+				rerr = cerr
+			} else {
+				rerr = errors.Join(rerr, cerr)
+			}
 		}
 	}()
 
@@ -271,6 +276,16 @@ type stream struct {
 	migs []Migration
 }
 
+// maxIdentBytes keeps identifiers within MySQL's VARBINARY(191) bound across all backends.
+const maxIdentBytes = 191
+
+func checkIdentLen(s string) error {
+	if len(s) > maxIdentBytes {
+		return fmt.Errorf("identifier exceeds %d bytes (%d bytes)", maxIdentBytes, len(s))
+	}
+	return nil
+}
+
 var filenameRE = regexp.MustCompile(`^(\d+)_([A-Za-z0-9_-]+)\.sql$`)
 
 func loadStreams(sources Sources) ([]stream, error) {
@@ -288,6 +303,9 @@ func loadStreams(sources Sources) ([]stream, error) {
 		}
 		if err := validateCleanRel(src.Stream); err != nil {
 			return nil, fmt.Errorf("Sources[%d].Stream: %v: %w", i, err, ErrInvalidSource)
+		}
+		if err := checkIdentLen(src.Stream); err != nil {
+			return nil, fmt.Errorf("Sources[%d].Stream %q: %v: %w", i, src.Stream, err, ErrInvalidSource)
 		}
 		if seen[src.Stream] {
 			return nil, fmt.Errorf("stream %q declared by two sources: %w", src.Stream, ErrDuplicateStream)
@@ -365,6 +383,9 @@ func loadMigrations(source fs.FS, stream string) ([]Migration, error) {
 		match := filenameRE.FindStringSubmatch(name)
 		if match == nil {
 			return nil, fmt.Errorf("%q (want NNNN_name.sql): %w", name, ErrInvalidFilename)
+		}
+		if err := checkIdentLen(match[2]); err != nil {
+			return nil, fmt.Errorf("%q: migration name: %v: %w", name, err, ErrInvalidFilename)
 		}
 		version, err := strconv.ParseInt(match[1], 10, 64)
 		if err != nil {

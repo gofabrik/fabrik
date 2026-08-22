@@ -32,29 +32,36 @@ func RequestIDFrom(ctx context.Context) string {
 	return id
 }
 
-// Logger writes one slog line per request.
+// Logger writes one slog line per request, including when downstream aborts
+// after committing a response. Compose it outside Recover, as
+// Logger(Recover(next)): the reverse order logs a recovered panic's status
+// before Recover writes the 500.
 func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		defer func() {
+			attrs := []any{
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", sw.status,
+				"duration", time.Since(start),
+			}
+			if id := RequestIDFrom(r.Context()); id != "" {
+				attrs = append(attrs, "requestId", id)
+			}
+			slog.InfoContext(r.Context(), "request", attrs...)
+		}()
 		next.ServeHTTP(wrapStatusWriter(sw), r)
-		attrs := []any{
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", sw.status,
-			"duration", time.Since(start),
-		}
-		if id := RequestIDFrom(r.Context()); id != "" {
-			attrs = append(attrs, "requestId", id)
-		}
-		slog.InfoContext(r.Context(), "request", attrs...)
 	})
 }
 
-// Recover turns handler panics into 500 responses and logs the stack.
+// Recover logs handler panics with their stack and writes a 500 before commit;
+// committed or hijacked responses abort, and callers must close hijacked connections.
 // It re-panics http.ErrAbortHandler.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		defer func() {
 			p := recover()
 			if p == nil {
@@ -64,9 +71,12 @@ func Recover(next http.Handler) http.Handler {
 				panic(p)
 			}
 			slog.ErrorContext(r.Context(), "panic", "value", p, "stack", string(debug.Stack()))
+			if sw.wrote {
+				panic(http.ErrAbortHandler)
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(wrapStatusWriter(sw), r)
 	})
 }
 

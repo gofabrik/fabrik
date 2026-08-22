@@ -264,7 +264,7 @@ func TestStreamNamesByteExact(t *testing.T) {
 	}
 }
 
-// TestStreamNameLengthBoundary verifies acceptance at 191 bytes and backend limits above it.
+// TestStreamNameLengthBoundary verifies the 191-byte limit before DDL on every backend.
 func TestStreamNameLengthBoundary(t *testing.T) {
 	for _, b := range backends(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -279,18 +279,21 @@ func TestStreamNameLengthBoundary(t *testing.T) {
 			both := append(migrations.Sources{}, srcs...)
 			both = append(both, migrations.Source{Stream: over, FS: fstest.MapFS{"0001_b.sql": sqlFile(`CREATE TABLE t_over (id BIGINT PRIMARY KEY)`)}})
 			err := both.Migrate(ctx, db, b.driver)
-			if b.mysqlFamily {
-				if err == nil {
-					t.Fatal("192-byte stream accepted on mysql; it must be rejected")
-				}
-			} else if err != nil {
-				t.Fatalf("192-byte stream on %s: %v", b.name, err)
+			if err == nil {
+				t.Fatalf("192-byte stream accepted on %s; must be rejected at load", b.name)
+			}
+			if !errors.Is(err, migrations.ErrInvalidSource) {
+				t.Fatalf("192-byte stream on %s: got %v, want ErrInvalidSource", b.name, err)
+			}
+			var n int
+			if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM t_over").Scan(&n); err == nil {
+				t.Fatalf("t_over exists on %s; rejection must happen before any DDL", b.name)
 			}
 		})
 	}
 }
 
-// TestMigrationNameLengthBoundary verifies acceptance at 191 bytes and rejection above it.
+// TestMigrationNameLengthBoundary verifies the 191-byte limit before DDL on every backend.
 func TestMigrationNameLengthBoundary(t *testing.T) {
 	for _, b := range backends(t) {
 		t.Run(b.name, func(t *testing.T) {
@@ -309,12 +312,15 @@ func TestMigrationNameLengthBoundary(t *testing.T) {
 				"0001_" + over + ".sql": sqlFile(`CREATE TABLE t_over (id BIGINT PRIMARY KEY)`),
 			}})
 			err := both.Migrate(ctx, db, b.driver)
-			if b.mysqlFamily {
-				if err == nil {
-					t.Fatal("192-byte name accepted on mysql; it must be rejected")
-				}
-			} else if err != nil {
-				t.Fatalf("192-byte name on %s: %v", b.name, err)
+			if err == nil {
+				t.Fatalf("192-byte name accepted on %s; must be rejected at load", b.name)
+			}
+			if !errors.Is(err, migrations.ErrInvalidFilename) {
+				t.Fatalf("192-byte name on %s: got %v, want ErrInvalidFilename", b.name, err)
+			}
+			var n int
+			if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM t_over").Scan(&n); err == nil {
+				t.Fatalf("t_over exists on %s; rejection must happen before any DDL", b.name)
 			}
 		})
 	}

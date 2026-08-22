@@ -185,6 +185,23 @@ func Run(t *testing.T, factory func(t *testing.T) Backend) {
 		}
 	})
 
+	t.Run("AttemptTimedOutLedger", func(t *testing.T) {
+		m := newMgr(t, factory(t))
+		requireNoError(t, jobs.Handle(m, "email", func(ctx jobs.Context, _ email) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}))
+		runWorker(t, m)
+		id, err := m.Enqueue(context.Background(), email{}, jobs.MaxAttempts(1), jobs.Timeout(20*time.Millisecond), jobs.TimeoutAction(jobs.TimeoutFail))
+		requireNoError(t, err)
+		eventually(t, func() bool { return state(t, m, id) == jobs.StateFailed }, "timeout -> failed")
+		atts, err := m.ListJobAttempts(context.Background(), id)
+		requireNoError(t, err)
+		if len(atts) != 1 || atts[0].State != jobs.AttemptTimedOut {
+			t.Fatalf("want 1 timed_out attempt, got %+v", atts)
+		}
+	})
+
 	t.Run("PublishFanOut", func(t *testing.T) {
 		m := newMgr(t, factory(t))
 		requireNoError(t, jobs.Register[orderPlaced](m, "order.placed"))
