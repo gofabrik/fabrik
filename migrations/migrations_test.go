@@ -20,8 +20,7 @@ var (
 
 var testDriverSeq atomic.Int64
 
-// emptyDriver backs a *sql.DB that answers every exec and serves an empty
-// schema_migrations rowset, so Migrate reaches Apply and Close.
+// emptyDriver lets Migrate reach Apply and Close without existing migrations.
 type emptyDriver struct{}
 
 func (emptyDriver) Open(string) (sqldriver.Conn, error) { return emptyConn{}, nil }
@@ -81,8 +80,51 @@ func (s failingSession) Close() error {
 	return errClose
 }
 
-// A close failure must stay visible alongside the migration failure: the
-// dropped unlock error is exactly the case that leaves an advisory lock held.
+func TestIdentLenBound(t *testing.T) {
+	cases := []struct {
+		label   string
+		s       string
+		wantErr bool
+	}{
+		{"190 bytes", strings.Repeat("a", 190), false},
+		{"191 bytes (at bound)", strings.Repeat("a", 191), false},
+		{"192 bytes (over bound)", strings.Repeat("a", 192), true},
+		// Sixty-four three-byte runes exceed the byte limit despite the low rune count.
+		{"multibyte 192 bytes 64 runes", strings.Repeat("中", 64), true},
+		{"multibyte 63 bytes 21 runes", strings.Repeat("中", 21), false},
+	}
+	for _, c := range cases {
+		if err := checkIdentLen(c.s); (err != nil) != c.wantErr {
+			t.Errorf("%s: checkIdentLen(%d bytes) err = %v, wantErr %v", c.label, len(c.s), err, c.wantErr)
+		}
+	}
+}
+
+func TestLoadStreamsRejectsOverlongStream(t *testing.T) {
+	over := strings.Repeat("a", 192)
+	srcs := Sources{{
+		Stream: over,
+		FS:     fstest.MapFS{"0001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1")}},
+	}}
+	_, err := loadStreams(srcs)
+	if !errors.Is(err, ErrInvalidSource) {
+		t.Fatalf("loadStreams overlong stream: got %v, want ErrInvalidSource", err)
+	}
+}
+
+func TestLoadStreamsMigrationRejectsOverlongName(t *testing.T) {
+	over := strings.Repeat("a", 192)
+	srcs := Sources{{
+		Stream: "s",
+		FS:     fstest.MapFS{"0001_" + over + ".sql": &fstest.MapFile{Data: []byte("SELECT 1")}},
+	}}
+	_, err := loadStreams(srcs)
+	if !errors.Is(err, ErrInvalidFilename) {
+		t.Fatalf("loadStreams overlong migration name: got %v, want ErrInvalidFilename", err)
+	}
+}
+
+// A close failure may indicate a held advisory lock and must remain visible with the migration failure.
 func TestMigrateJoinsApplyAndCloseErrors(t *testing.T) {
 	name := fmt.Sprintf("migrations-empty-%d", testDriverSeq.Add(1))
 	sql.Register(name, emptyDriver{})
