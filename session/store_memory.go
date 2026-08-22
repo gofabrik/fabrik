@@ -74,13 +74,13 @@ func (s *MemoryStore) Save(ctx context.Context, rec Record) (Record, error) {
 	prev, exists := s.records[rec.SID]
 	if exists {
 		if prev.Version != rec.Version {
-			return Record{}, fmt.Errorf("memorystore: sid=%s loaded=%d stored=%d: %w",
-				rec.SID, rec.Version, prev.Version, ErrVersionConflict)
+			return Record{}, fmt.Errorf("memorystore: loaded=%d stored=%d: %w",
+				rec.Version, prev.Version, ErrVersionConflict)
 		}
 	} else if rec.Version != 0 {
 		// Revoked sessions stay revoked.
-		return Record{}, fmt.Errorf("memorystore: sid=%s loaded=%d but no record present: %w",
-			rec.SID, rec.Version, ErrVersionConflict)
+		return Record{}, fmt.Errorf("memorystore: loaded=%d but no record present: %w",
+			rec.Version, ErrVersionConflict)
 	}
 
 	stored := rec

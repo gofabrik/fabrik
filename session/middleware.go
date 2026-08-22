@@ -38,6 +38,7 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 				return m.commit(cctx, st, rw)
 			},
 			commitError: func(err error) {
+				// err is already SID-redacted by commit's call sites.
 				m.cfg.Logger.ErrorContext(commitCtx, "session commit failed", "error", err)
 			},
 		}

@@ -78,7 +78,7 @@ func (s *Store) Load(ctx context.Context, sid string) (session.Record, error) {
 		if errors.Is(err, sql.ErrNoRows) {
 			return session.Record{}, session.ErrNotFound
 		}
-		return session.Record{}, fmt.Errorf("session: load %s: %w", sid, err)
+		return session.Record{}, fmt.Errorf("session: load: %w", err)
 	}
 	return session.Record{
 		SID:            sid,
@@ -103,14 +103,14 @@ func (s *Store) Save(ctx context.Context, rec session.Record) (session.Record, e
 			ON CONFLICT(sid) DO NOTHING`,
 			byteKey(rec.SID), byteKey(rec.UserID), toUnixNano(rec.AbsoluteExpiry), toUnixNano(rec.IdleExpiry), rec.Payload)
 		if err != nil {
-			return session.Record{}, fmt.Errorf("session: insert %s: %w", rec.SID, err)
+			return session.Record{}, fmt.Errorf("session: insert: %w", err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return session.Record{}, fmt.Errorf("session: insert %s: %w", rec.SID, err)
+			return session.Record{}, fmt.Errorf("session: insert: %w", err)
 		}
 		if n != 1 {
-			return session.Record{}, fmt.Errorf("session: insert %s collided with existing row: %w", rec.SID, session.ErrVersionConflict)
+			return session.Record{}, fmt.Errorf("session: insert collided with existing row: %w", session.ErrVersionConflict)
 		}
 		stored := rec
 		stored.Version = 1
@@ -126,14 +126,14 @@ func (s *Store) Save(ctx context.Context, rec session.Record) (session.Record, e
 		WHERE sid = $5 AND version = $6`,
 		byteKey(rec.UserID), toUnixNano(rec.AbsoluteExpiry), toUnixNano(rec.IdleExpiry), rec.Payload, byteKey(rec.SID), rec.Version)
 	if err != nil {
-		return session.Record{}, fmt.Errorf("session: update %s: %w", rec.SID, err)
+		return session.Record{}, fmt.Errorf("session: update: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return session.Record{}, fmt.Errorf("session: update %s: %w", rec.SID, err)
+		return session.Record{}, fmt.Errorf("session: update: %w", err)
 	}
 	if n != 1 {
-		return session.Record{}, fmt.Errorf("session: stale write on %s at version %d: %w", rec.SID, rec.Version, session.ErrVersionConflict)
+		return session.Record{}, fmt.Errorf("session: stale write at version %d: %w", rec.Version, session.ErrVersionConflict)
 	}
 	stored := rec
 	stored.Version++
@@ -144,7 +144,7 @@ func (s *Store) Save(ctx context.Context, rec session.Record) (session.Record, e
 // Delete implements session.Store.
 func (s *Store) Delete(ctx context.Context, sid string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE sid = $1`, byteKey(sid)); err != nil {
-		return fmt.Errorf("session: delete %s: %w", sid, err)
+		return fmt.Errorf("session: delete: %w", err)
 	}
 	return nil
 }
@@ -158,11 +158,11 @@ func (s *Store) BumpTTL(ctx context.Context, sid string, until time.Time) error 
 		WHERE sid = $2 AND (absolute_expiry = 0 OR absolute_expiry > $3) AND (idle_expiry = 0 OR idle_expiry > $4)`,
 		toUnixNano(until), byteKey(sid), now, now)
 	if err != nil {
-		return fmt.Errorf("session: bump %s: %w", sid, err)
+		return fmt.Errorf("session: bump: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("session: bump %s: %w", sid, err)
+		return fmt.Errorf("session: bump: %w", err)
 	}
 	if n != 1 {
 		return session.ErrNotFound
@@ -178,7 +178,7 @@ func (s *Store) ListByUser(ctx context.Context, userID string) ([]string, error)
 		 WHERE user_id = $1 AND (absolute_expiry = 0 OR absolute_expiry > $2) AND (idle_expiry = 0 OR idle_expiry > $3)`,
 		byteKey(userID), now, now)
 	if err != nil {
-		return nil, fmt.Errorf("session: list user %s: %w", userID, err)
+		return nil, fmt.Errorf("session: list user: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // read errors are reported by rows.Err; Close is cleanup
 	var sids []string
@@ -207,7 +207,7 @@ func (s *Store) RevokeByUser(ctx context.Context, userID string, except ...strin
 	}
 	res, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
-		return 0, fmt.Errorf("session: revoke user %s: %w", userID, err)
+		return 0, fmt.Errorf("session: revoke user: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
