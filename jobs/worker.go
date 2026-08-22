@@ -443,6 +443,8 @@ func (w *Worker) run(row ClaimedJob, rs *runState) {
 	}
 	started := w.manager.now()
 	runErr, panicStack := safeRun(jc, entry.invoke, msg)
+	// Snapshot before clock reads or cleanup can cross the deadline after a timely return.
+	deadlineExceeded := row.TimeoutMs > 0 && errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	finished := w.manager.now()
 	if panicStack != nil {
 		logger.Error("jobs: handler panic recovered", "error", runErr, "stack", string(panicStack))
@@ -459,7 +461,7 @@ func (w *Worker) run(row ClaimedJob, rs *runState) {
 		return
 	}
 
-	outcome := w.decideOutcome(row, attemptNum, runErr, cancelByUser.Load(), started, finished)
+	outcome := w.decideOutcome(row, attemptNum, runErr, cancelByUser.Load(), deadlineExceeded, started, finished)
 	applied, committed := w.complete(bg, row, outcome, logger)
 	w.finishHook(runCtx, row, attemptNum, runErr, finished.Sub(started), applied, committed)
 }
@@ -495,7 +497,7 @@ func (w *Worker) park(bg context.Context, rs *runState, row ClaimedJob, attemptN
 	w.finishHook(bg, row, attemptNum, cause, 0, applied, committed)
 }
 
-func (w *Worker) decideOutcome(row ClaimedJob, attemptNum int, runErr error, cancelByUser bool, started, finished time.Time) Outcome {
+func (w *Worker) decideOutcome(row ClaimedJob, attemptNum int, runErr error, cancelByUser, deadlineExceeded bool, started, finished time.Time) Outcome {
 	o := Outcome{Attempt: attemptNum, StartedAt: started, FinishedAt: finished}
 	if runErr != nil {
 		o.Error = runErr.Error()
@@ -504,6 +506,9 @@ func (w *Worker) decideOutcome(row ClaimedJob, attemptNum int, runErr error, can
 	if cancelByUser {
 		o.State, o.AttemptState = StateCancelled, AttemptCancelled
 		return o
+	}
+	if deadlineExceeded {
+		return w.dispatchTimeout(row, attemptNum, o)
 	}
 	if runErr == nil {
 		o.State, o.AttemptState = StateSucceeded, AttemptSucceeded
@@ -520,9 +525,6 @@ func (w *Worker) decideOutcome(row ClaimedJob, attemptNum int, runErr error, can
 	if errors.Is(runErr, ErrPermanent) {
 		o.State, o.AttemptState = StateFailed, AttemptFailed
 		return o
-	}
-	if errors.Is(runErr, context.DeadlineExceeded) && row.TimeoutMs > 0 {
-		return w.dispatchTimeout(row, attemptNum, o)
 	}
 	if attemptNum >= row.MaxAttempts {
 		o.State, o.AttemptState = StateDiscarded, AttemptFailed

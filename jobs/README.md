@@ -55,8 +55,9 @@ non-idempotent side effects behind your own idempotency key.
   the first run; zero selects the manager default of 25.
 - **Per-attempt timeout** with a `TimeoutRetry`, `TimeoutFail`, or
   `TimeoutDiscard` policy. Timeout and cancellation are cooperative: the
-  deadline cancels the context but cannot terminate the goroutine. Timeout
-  policy applies after the handler returns.
+  deadline cancels the context but cannot terminate the goroutine. The timeout
+  policy uses the attempt's deadline state, regardless of the returned error,
+  and applies after the handler returns.
 - **Cancellation**: `CancelJob` stops a pending job now; a running one is
   requested to stop on its next heartbeat by cancelling its context.
 - **Crash recovery**: an expired lease is reclaimed and re-run (or

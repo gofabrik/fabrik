@@ -985,6 +985,157 @@ func TestPanicHandlerLogsStack(t *testing.T) {
 	}
 }
 
+// TestNilAfterDeadlineTimedOut verifies that a nil result after the deadline is timed out.
+func TestNilAfterDeadlineTimedOut(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseOnce)
+		requireNoError(t, Handle[Email](m, "email", func(ctx Context, _ Email) error {
+			close(started)
+			<-release
+			return nil
+		}))
+		runWorker(t, m, WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond})
+		id, err := m.Enqueue(context.Background(), Email{}, Timeout(50*time.Millisecond), TimeoutAction(TimeoutFail))
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		synctest.Sleep(200 * time.Millisecond)
+		releaseOnce()
+		eventually(t, func() bool { return jobState(t, m, id) == StateFailed }, "nil-after-deadline -> failed")
+		atts, err := m.ListJobAttempts(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(atts) != 1 || atts[0].State != AttemptTimedOut {
+			t.Fatalf("want 1 timed_out attempt, got %+v", atts)
+		}
+	})
+}
+
+// TestNilAfterDeadlineTimeoutRetryAtCap verifies that TimeoutRetry discards at MaxAttempts.
+func TestNilAfterDeadlineTimeoutRetryAtCap(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseOnce)
+		requireNoError(t, Handle[Email](m, "email", func(_ Context, _ Email) error {
+			close(started)
+			<-release
+			return nil
+		}))
+		runWorker(t, m, WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 100 * time.Millisecond})
+		id, err := m.Enqueue(context.Background(), Email{}, MaxAttempts(1), Timeout(50*time.Millisecond), TimeoutAction(TimeoutRetry))
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		synctest.Sleep(200 * time.Millisecond)
+		releaseOnce()
+		eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "nil-after-deadline at cap -> discarded")
+		atts, err := m.ListJobAttempts(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(atts) != 1 || atts[0].State != AttemptTimedOut {
+			t.Fatalf("want 1 timed_out attempt, got %+v", atts)
+		}
+	})
+}
+
+// TestTimelyNilSucceeds verifies a clearly pre-deadline nil result; a simultaneous deadline may produce either outcome.
+func TestTimelyNilSucceeds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		requireNoError(t, Handle[Email](m, "email", func(_ Context, _ Email) error { return nil }))
+		runWorker(t, m, WorkerConfig{})
+		id, err := m.Enqueue(context.Background(), Email{}, Timeout(500*time.Millisecond), TimeoutAction(TimeoutFail))
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool { return jobState(t, m, id) == StateSucceeded }, "timely nil -> succeeded")
+		atts, err := m.ListJobAttempts(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(atts) != 1 || atts[0].State != AttemptSucceeded {
+			t.Fatalf("want 1 succeeded attempt, got %+v", atts)
+		}
+	})
+}
+
+// TestForeignDeadlineExceededNotTimedOut verifies that an inner deadline follows normal retry behavior.
+func TestForeignDeadlineExceededNotTimedOut(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		requireNoError(t, Handle[Email](m, "email", func(_ Context, _ Email) error {
+			inner, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+			defer cancel()
+			<-inner.Done()
+			return inner.Err()
+		}))
+		runWorker(t, m, WorkerConfig{})
+		id, err := m.Enqueue(context.Background(), Email{}, MaxAttempts(2), Timeout(500*time.Millisecond), TimeoutAction(TimeoutFail),
+			WithBackoff(ExponentialBackoff{Base: 500 * time.Millisecond, Max: 500 * time.Millisecond}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, func() bool { return jobState(t, m, id) == StateDiscarded }, "foreign DeadlineExceeded -> discard after retries")
+		atts, err := m.ListJobAttempts(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(atts) != 2 {
+			t.Fatalf("want 2 attempts (initial + backoff retry), got %+v", atts)
+		}
+		for _, a := range atts {
+			if a.State != AttemptFailed {
+				t.Fatalf("attempt %d: want failed, got %s", a.Attempt, a.State)
+			}
+		}
+		if gap := atts[1].StartedAt.Sub(atts[0].FinishedAt); gap < 500*time.Millisecond {
+			t.Fatalf("retry after %v, want the configured 500ms backoff honored", gap)
+		}
+	})
+}
+
+// TestCancelBeatsTimeout verifies that user cancellation takes precedence over a fired deadline.
+func TestCancelBeatsTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := testManager(t, NewMemoryStore())
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseOnce := sync.OnceFunc(func() { close(release) })
+		t.Cleanup(releaseOnce)
+		requireNoError(t, Handle[Email](m, "email", func(_ Context, _ Email) error {
+			close(started)
+			<-release
+			return nil
+		}))
+		runWorker(t, m, WorkerConfig{LeaseDuration: time.Second, HeartbeatInterval: 30 * time.Millisecond})
+		id, err := m.Enqueue(context.Background(), Email{}, Timeout(50*time.Millisecond), TimeoutAction(TimeoutFail))
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		// Let the attempt deadline fire before requesting cancellation.
+		synctest.Sleep(100 * time.Millisecond)
+		if _, err := m.CancelJob(context.Background(), id); err != nil {
+			t.Fatal(err)
+		}
+		// Let the heartbeat deliver cancellation before releasing the handler.
+		synctest.Sleep(60 * time.Millisecond)
+		releaseOnce()
+		eventually(t, func() bool { return jobState(t, m, id) == StateCancelled }, "cancel beats timeout")
+	})
+}
+
 func TestPanicHookLogsStack(t *testing.T) {
 	sink := &logSink{}
 	store := NewMemoryStore()
